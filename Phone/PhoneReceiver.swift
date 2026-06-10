@@ -10,6 +10,7 @@ import Foundation
 import Network
 import AVFoundation
 import CoreMedia
+import VideoToolbox
 import UIKit
 
 /// One-second window of pipeline health, plus per-frame timing samples for
@@ -35,6 +36,10 @@ struct PerfStats: Equatable {
     var inputP50 = 0.0           // touch sent → CGEvent injected on the Mac, ms
     var inputP95 = 0.0
     var capFps = 0               // frames ScreenCaptureKit delivered on the Mac
+    // Metal renderer path only:
+    var decodeP50 = 0.0          // VTDecompressionSession decode, ms
+    var photonP50 = 0.0          // Mac capture → frame actually on glass, ms
+    var photonP95 = 0.0
 }
 
 final class PhoneReceiver: ObservableObject {
@@ -93,6 +98,32 @@ final class PhoneReceiver: ObservableObject {
     // hotspot anchor and size normalized against the Mac display.
     var onCursor: ((_ x: Double, _ y: Double, _ visible: Bool) -> Void)?
     var onCursorImage: ((_ image: UIImage, _ anchor: CGPoint, _ normSize: CGSize) -> Void)?
+
+    // Metal renderer path (experimental, "metalRenderer" setting): we decode
+    // explicitly and hand BGRA buffers out; called on the receiver queue.
+    var onDecodedFrame: ((_ pixelBuffer: CVPixelBuffer, _ captureMs: Double?) -> Void)?
+    private var decompressionSession: VTDecompressionSession?
+    private var decodeWindow: [Double] = []
+    private var photonWindow: [Double] = []
+    // Default ON (matches the @AppStorage default in the settings UI).
+    private var useMetalPath: Bool {
+        UserDefaults.standard.object(forKey: "metalRenderer") == nil
+            || UserDefaults.standard.bool(forKey: "metalRenderer")
+    }
+
+    /// Called by the renderer's presented handler: maps the CACurrentMediaTime-
+    /// based glass timestamp into wall-clock ms and computes true photon e2e.
+    func recordPresented(presentedTime: CFTimeInterval, captureMs: Double?) {
+        guard let captureMs, presentedTime > 0 else { return }
+        let presentedWallMs = nowMs - (CACurrentMediaTime() - presentedTime) * 1000
+        queue.async {
+            guard let offset = self.clockOffsetMs else { return }
+            let photon = (presentedWallMs + offset) - captureMs
+            if photon > -50, photon < 5000 {
+                self.photonWindow.append(max(photon, 0))
+            }
+        }
+    }
 
     let displayLayer: AVSampleBufferDisplayLayer
 
@@ -299,6 +330,12 @@ final class PhoneReceiver: ObservableObject {
         frameIntervals.removeAll()
         decodeFlushes = 0
         displayLayer.flush()
+        if let session = decompressionSession {
+            VTDecompressionSessionInvalidate(session)
+            decompressionSession = nil
+        }
+        decodeWindow.removeAll(keepingCapacity: true)
+        photonWindow.removeAll(keepingCapacity: true)
     }
 
     // MARK: - Control messages (phone -> Mac)
@@ -521,21 +558,26 @@ final class PhoneReceiver: ObservableObject {
             sampleBufferOut: &sample)
 
         guard let sample else { return }
-        // Display immediately: low latency, no PTS scheduling.
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true),
-           CFArrayGetCount(attachments) > 0 {
-            let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
-            CFDictionarySetValue(dict,
-                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
-        }
 
-        if displayLayer.status == .failed {
-            Log.info("display layer failed (\(String(describing: displayLayer.error))) — flushing")
-            decodeFlushes += 1
-            displayLayer.flush()
+        if useMetalPath, onDecodedFrame != nil {
+            decodeAndRender(sample, captureMs: captureMs)
+        } else {
+            // Display immediately: low latency, no PTS scheduling.
+            if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true),
+               CFArrayGetCount(attachments) > 0 {
+                let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+                CFDictionarySetValue(dict,
+                    Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                    Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+            }
+
+            if displayLayer.status == .failed {
+                Log.info("display layer failed (\(String(describing: displayLayer.error))) — flushing")
+                decodeFlushes += 1
+                displayLayer.flush()
+            }
+            displayLayer.enqueue(sample)
         }
-        displayLayer.enqueue(sample)
 
         // Per-frame timing for the performance overlay.
         let now = Date()
@@ -586,6 +628,9 @@ final class PhoneReceiver: ObservableObject {
             stats.inputP50 = macInputP50
             stats.inputP95 = macInputP95
             stats.capFps = macCapFps
+            stats.decodeP50 = percentile(decodeWindow, 0.5)
+            stats.photonP50 = percentile(photonWindow, 0.5)
+            stats.photonP95 = percentile(photonWindow, 0.95)
             framesThisWindow = 0
             bytesThisWindow = 0
             stallsThisWindow = 0
@@ -608,16 +653,67 @@ final class PhoneReceiver: ObservableObject {
                     "stalls": stats.stalls,
                     "inp50": macInputP50.rounded(),
                     "capFps": macCapFps,
+                    "dec50": stats.decodeP50.rounded(),
+                    "ph50": stats.photonP50.rounded(),
+                    "ph95": stats.photonP95.rounded(),
                     "offsetKnown": clockOffsetMs != nil,
                 ])
                 e2eWindow.removeAll(keepingCapacity: true)
                 encodeWindow.removeAll(keepingCapacity: true)
+                decodeWindow.removeAll(keepingCapacity: true)
+                photonWindow.removeAll(keepingCapacity: true)
             }
 
             DispatchQueue.main.async {
                 self.fps = fps
                 self.perf = stats
             }
+        }
+    }
+
+    // MARK: - Explicit decode (Metal renderer path)
+
+    private func ensureDecompressionSession() {
+        guard let formatDesc else { return }
+        if let session = decompressionSession {
+            if VTDecompressionSessionCanAcceptFormatDescription(session, formatDescription: formatDesc) {
+                return
+            }
+            VTDecompressionSessionInvalidate(session)
+            decompressionSession = nil
+        }
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferMetalCompatibilityKey: true,
+        ]
+        var session: VTDecompressionSession?
+        let status = VTDecompressionSessionCreate(
+            allocator: nil, formatDescription: formatDesc, decoderSpecification: nil,
+            imageBufferAttributes: attrs as CFDictionary, outputCallback: nil,
+            decompressionSessionOut: &session)
+        if status != noErr { Log.info("VTDecompressionSessionCreate failed: \(status)") }
+        decompressionSession = session
+    }
+
+    /// Synchronous hardware decode — the handler runs before this returns,
+    /// so blocking in the renderer (nextDrawable) is our frame pacing.
+    private func decodeAndRender(_ sample: CMSampleBuffer, captureMs: Double?) {
+        ensureDecompressionSession()
+        guard let session = decompressionSession else { return }
+        let t0 = nowMs
+        let status = VTDecompressionSessionDecodeFrame(
+            session, sampleBuffer: sample, flags: [], infoFlagsOut: nil
+        ) { [weak self] status, _, imageBuffer, _, _ in
+            guard let self else { return }
+            if status == noErr, let imageBuffer {
+                self.decodeWindow.append(self.nowMs - t0)
+                self.onDecodedFrame?(imageBuffer, captureMs)
+            }
+        }
+        if status != noErr {
+            // e.g. P-frame after joining mid-stream — the Mac forces a
+            // keyframe on every (re)connect, so this resolves itself.
+            decodeFlushes += 1
         }
     }
 

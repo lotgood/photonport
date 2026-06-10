@@ -34,6 +34,7 @@ struct ReceiverScreen: View {
     @State private var showSettings = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("showAnalytics") private var showAnalytics = false
+    @AppStorage("metalRenderer") private var metalRenderer = true
 
     // Streaming = connected and the video format is known.
     private var isStreaming: Bool {
@@ -46,7 +47,9 @@ struct ReceiverScreen: View {
                 if isStreaming {
                     Color.black.ignoresSafeArea()
                     VideoLayerView(displayLayer: model.receiver.displayLayer,
-                                   receiver: model.receiver)
+                                   receiver: model.receiver,
+                                   useMetal: metalRenderer)
+                        .id(metalRenderer)   // rebuild the layer tree on toggle
                         .ignoresSafeArea()
                     if showAnalytics {
                         VStack {
@@ -172,6 +175,14 @@ struct PerfOverlay: View {
                     metric("p95", String(format: "%.0f ms", stats.e2eP95))
                     metric("encode", String(format: "%.0f ms", stats.encodeP50))
                 }
+                if stats.decodeP50 > 0 {
+                    metric("decode", String(format: "%.1f ms", stats.decodeP50))
+                }
+                if stats.photonP50 > 0 {
+                    // True capture→glass latency (Metal presented handler) —
+                    // the only number that includes display vsync.
+                    metric("photon", String(format: "%.0f ms", stats.photonP50))
+                }
                 if stats.inputP50 > 0 {
                     // touch→CGEvent on the Mac; full touch-to-photon adds
                     // the render+capture wait and one e2e on top.
@@ -267,6 +278,7 @@ struct SettingsView: View {
     @ObservedObject var receiver: PhoneReceiver
     @Environment(\.dismiss) private var dismiss
     @AppStorage("showAnalytics") private var showAnalytics = false
+    @AppStorage("metalRenderer") private var metalRenderer = true
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -287,10 +299,11 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Performance overlay", isOn: $showAnalytics)
+                    Toggle("Metal renderer", isOn: $metalRenderer)
                 } header: {
                     Text("Analytics")
                 } footer: {
-                    Text("Shows FPS, bitrate, frame timing, stalls, and a frame-time graph at the bottom of the screen while streaming. Useful for debugging latency.")
+                    Text("The overlay shows FPS, bitrate, frame timing, stalls, and latency graphs at the bottom of the screen while streaming. The Metal renderer decodes and presents frames directly for lower display latency; turn it off to fall back to the system video layer.")
                 }
 
                 Section {
@@ -375,14 +388,28 @@ final class ReceiverModel: ObservableObject {
 struct VideoLayerView: UIViewRepresentable {
     let displayLayer: AVSampleBufferDisplayLayer
     let receiver: PhoneReceiver
+    let useMetal: Bool
 
     func makeUIView(context: Context) -> VideoView {
         let view = VideoView()
         view.backgroundColor = .black
         view.isMultipleTouchEnabled = true
         view.receiver = receiver
-        displayLayer.frame = view.bounds
-        view.layer.addSublayer(displayLayer)
+
+        if useMetal, let renderer = MetalVideoRenderer() {
+            view.metalRenderer = renderer
+            view.layer.addSublayer(renderer.metalLayer)
+            receiver.onDecodedFrame = { [weak renderer] pixelBuffer, captureMs in
+                renderer?.render(pixelBuffer, captureMs: captureMs)
+            }
+            renderer.onPresented = { [weak receiver] presentedTime, captureMs in
+                receiver?.recordPresented(presentedTime: presentedTime, captureMs: captureMs)
+            }
+        } else {
+            receiver.onDecodedFrame = nil   // route frames back to AVSBDL
+            displayLayer.frame = view.bounds
+            view.layer.addSublayer(displayLayer)
+        }
 
         let pan = UIPanGestureRecognizer(target: view, action: #selector(VideoView.didTwoFingerPan(_:)))
         pan.minimumNumberOfTouches = 2
@@ -400,10 +427,14 @@ struct VideoLayerView: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: VideoView, context: Context) {}
+    func updateUIView(_ uiView: VideoView, context: Context) {
+        // videoSize arrives after the format description — re-fit the layers.
+        uiView.setNeedsLayout()
+    }
 
     final class VideoView: UIView {
         weak var receiver: PhoneReceiver?
+        var metalRenderer: MetalVideoRenderer?
 
         private let cursorLayer: CALayer = {
             let layer = CALayer()
@@ -421,10 +452,16 @@ struct VideoLayerView: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            // Keep the display layer sized to the view without implicit animation.
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            layer.sublayers?.first?.frame = bounds
+            if let renderer = metalRenderer {
+                // The metal layer scales its drawable to fill its frame, so
+                // the frame itself must be the aspect-fit rect.
+                renderer.metalLayer.frame = videoRect() ?? bounds
+            } else {
+                // AVSBDL aspect-fits internally (videoGravity) — full bounds.
+                layer.sublayers?.first?.frame = bounds
+            }
             if cursorLayer.superlayer == nil { layer.addSublayer(cursorLayer) }
             updateCursorLayout()
             CATransaction.commit()

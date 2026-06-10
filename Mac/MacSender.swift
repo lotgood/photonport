@@ -501,10 +501,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    /// The sprite changes rarely (arrow ↔ I-beam ↔ resize…) — poll it slowly
-    /// on the main thread (NSCursor is AppKit) and send only on change.
+    /// Sprite changes (arrow ↔ I-beam ↔ resize…) must land fast or the wrong
+    /// cursor shows over hot areas — poll at 30Hz on the main thread (NSCursor
+    /// is AppKit), hash the raw bitmap, and only PNG-encode + send on change.
     private func scheduleCursorImagePoll() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.033) { [weak self] in
             guard let self, !self.stopped, self.localCursor else { return }
             self.pollCursorImage()
             self.scheduleCursorImagePoll()
@@ -515,12 +516,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         guard connectionReady, displayPointsSize != .zero,
               let cursor = NSCursor.currentSystem else { return }
         let image = cursor.image
-        guard let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
+        guard let tiff = image.tiffRepresentation else { return }
+        let hash = tiff.hashValue
+        guard hash != lastCursorPNGHash else { return }
+        guard let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]),
               png.count < 24_000 else { return }
-        let hash = png.hashValue
-        guard hash != lastCursorPNGHash else { return }
         lastCursorPNGHash = hash
         let size = image.size            // Mac points
         let hot = cursor.hotSpot
