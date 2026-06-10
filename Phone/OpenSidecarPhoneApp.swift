@@ -172,8 +172,16 @@ struct PerfOverlay: View {
                     metric("p95", String(format: "%.0f ms", stats.e2eP95))
                     metric("encode", String(format: "%.0f ms", stats.encodeP50))
                 }
+                if stats.inputP50 > 0 {
+                    // touch→CGEvent on the Mac; full touch-to-photon adds
+                    // the render+capture wait and one e2e on top.
+                    metric("input", String(format: "%.0f ms", stats.inputP50))
+                }
                 metric("rtt", String(format: "%.0f ms", stats.rttMs))
                 metric("FPS", "\(stats.fps)")
+                if stats.capFps > 0 {
+                    metric("Mac cap", "\(stats.capFps)")
+                }
                 metric("Mbit/s", String(format: "%.1f", stats.mbps))
                 metric("stalls", "\(stats.stalls)")
                 metric("drops", "\(stats.macDrops)")
@@ -445,6 +453,24 @@ struct VideoLayerView: UIViewRepresentable {
             guard let touch = touches.first,
                   let norm = normalized(touch.location(in: self)) else { return }
             lastNorm = norm
+            if phase == "moved", let event {
+                // The panel samples touches at 120Hz but UIKit delivers at
+                // display refresh — forward every coalesced sample so the Mac
+                // gets the full-rate drag, then UIKit's predicted touch so the
+                // cursor leads toward where the finger will be (~1 frame of
+                // perceived latency back; corrected by the next real sample).
+                for t in event.coalescedTouches(for: touch) ?? [touch] {
+                    if let n = normalized(t.location(in: self)) {
+                        lastNorm = n
+                        receiver?.sendTouch(phase: "moved", x: n.x, y: n.y)
+                    }
+                }
+                if let predicted = event.predictedTouches(for: touch)?.last,
+                   let n = normalized(predicted.location(in: self)) {
+                    receiver?.sendTouch(phase: "moved", x: n.x, y: n.y)
+                }
+                return
+            }
             receiver?.sendTouch(phase: phase, x: norm.x, y: norm.y)
         }
 

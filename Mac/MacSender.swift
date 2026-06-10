@@ -107,6 +107,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastReceived = Date()
     private var dropsTotal = 0
 
+    // Input latency: touches arrive stamped in our clock (the phone applies
+    // its sync offset); delta to now = network + deframe + dispatch.
+    private var inputLatencies: [Double] = []
+    // Capture cadence: SCK only emits on content change, so the phone can't
+    // tell "Mac rendered 45fps" from "frames got lost" — count deliveries here.
+    private var capFrames = 0
+    private var capWindowStart = Date()
+
     private var framesSent = 0
     private var bytesSent = 0
     private var statsWindowStart = Date()
@@ -275,13 +283,18 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         let config = SCStreamConfiguration()
         config.width = pixelsWide
         config.height = pixelsHigh
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        // Ask for 120 even though the virtual display is 60Hz: requesting
+        // exactly 1/60 makes SCK's rate limiter skip frames that arrive a
+        // hair early (beat frequency) — measured ~51fps instead of 60.
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 120)
         // 420v matches the encoder's native input — skips a BGRA→YUV conversion
         // inside VideoToolbox. (`-pixfmt bgra` reverts for A/B testing.)
         config.pixelFormat = UserDefaults.standard.string(forKey: "pixfmt") == "bgra"
             ? kCVPixelFormatType_32BGRA
             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        config.queueDepth = 5
+        // One buffer is held permanently (keyframe replay) and one sits in
+        // the encoder for ~13ms — headroom prevents SCK starvation drops.
+        config.queueDepth = 8
         config.showsCursor = true
 
         setupEncoder(width: pixelsWide, height: pixelsHigh)
@@ -403,7 +416,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
             guard let self, !self.stopped else { return }
             if self.connectionReady {
                 // Liveness + send-side health for the phone's overlay.
-                self.sendJSONFrame("{\"type\":\"ping\",\"drops\":\(self.dropsTotal),\"pending\":\(self.pendingSends)}")
+                let elapsed = Date().timeIntervalSince(self.capWindowStart)
+                let capFps = elapsed > 0 ? Int(Double(self.capFrames) / elapsed) : 0
+                self.capFrames = 0
+                self.capWindowStart = Date()
+                let sorted = self.inputLatencies.sorted()
+                let inp50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2].rounded()
+                let inp95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))].rounded()
+                self.sendJSONFrame("{\"type\":\"ping\",\"drops\":\(self.dropsTotal),\"pending\":\(self.pendingSends),\"inp50\":\(inp50),\"inp95\":\(inp95),\"capFps\":\(capFps)}")
             }
             self.schedulePing()
         }
@@ -493,6 +513,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                let x = obj["x"] as? Double,
                let y = obj["y"] as? Double {
                 inputInjector?.handleTouch(phase: phase, x: x, y: y)
+                if let t = obj["t"] as? Double {
+                    let delta = Date().timeIntervalSince1970 * 1000 - t
+                    if delta > -50, delta < 1000 {
+                        inputLatencies.append(max(delta, 0))
+                        if inputLatencies.count > 240 { inputLatencies.removeFirst(120) }
+                    }
+                }
             }
         case "scroll":
             if let dx = obj["dx"] as? Double, let dy = obj["dy"] as? Double {
@@ -545,8 +572,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 120 as CFNumber)
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 2 as CFNumber)
+        // No periodic IDRs: each one is a bitrate spike → transmit-time hiccup.
+        // TCP never loses data, and we force a keyframe on reconnect/drop.
+        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 3600 as CFNumber)
+        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 60 as CFNumber)
+        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AverageBitRate, value: quality.bitrate as CFNumber)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: 60 as CFNumber)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
@@ -566,6 +596,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
 
         lastPixelBuffer = pixelBuffer
         lastCaptureAt = Date()
+        capFrames += 1
 
         // No receiver, or the socket is backed up: skip this frame entirely.
         guard connectionReady else { return }

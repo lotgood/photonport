@@ -31,6 +31,9 @@ struct PerfStats: Equatable {
     var transport = "—"          // USB (loopback via usbmux) or WiFi
     var macDrops = 0             // frames the Mac dropped (backpressure), total
     var macPending = 0           // Mac send queue depth right now
+    var inputP50 = 0.0           // touch sent → CGEvent injected on the Mac, ms
+    var inputP95 = 0.0
+    var capFps = 0               // frames ScreenCaptureKit delivered on the Mac
 }
 
 final class PhoneReceiver: ObservableObject {
@@ -78,6 +81,9 @@ final class PhoneReceiver: ObservableObject {
     private var transport = "—"
     private var macDrops = 0
     private var macPending = 0
+    private var macInputP50 = 0.0
+    private var macInputP95 = 0.0
+    private var macCapFps = 0
 
     private var nowMs: Double { Date().timeIntervalSince1970 * 1000 }
 
@@ -148,8 +154,14 @@ final class PhoneReceiver: ObservableObject {
 
     private func startListener() {
         do {
-            let params = NWParameters.tcp
+            // noDelay matters most in THIS direction: touch events are tiny
+            // packets, and Nagle would hold each one until the previous is
+            // ACKed — batched, late drags read as input lag.
+            let tcp = NWProtocolTCP.Options()
+            tcp.noDelay = true
+            let params = NWParameters(tls: nil, tcp: tcp)
             params.allowLocalEndpointReuse = true
+            params.serviceClass = .interactiveVideo
             listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
         } catch {
             setStatus("Listener failed: \(error.localizedDescription)")
@@ -236,6 +248,9 @@ final class PhoneReceiver: ObservableObject {
             // The Mac piggybacks its send-side health on liveness pings.
             macDrops = obj["drops"] as? Int ?? macDrops
             macPending = obj["pending"] as? Int ?? macPending
+            macInputP50 = obj["inp50"] as? Double ?? macInputP50
+            macInputP95 = obj["inp95"] as? Double ?? macInputP95
+            macCapFps = obj["capFps"] as? Int ?? macCapFps
         default:
             break
         }
@@ -279,8 +294,12 @@ final class PhoneReceiver: ObservableObject {
     }
 
     /// Touch events: x/y normalized [0,1] in video space, origin top-left.
+    /// Stamped in *Mac* clock time (our clock + sync offset) so the Mac can
+    /// measure touch→injection latency without doing its own clock sync.
     func sendTouch(phase: String, x: Double, y: Double) {
-        sendControl(["type": "touch", "phase": phase, "x": x, "y": y])
+        var msg: [String: Any] = ["type": "touch", "phase": phase, "x": x, "y": y]
+        if let offset = clockOffsetMs { msg["t"] = nowMs + offset }
+        sendControl(msg)
     }
 
     /// Two-finger scroll: dx/dy in video pixels (natural-scrolling sign).
@@ -543,6 +562,9 @@ final class PhoneReceiver: ObservableObject {
             stats.transport = transport
             stats.macDrops = macDrops
             stats.macPending = macPending
+            stats.inputP50 = macInputP50
+            stats.inputP95 = macInputP95
+            stats.capFps = macCapFps
             framesThisWindow = 0
             bytesThisWindow = 0
             stallsThisWindow = 0
@@ -563,6 +585,8 @@ final class PhoneReceiver: ObservableObject {
                     "enc50": stats.encodeP50.rounded(),
                     "rtt": lastRttMs.rounded(),
                     "stalls": stats.stalls,
+                    "inp50": macInputP50.rounded(),
+                    "capFps": macCapFps,
                     "offsetKnown": clockOffsetMs != nil,
                 ])
                 e2eWindow.removeAll(keepingCapacity: true)
