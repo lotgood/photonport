@@ -329,6 +329,26 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         Log.info("stream stopped with error: \(error)")
         Task { await status("Capture stopped: \(error.localizedDescription)") }
+        // E.g. display sleep can tear the virtual display down underneath the
+        // stream — rebuild instead of sitting dead until an app restart.
+        guard !stopped, mode == .extend else { return }
+        self.stream = nil
+        scheduleCaptureRecovery()
+    }
+
+    /// Retry until capture is back (a rebuild during display sleep can fail).
+    private func scheduleCaptureRecovery() {
+        queue.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self, !self.stopped, self.stream == nil,
+                  let hello = self.lastHello else { return }
+            Log.info("capture died — rebuilding pipeline")
+            Task {
+                await self.reconfigure(hello)
+                self.queue.async {
+                    if self.stream == nil { self.scheduleCaptureRecovery() }
+                }
+            }
+        }
     }
 
     // MARK: - Connection (with retry)
