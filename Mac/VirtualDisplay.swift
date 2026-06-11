@@ -12,8 +12,12 @@ final class VirtualDisplay {
 
     var displayID: CGDirectDisplayID { display.displayID }
 
-    /// Must be called on the main thread.
-    init?(name: String, pointsWide: Int, pointsHigh: Int, sizeInMillimeters: CGSize) {
+    /// Must be called on the main thread. `serialNum` must be unique per
+    /// concurrent display AND stable per device — macOS keys saved display
+    /// arrangement on vendor/product/serial, so a stable serial means each
+    /// device keeps its position in System Settings across sessions.
+    init?(name: String, pointsWide: Int, pointsHigh: Int, sizeInMillimeters: CGSize,
+          serialNum: UInt32 = 0x0001) {
         self.pointsWide = pointsWide
         self.pointsHigh = pointsHigh
 
@@ -25,7 +29,7 @@ final class VirtualDisplay {
         descriptor.sizeInMillimeters = sizeInMillimeters
         descriptor.productID = 0x4F53   // "OS"
         descriptor.vendorID = 0x5043    // "PC"
-        descriptor.serialNum = 0x0001
+        descriptor.serialNum = serialNum
         descriptor.terminationHandler = { _, _ in
             Log.info("virtual display terminated by the system")
         }

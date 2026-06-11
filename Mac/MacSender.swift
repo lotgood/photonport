@@ -102,6 +102,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     private let endpointName: String
     private let mode: CaptureMode
     private let quality: StreamQuality
+    // Stable per-device serial for the virtual display, so macOS can tell
+    // multiple OpenSidecar monitors apart and persist their arrangement.
+    private let displaySerial: UInt32
 
     // Backpressure: outstanding sends. If the socket can't keep up we drop
     // frames instead of queueing latency, then force a keyframe to resync.
@@ -161,11 +164,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastCaptureAt = Date.distantPast
 
     init(transport: SenderTransport, name: String, mode: CaptureMode,
-         quality: StreamQuality = .best) {
+         quality: StreamQuality = .best, displaySerial: UInt32 = 0x0001) {
         self.transport = transport
         self.endpointName = name
         self.mode = mode
         self.quality = quality
+        self.displaySerial = displaySerial
         super.init()
     }
 
@@ -238,10 +242,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
             ? CGSize(width: 147, height: 68)
             : CGSize(width: 68, height: 147)
 
-        let vd = await MainActor.run {
-            VirtualDisplay(name: "OpenSidecar",
+        let vd = await MainActor.run { [endpointName, displaySerial] in
+            VirtualDisplay(name: "OpenSidecar — \(endpointName)",
                            pointsWide: pointsWide, pointsHigh: pointsHigh,
-                           sizeInMillimeters: mm)
+                           sizeInMillimeters: mm, serialNum: displaySerial)
         }
         guard let vd else {
             throw NSError(domain: "MacSender", code: 2,
