@@ -266,7 +266,13 @@ artifacts.
 
 ## License
 
-[MIT](LICENSE)
+[GPL-3.0](LICENSE) — Copyright (c) 2026 Philip Poloczek.
+
+Free to use, study, and adapt. If you distribute a modified version it
+must remain open source under the same license, with the original
+attribution intact — improvements flow back to everyone instead of into
+closed forks. (Versions up to v0.4.x were MIT-licensed; those releases
+remain available under MIT.)
 
 ---
 
