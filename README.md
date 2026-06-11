@@ -199,7 +199,16 @@ quality-per-bit.
 
 **Is my screen content sent anywhere?** No. One direct TCP connection
 between your Mac and your device, over your cable or your LAN. No servers,
-no accounts, no analytics.
+no accounts, no analytics. Full details — including what the apps store
+locally and the current WiFi-encryption caveat — on the
+[privacy page](https://peetzweg.github.io/opensidecar/privacy.html).
+
+**What's the license? Can I fork it or use it commercially?**
+[GPL-3.0](LICENSE). Use, study, and adapt it freely — commercially too. If
+you distribute a modified version it must stay open source under the same
+license with the original attribution intact, so improvements flow back
+instead of into closed forks. (Releases up to v0.4.x were MIT-licensed and
+remain available under those terms.)
 
 **Will it break on a macOS update?** Possibly — `CGVirtualDisplay` is
 private API. The same risk applies to every virtual-display product.
