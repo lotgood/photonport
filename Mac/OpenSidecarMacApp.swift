@@ -357,20 +357,29 @@ final class SenderController: ObservableObject {
         return hash == 0 ? 1 : hash
     }
 
-    func connect(to target: ConnectionTarget) {
+    func connect(to target: ConnectionTarget, userInitiated: Bool = false) {
         let id = target.sessionID
         guard session(for: id) == nil else { return }
 
         // Never create a second session for the same physical device — the
-        // receiver holds one connection, so a twin would steal it.
+        // receiver holds one connection, so a twin would steal it. But an
+        // explicit user click overrides: e.g. right after unplugging the
+        // cable, the dying USB session sits in its 10s reconnect grace and
+        // would otherwise swallow the tap on the WiFi row.
+        let covering: DeviceSession?
         switch target {
         case .usb(let udid?):
-            if let device = usbDevices.first(where: { $0.udid == udid }),
-               activeSession(coveringUSB: device) != nil { return }
+            covering = usbDevices.first(where: { $0.udid == udid })
+                .flatMap { activeSession(coveringUSB: $0) }
         case .wifi(let result):
-            if activeSession(coveringWiFi: result) != nil { return }
+            covering = activeSession(coveringWiFi: result)
         default:
-            break
+            covering = nil
+        }
+        if let covering {
+            guard userInitiated else { return }
+            Log.info("user chose \(id) — taking over from \(covering.id)")
+            end(covering)
         }
 
         // Connecting a device clears its "don't auto-connect" state.
@@ -631,8 +640,10 @@ struct ContentView: View {
                                 }
                                 Spacer()
                                 if let target = entry.preferredTarget {
-                                    Button("Connect") { controller.connect(to: target) }
-                                        .controlSize(.small)
+                                    Button("Connect") {
+                                        controller.connect(to: target, userInitiated: true)
+                                    }
+                                    .controlSize(.small)
                                 }
                             }
                         }

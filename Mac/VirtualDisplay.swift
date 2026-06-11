@@ -7,6 +7,7 @@ import CoreGraphics
 final class VirtualDisplay {
 
     private let display: CGVirtualDisplay
+    private let settings: CGVirtualDisplaySettings
     let pointsWide: Int
     let pointsHigh: Int
 
@@ -36,7 +37,7 @@ final class VirtualDisplay {
 
         display = CGVirtualDisplay(descriptor: descriptor)
 
-        let settings = CGVirtualDisplaySettings()
+        settings = CGVirtualDisplaySettings()
         settings.hiDPI = 1
         settings.modes = [
             CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh), refreshRate: 60)
@@ -61,7 +62,7 @@ final class VirtualDisplay {
                 // removing the display — never hold it across the sleep.
                 do {
                     guard let self else { return }
-                    if self.selectHiDPIMode() { settled = true }
+                    if self.selectHiDPIMode(recover: settled) { settled = true }
                 }
                 try? await Task.sleep(for: .milliseconds(settled ? 2000 : 200))
             }
@@ -69,14 +70,21 @@ final class VirtualDisplay {
     }
 
     /// Returns true when the display is (now) in its HiDPI mode. Silent when
-    /// nothing needed doing — this runs every 2s as enforcement.
+    /// nothing needed doing — this runs every 2s as enforcement. With
+    /// `recover`, a missing @2x mode (macOS can replace the whole mode list
+    /// when it restores saved display state) re-applies our settings to
+    /// publish it again instead of failing silently forever.
     @discardableResult
-    private func selectHiDPIMode() -> Bool {
+    private func selectHiDPIMode(recover: Bool = false) -> Bool {
         let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
         guard let modes = CGDisplayCopyAllDisplayModes(display.displayID, opts) as? [CGDisplayMode],
               let hidpi = modes.first(where: {
                   $0.width == pointsWide && $0.pixelWidth == pointsWide * 2
               }) else {
+            if recover {
+                Log.info("@2x mode vanished from display \(display.displayID) — re-applying settings")
+                _ = display.apply(settings)
+            }
             return false
         }
         if let current = CGDisplayCopyDisplayMode(display.displayID),
