@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.6](https://github.com/peetzweg/opensidecar/compare/v0.6.5...v0.6.6) (2026-06-15)
+
+
+### Bug Fixes
+
+* pass explicit app_identifier to upload_to_testflight ([8bd61c4](https://github.com/peetzweg/opensidecar/commit/8bd61c4dad87333a8db276e48672f51db4d0bf64))
+
 ## [0.6.5](https://github.com/peetzweg/opensidecar/compare/v0.6.4...v0.6.5) (2026-06-15)
 
 
