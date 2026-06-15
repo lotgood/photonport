@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.7](https://github.com/peetzweg/opensidecar/compare/v0.6.6...v0.6.7) (2026-06-15)
+
+
+### Bug Fixes
+
+* add iPad icon sizes and switch CI to macos-26 for iOS 26 SDK ([2e0ad58](https://github.com/peetzweg/opensidecar/commit/2e0ad589ee80c039fb6fed7c18b286d67336e599))
+
 ## [0.6.6](https://github.com/peetzweg/opensidecar/compare/v0.6.5...v0.6.6) (2026-06-15)
 
 
