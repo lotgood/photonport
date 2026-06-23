@@ -52,6 +52,27 @@ platform :mac do
       bundle_id: "com.peetzweg.opensidecar.mac",
       api_key:   key
     )
+
+    # Wrap the notarized app in a DMG for a friendlier download. Use hdiutil
+    # (built-in) rather than create-dmg to avoid the AppleScript window-styling
+    # step that is flaky in headless CI. Sign the DMG with the Developer ID
+    # identity match installed, then notarize + staple it too — so the
+    # downloaded disk image itself passes Gatekeeper without a prompt.
+    dmg = "build/export/OpenSidecar.dmg"
+    sh(<<~BASH)
+      set -euo pipefail
+      rm -rf build/dmg-src
+      mkdir -p build/dmg-src
+      cp -R build/export/OpenSidecar.app build/dmg-src/
+      ln -s /Applications build/dmg-src/Applications
+      hdiutil create -volname OpenSidecar -srcfolder build/dmg-src -ov -format UDZO #{dmg}
+      codesign --force --sign "Developer ID Application" --timestamp #{dmg}
+    BASH
+    notarize(
+      package:   dmg,
+      bundle_id: "com.peetzweg.opensidecar.mac",
+      api_key:   key
+    )
   end
 end
 
