@@ -1,0 +1,53 @@
+# Unsigned build verification for both targets. This fork ships no binaries,
+# so CI's only job is catching compile regressions — especially cheap
+# insurance for a codebase that leans on private APIs and OS-version-gated
+# fallback paths that local development (one macOS version) never compiles
+# against differently.
+#
+# No signing: DEVELOPMENT_TEAM stays unset (no .env in CI), which project.yml
+# documents as the supported unsigned configuration, and CODE_SIGNING_ALLOWED=NO
+# skips the codesign step entirely.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macos-26 for the iOS 26 SDK (same reason upstream's release workflow
+    # pins it — see upstream 0.6.7).
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: OpenSidecarMac
+            destination: platform=macOS
+          - scheme: OpenSidecariOS
+            destination: generic/platform=iOS
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: ./generate.sh
+
+      - name: Build ${{ matrix.scheme }} (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project OpenSidecar.xcodeproj \
+            -scheme '${{ matrix.scheme }}' \
+            -configuration Debug \
+            -destination '${{ matrix.destination }}' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
