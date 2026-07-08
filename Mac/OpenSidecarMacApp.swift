@@ -327,12 +327,18 @@ final class SenderController: ObservableObject {
             throw PairingError.serviceNotFound
         }
         let macName = Host.current().localizedName ?? "Mac"
-        let (deviceID, psk) = try await PairingClient.pair(
-            serviceName: name, pin: pin, macName: macName,
-            macInstallID: PairingStore.macInstallID)
-        PairingStore.setPSK(psk, for: deviceID)
-        Log.info("paired with \(name) — connecting")
-        connect(to: .wifi(result), userInitiated: true)
+        Log.info("pairing: starting exchange with \"\(name)\" (mac id \(PairingStore.macInstallID.prefix(8)))")
+        do {
+            let (deviceID, psk) = try await PairingClient.pair(
+                serviceName: name, pin: pin, macName: macName,
+                macInstallID: PairingStore.macInstallID)
+            PairingStore.setPSK(psk, for: deviceID)
+            Log.info("pairing: succeeded with \"\(name)\" (device \(deviceID.prefix(8))) — connecting")
+            connect(to: .wifi(result), userInitiated: true)
+        } catch {
+            Log.info("pairing: FAILED with \"\(name)\": \(error.localizedDescription)")
+            throw error
+        }
     }
 
     /// Forget a device's pairing (the receiver keeps its side until removed
