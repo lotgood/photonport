@@ -75,7 +75,7 @@ experimental display/audio work stays here.
   so audio never queues behind video frames. If the Mac's default output is
   Bluetooth headphones, forwarding pauses and audio stays on the headphones.
 - **WiFi transport (pairing + TLS, transport-tuned)** — WiFi runs over
-  TLS-PSK after a one-time PIN pairing (see Security). It can't carry the
+  TLS-PSK after a one-time SAS-numeric-comparison pairing (see Security). It can't carry the
   USB-tier native-120fps HDR config — the HEVC encoder needs ~20ms/frame at
   native res (ProRes isn't available off USB) and the radio's usable
   bitrate is a fraction of usbmux — so WiFi is capped to 60fps and a

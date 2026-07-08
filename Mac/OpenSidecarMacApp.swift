@@ -126,7 +126,7 @@ enum PairWindow {
         w.center()
         window = w
         // Menu-bar mode runs as .accessory, so the app must foreground itself
-        // for the pairing window to take key and receive the typed PIN.
+        // for the pairing window to take key and show the SAS code to compare.
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
     }
