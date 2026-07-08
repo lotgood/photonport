@@ -3,7 +3,8 @@
 //
 //  Reverse-engineered interface of the private CoreGraphics virtual display
 //  API. Originally published by Khaos Tian (VirtualDisplayExp) and used in
-//  DeskPad, BetterDisplay et al. Private API: capped at 60 Hz and may break
+//  DeskPad, BetterDisplay et al. Private API: historically capped at 60 Hz
+//  (VirtualDisplay.swift attempts higher modes and falls back) and may break
 //  across macOS versions — personal/sideloaded use only.
 //
 
@@ -19,8 +20,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property(readonly, nonatomic) CGFloat refreshRate;
 @property(readonly, nonatomic) NSUInteger width;
 @property(readonly, nonatomic) NSUInteger height;
+// 0 = SDR (gamma). 1 = EDR: WindowServer composites the display with real
+// HDR headroom (measured potentialEDR 5.0 on macOS 26; same hook
+// BetterDisplay 4.3.3+ uses for its HDR virtual screens). Values 2+ exist
+// but showed no EDR effect in probing. Initializer present on macOS 26 —
+// ALWAYS check instancesRespondToSelector before using.
+@property(readonly, nonatomic) unsigned int transferFunction;
 
 - (instancetype)initWithWidth:(NSUInteger)arg1 height:(NSUInteger)arg2 refreshRate:(CGFloat)arg3;
+- (instancetype)initWithWidth:(NSUInteger)arg1 height:(NSUInteger)arg2 refreshRate:(CGFloat)arg3 transferFunction:(unsigned int)arg4;
 
 @end
 

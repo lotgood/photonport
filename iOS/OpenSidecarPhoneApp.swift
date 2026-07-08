@@ -285,6 +285,11 @@ struct PerfOverlay: View {
                     // the render+capture wait and one e2e on top.
                     metric("input", String(format: "%.0f ms", stats.inputP50))
                 }
+                if stats.audioP50 > 0 {
+                    // Mac send → audible on this device (network + player
+                    // queue + output stage), estimated per chunk.
+                    metric("audio", String(format: "%.0f ms", stats.audioP50))
+                }
                 metric("rtt", String(format: "%.0f ms", stats.rttMs))
                 metric("FPS", "\(stats.fps)")
                 if stats.capFps > 0 {
@@ -300,6 +305,13 @@ struct PerfOverlay: View {
                     metric("flushes", "\(stats.decodeFlushes)")
                 }
                 metric("res", "\(Int(videoSize.width))×\(Int(videoSize.height))")
+                // EDR headroom: current/potential. >1.0 current means the
+                // panel is actively rendering HDR right now; potential near
+                // 1.0 means manual brightness is maxed and there is no
+                // headroom left for highlights (HDR will look like SDR).
+                metric("EDR", String(format: "%.2f/%.2f",
+                                     UIScreen.main.currentEDRHeadroom,
+                                     UIScreen.main.potentialEDRHeadroom))
             }
             // Two graphs side by side where they fit (landscape), stacked
             // where they don't (portrait).
@@ -321,7 +333,9 @@ struct PerfOverlay: View {
                        good: 25, warn: 40, reference: nil))
         graph("frame interval ms",
               BarGraph(samples: stats.samples, ceiling: 60,
-                       good: 25, warn: 50, reference: 16.7))
+                       good: 25, warn: 50,
+                       // Panel-rate reference: 16.7ms on 60Hz, 8.3ms on ProMotion.
+                       reference: 1000.0 / Double(UIScreen.main.maximumFramesPerSecond)))
     }
 
     private func metric(_ label: String, _ value: String) -> some View {
@@ -554,6 +568,11 @@ final class ReceiverModel: ObservableObject {
         receiver.setNativePanel(long: Int(max(native.width, native.height)),
                                 short: Int(min(native.width, native.height)),
                                 scale: Double(UIScreen.main.nativeScale))
+        // Panel capabilities for pipeline negotiation: ProMotion refresh cap
+        // (needs CADisableMinimumFrameDurationOnPhone in Info.plist to
+        // actually reach 120 on iPhone) and EDR headroom for HDR streaming.
+        receiver.deviceMaxFps = UIScreen.main.maximumFramesPerSecond
+        receiver.deviceSupportsHDR = UIScreen.main.potentialEDRHeadroom > 1.0
         let savedName = UserDefaults.standard.string(forKey: "deviceName")
         receiver.serviceName = (savedName?.isEmpty == false) ? savedName! : UIDevice.current.name
         receiver.objectWillChange

@@ -10,6 +10,14 @@ final class VirtualDisplay {
     private let settings: CGVirtualDisplaySettings
     let pointsWide: Int
     let pointsHigh: Int
+    /// The refresh rate the display actually runs at — the requested rate
+    /// when macOS accepted it, 60 when it fell back. The sender paces the
+    /// encoder off this, not off the request.
+    private(set) var appliedRefreshRate: Int
+    /// True when the display was created with the EDR transfer function —
+    /// WindowServer then composites it with real HDR headroom (measured
+    /// potentialEDR 5.0), so HDR content survives into the capture.
+    private(set) var appliedHDR = false
 
     var displayID: CGDirectDisplayID { display.displayID }
 
@@ -17,10 +25,15 @@ final class VirtualDisplay {
     /// concurrent display AND stable per device — macOS keys saved display
     /// arrangement on vendor/product/serial, so a stable serial means each
     /// device keeps its position in System Settings across sessions.
+    /// `refreshRate` above 60 and `hdr` are best-effort: attempted first,
+    /// with fallback through (hdr, 60Hz) and plain SDR — the private API's
+    /// support for both varies by macOS version (EDR needs the macOS 26
+    /// transferFunction initializer; same hook BetterDisplay 4.3.3+ uses).
     init?(name: String, pointsWide: Int, pointsHigh: Int, sizeInMillimeters: CGSize,
-          serialNum: UInt32 = 0x0001) {
+          refreshRate: Int = 60, hdr: Bool = false, serialNum: UInt32 = 0x0001) {
         self.pointsWide = pointsWide
         self.pointsHigh = pointsHigh
+        self.appliedRefreshRate = max(refreshRate, 1)
 
         let descriptor = CGVirtualDisplayDescriptor()
         descriptor.setDispatchQueue(DispatchQueue.main)
@@ -37,16 +50,49 @@ final class VirtualDisplay {
 
         display = CGVirtualDisplay(descriptor: descriptor)
 
+        // EDR (transferFunction:1) needs the newer initializer; probing showed
+        // tf=1 is the only value that yields EDR compositing headroom.
+        let tfAvailable = CGVirtualDisplayMode.instancesRespond(
+            to: #selector(CGVirtualDisplayMode.init(width:height:refreshRate:transferFunction:)))
+        if hdr && !tfAvailable {
+            Log.info("EDR virtual display unavailable (no transferFunction initializer on this macOS) — SDR framebuffer")
+        }
+
+        func mode(_ rate: Int, edr: Bool) -> CGVirtualDisplayMode {
+            edr && tfAvailable
+                ? CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh),
+                                       refreshRate: Double(rate), transferFunction: 1)
+                : CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh),
+                                       refreshRate: Double(rate))
+        }
+
         settings = CGVirtualDisplaySettings()
         settings.hiDPI = 1
-        settings.modes = [
-            CGVirtualDisplayMode(width: UInt(pointsWide), height: UInt(pointsHigh), refreshRate: 60)
-        ]
-        guard display.apply(settings) else {
-            Log.info("CGVirtualDisplay applySettings FAILED")
+        // Preference order: everything requested → drop 120Hz → drop EDR.
+        var attempts: [(rate: Int, edr: Bool)] = [(appliedRefreshRate, hdr && tfAvailable)]
+        if appliedRefreshRate > 60 { attempts.append((60, hdr && tfAvailable)) }
+        if hdr && tfAvailable {
+            attempts.append((appliedRefreshRate, false))
+            if appliedRefreshRate > 60 { attempts.append((60, false)) }
+        }
+        var applied = false
+        for attempt in attempts {
+            settings.modes = [mode(attempt.rate, edr: attempt.edr)]
+            if display.apply(settings) {
+                if attempt.rate != appliedRefreshRate || attempt.edr != (hdr && tfAvailable) {
+                    Log.info("virtual display fell back to \(attempt.rate)Hz edr=\(attempt.edr)")
+                }
+                appliedRefreshRate = attempt.rate
+                appliedHDR = attempt.edr
+                applied = true
+                break
+            }
+        }
+        guard applied else {
+            Log.info("CGVirtualDisplay applySettings FAILED (all mode variants)")
             return nil
         }
-        Log.info("virtual display created: id=\(display.displayID) \(pointsWide)x\(pointsHigh)pt @2x")
+        Log.info("virtual display created: id=\(display.displayID) \(pointsWide)x\(pointsHigh)pt @2x \(appliedRefreshRate)Hz edr=\(appliedHDR)")
 
         // macOS defaults the new display to its 1x mode AND can restore a
         // stale saved mode for this serial asynchronously, seconds after the
@@ -79,9 +125,11 @@ final class VirtualDisplay {
     private func selectHiDPIMode(recover: Bool = false) -> Bool {
         let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
         guard let modes = CGDisplayCopyAllDisplayModes(display.displayID, opts) as? [CGDisplayMode],
-              let hidpi = modes.first(where: {
-                  $0.width == pointsWide && $0.pixelWidth == pointsWide * 2
-              }) else {
+              // Among @2x matches prefer the highest refresh — macOS can list
+              // a derived 60Hz duplicate next to the published 120Hz mode.
+              let hidpi = modes
+                  .filter({ $0.width == pointsWide && $0.pixelWidth == pointsWide * 2 })
+                  .max(by: { $0.refreshRate < $1.refreshRate }) else {
             if recover {
                 Log.info("@2x mode vanished from display \(display.displayID) — re-applying settings")
                 _ = display.apply(settings)
@@ -89,7 +137,11 @@ final class VirtualDisplay {
             return false
         }
         if let current = CGDisplayCopyDisplayMode(display.displayID),
-           current.width == hidpi.width, current.pixelWidth == hidpi.pixelWidth {
+           current.width == hidpi.width, current.pixelWidth == hidpi.pixelWidth,
+           // Refresh check only when both sides report one (virtual displays
+           // can report 0) — otherwise this would reconfigure every 2s.
+           hidpi.refreshRate <= 0 || current.refreshRate <= 0
+               || current.refreshRate >= hidpi.refreshRate - 0.5 {
             return true
         }
         var config: CGDisplayConfigRef?

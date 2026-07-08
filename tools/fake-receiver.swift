@@ -25,8 +25,9 @@ listener.newConnectionHandler = { conn in
     var frames = 0, bytes = 0
     var windowStart = Date()
     conn.start(queue: .global())
-    // iPad Pro 12.9" panel: 2732x2048 @2x
-    conn.send(content: frame("{\"type\":\"hello\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2,\"device\":\"iPad\",\"id\":\"FAKE-3\"}"),
+    // iPad Pro 12.9" panel: 2732x2048 @2x, ProMotion + EDR — exercises the
+    // Mac's 120Hz/HDR negotiation path too.
+    conn.send(content: frame("{\"type\":\"hello\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2,\"device\":\"iPad\",\"id\":\"FAKE-3\",\"maxFps\":120,\"hdr\":true}"),
               completion: .contentProcessed { _ in })
     if simulateRotation {
         DispatchQueue.global().asyncAfter(deadline: .now() + 20) {

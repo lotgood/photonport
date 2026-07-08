@@ -183,8 +183,9 @@ iPad is the same codebase. iPad-specific polish (Pencil, pressure) is on the
 roadmap.
 
 **Why H.264 and not HEVC/AV1?** Hardware H.264 encode/decode is universally
-fast and the latency is excellent. HEVC is a planned option for better
-quality-per-bit.
+fast and the latency is excellent, so it's the SDR default. HDR streams
+(EDR-capable device + macOS 15+) automatically use 10-bit HEVC (HLG), and on
+macOS 26+ the virtual display itself runs in EDR — true HDR in extend mode.
 
 **Is my screen content sent anywhere?** No. One direct TCP connection
 between your Mac and your device, over your cable or your LAN. No servers,
@@ -233,7 +234,6 @@ Tracked as [roadmap issues](https://github.com/peetzweg/opendisplay/issues?q=is%
 
 **Display & media**
 - [#9](https://github.com/peetzweg/opendisplay/issues/9) Resolution & quality settings
-- [#10](https://github.com/peetzweg/opendisplay/issues/10) HEVC encoding
 - [#12](https://github.com/peetzweg/opendisplay/issues/12) Audio forwarding
 - [#17](https://github.com/peetzweg/opendisplay/issues/17) macOS receiver — use another Mac as a display
 
@@ -245,7 +245,7 @@ Tracked as [roadmap issues](https://github.com/peetzweg/opendisplay/issues?q=is%
 - [#14](https://github.com/peetzweg/opendisplay/issues/14) Remote access beyond the local network
 - [#15](https://github.com/peetzweg/opendisplay/issues/15) Additional client platforms
 
-Done: prebuilt releases, built-in USB connectivity (no helper tools), WiFi via Bonjour, portrait mode, touch + two-finger scroll, performance overlay, iPad support, multiple devices at once ([#8](https://github.com/peetzweg/opendisplay/issues/8) — every connected device becomes its own extended display).
+Done: prebuilt releases, built-in USB connectivity (no helper tools), WiFi via Bonjour, portrait mode, touch + two-finger scroll, performance overlay, iPad support, multiple devices at once ([#8](https://github.com/peetzweg/opendisplay/issues/8) — every connected device becomes its own extended display), 120Hz on ProMotion devices, HDR via HEVC Main10 HLG ([#10](https://github.com/peetzweg/opendisplay/issues/10) — needs macOS 15+ and an EDR-capable device).
 
 ## Auto-update (macOS app)
 

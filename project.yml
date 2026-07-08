@@ -52,18 +52,15 @@ targets:
         NSLocalNetworkUsageDescription: OpenDisplay connects to your iPad or iPhone over the local network in WiFi mode.
         NSBonjourServices: ["_opensidecar._tcp"]
         LSApplicationCategoryType: public.app-category.utilities
-        # --- Sparkle auto-update (issue #52) ---
-        # The appcast feed is hosted on the landing-page site at the custom
-        # domain. The release workflow publishes appcast.xml so this URL
-        # resolves — see .github/workflows/release.yml.
-        SUFeedURL: https://opendisplay.app/appcast.xml
-        # Public EdDSA key from Sparkle's `generate_keys`. The matching private
-        # key lives only as the `SPARKLE_PRIVATE_KEY` GitHub Actions secret
-        # (used to sign the appcast in CI) and is never committed. Sparkle
-        # verifies update signatures against this public key before installing.
-        SUPublicEDKey: rYxlIePmwzi2bRo/qIsuY2TqTnQ34li2gQhJpGBiumw=
-        # Check for updates automatically in the background on a schedule.
-        SUEnableAutomaticChecks: true
+        # --- Sparkle auto-update: DEFUSED for the fork ---
+        # Upstream's SUFeedURL pointed at https://opendisplay.app/appcast.xml,
+        # which would silently auto-update this build back to an upstream
+        # release and wipe the fork's changes. No feed + no automatic checks
+        # = Sparkle stays dormant (the "Check for Updates…" UI does nothing).
+        # Re-add a feed URL + matching SUPublicEDKey only once the fork hosts
+        # its own signed appcast.
+        NSAudioCaptureUsageDescription: OpenDisplay forwards the Mac's sound to your iPad or iPhone while streaming.
+        SUEnableAutomaticChecks: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.peetzweg.opensidecar.mac
@@ -98,6 +95,11 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         UIRequiresFullScreen: true
+        # ProMotion: without this key iPhones cap app-driven layer updates at
+        # 60Hz — required for the negotiated 120Hz stream to reach the glass.
+        # iPads honor high refresh without it. (Apple: "Optimizing ProMotion
+        # refresh rates for iPhone 13 Pro and iPad Pro".)
+        CADisableMinimumFrameDurationOnPhone: true
         NSLocalNetworkUsageDescription: OpenDisplay advertises itself on the local network so your Mac can connect over WiFi.
         NSBonjourServices: ["_opensidecar._tcp"]
         UISupportedInterfaceOrientations:

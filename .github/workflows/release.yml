@@ -1,8 +1,10 @@
 name: Release
 
+# DEFUSED for the fork: upstream's push-to-main trigger would fire
+# release/pages pipelines (TestFlight upload, appcast publish, custom
+# domain claim) the moment this tree lands in a new repo. Manual only.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write

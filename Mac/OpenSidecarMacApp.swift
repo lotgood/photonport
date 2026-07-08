@@ -169,6 +169,19 @@ final class SenderController: ObservableObject {
     @Published var quality = StreamQuality(rawValue: UserDefaults.standard.string(forKey: "quality") ?? "") ?? .best {
         didSet { UserDefaults.standard.set(quality.rawValue, forKey: "quality") }
     }
+    // HDR streaming (10-bit HEVC HLG) when the device's panel supports EDR
+    // and the Mac runs macOS 15+. On by default; the toggle exists because
+    // HDR costs encode time and bandwidth vs plain H.264.
+    @Published var hdr = UserDefaults.standard.object(forKey: "hdr") == nil
+        || UserDefaults.standard.bool(forKey: "hdr") {
+        didSet { UserDefaults.standard.set(hdr, forKey: "hdr") }
+    }
+    // System-audio forwarding. v1 caveat: macOS keeps playing locally too
+    // (no public output-routing API) — mute the Mac if doubles bother you.
+    @Published var audio = UserDefaults.standard.object(forKey: "audio") == nil
+        || UserDefaults.standard.bool(forKey: "audio") {
+        didSet { UserDefaults.standard.set(audio, forKey: "audio") }
+    }
 
     var running: Bool { !sessions.isEmpty }
 
@@ -422,7 +435,8 @@ final class SenderController: ObservableObject {
 
         let name = label(for: target)
         let sender = MacSender(transport: transport, name: name, mode: mode,
-                               quality: quality, displaySerial: Self.displaySerial(for: id))
+                               quality: quality, hdrAllowed: hdr, audioEnabled: audio,
+                               displaySerial: Self.displaySerial(for: id))
         let session = DeviceSession(id: id, target: target, name: name, sender: sender)
         sender.onStatus = { [weak session] text in
             session?.status = text
@@ -685,6 +699,22 @@ struct ContentView: View {
                     }
                     .onChange(of: controller.quality) { controller.restartAll() }
                     Text(controller.quality.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("HDR (10-bit HEVC)", isOn: $controller.hdr)
+                        .onChange(of: controller.hdr) { controller.restartAll() }
+                    Text("Streams 10-bit HDR to devices with an EDR display. Needs macOS 15 or later; devices without HDR keep getting H.264 automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Forward system audio", isOn: $controller.audio)
+                        .onChange(of: controller.audio) { controller.restartAll() }
+                    Text("Plays the Mac's sound on the device too. macOS keeps playing locally as well — turn the Mac's volume down if you hear it twice.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

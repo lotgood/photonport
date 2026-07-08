@@ -1,18 +1,9 @@
 name: Deploy GitHub Pages
 
+# DEFUSED for the fork: upstream's push-to-main trigger would fire
+# release/pages pipelines (TestFlight upload, appcast publish, custom
+# domain claim) the moment this tree lands in a new repo. Manual only.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "public/**"
-      - "tools/prerender.mjs"
-      - "index.html"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "vite.config.ts"
-      - "tsconfig.json"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
