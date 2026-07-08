@@ -1719,7 +1719,19 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         var metaLen = UInt32(metaData.count).bigEndian
         framed.append(Data(bytes: &metaLen, count: 4))
         framed.append(metaData)
-        framed.append(Data(bytes: ptr, count: total))
+        // The data pointer only covers `len`; copy from the block buffer when
+        // it isn't contiguous (len < total) rather than reading OOB off ptr.
+        if len == total {
+            framed.append(Data(bytes: ptr, count: total))
+        } else {
+            var frame = Data(count: total)
+            let ok = frame.withUnsafeMutableBytes {
+                CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: total,
+                                           destination: $0.baseAddress!) == noErr
+            }
+            guard ok else { return }
+            framed.append(frame)
+        }
         sendFramed(framed)
     }
 
@@ -1771,17 +1783,32 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
             }
         }
         // Convert AVCC (4-byte length-prefixed NALUs) to Annex B start codes.
-        let raw = UnsafeRawPointer(ptr)
-        var offset = 0
-        while offset + 4 <= total {
-            var nalLen: UInt32 = 0
-            memcpy(&nalLen, raw + offset, 4)
-            nalLen = CFSwapInt32BigToHost(nalLen)
-            offset += 4
-            guard offset + Int(nalLen) <= total else { break }
-            out.append(contentsOf: startCode)
-            out.append(Data(bytes: raw + offset, count: Int(nalLen)))
-            offset += Int(nalLen)
+        // The data pointer only covers `len` bytes; a non-contiguous block
+        // buffer has len < total, so reading `total` off it would be OOB.
+        // Fast path when contiguous; otherwise copy to a contiguous scratch.
+        func parseAVCC(_ raw: UnsafeRawPointer) {
+            var offset = 0
+            while offset + 4 <= total {
+                var nalLen: UInt32 = 0
+                memcpy(&nalLen, raw + offset, 4)
+                nalLen = CFSwapInt32BigToHost(nalLen)
+                offset += 4
+                guard offset + Int(nalLen) <= total else { break }
+                out.append(contentsOf: startCode)
+                out.append(Data(bytes: raw + offset, count: Int(nalLen)))
+                offset += Int(nalLen)
+            }
+        }
+        if len == total {
+            parseAVCC(UnsafeRawPointer(ptr))
+        } else {
+            var contiguous = Data(count: total)
+            let ok = contiguous.withUnsafeMutableBytes {
+                CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: total,
+                                           destination: $0.baseAddress!) == noErr
+            }
+            guard ok else { return nil }
+            contiguous.withUnsafeBytes { parseAVCC($0.baseAddress!) }
         }
         return out
     }
@@ -1813,7 +1840,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         pendingSends += 1
         connection.send(content: frame, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            self.pendingSends -= 1
+            // Clamp: scheduleReconnect() resets pendingSends to 0, so a late
+            // completion from a replaced connection must not drive it negative
+            // (which would permanently disable the backpressure gate).
+            self.pendingSends = max(0, self.pendingSends - 1)
             if let error {
                 Log.info("send error: \(error)")
                 return
