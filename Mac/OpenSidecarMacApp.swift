@@ -105,6 +105,38 @@ enum MainWindow {
     }
 }
 
+/// Pairing runs in its own real NSWindow, never a SwiftUI `.sheet`. In the
+/// default menu-bar presentation the panel lives inside a MenuBarExtra
+/// popover, and presenting a sheet there makes the popover resign key and
+/// auto-dismiss — the sheet vanishes the instant it appears (looks like an
+/// outside click). A standalone window is independent of the popover, so it
+/// behaves the same in menu-bar, Dock, and background modes.
+@MainActor
+enum PairWindow {
+    private static var window: NSWindow?
+
+    static func show(entry: SenderController.DeviceEntry, controller: SenderController) {
+        close()
+        let host = NSHostingController(
+            rootView: PairSheet(entry: entry, controller: controller, onClose: close))
+        let w = NSWindow(contentViewController: host)
+        w.styleMask = [.titled, .closable]
+        w.title = "Pair with \(entry.name)"
+        w.isReleasedWhenClosed = false
+        w.center()
+        window = w
+        // Menu-bar mode runs as .accessory, so the app must foreground itself
+        // for the pairing window to take key and receive the typed PIN.
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
+    }
+
+    static func close() {
+        window?.close()
+        window = nil
+    }
+}
+
 enum ConnectionTarget: Hashable {
     case usb(udid: String?)           // wired via built-in usbmuxd; nil = first device
     case wifi(NWBrowser.Result)       // discovered via Bonjour
@@ -679,7 +711,7 @@ struct ContentView: View {
     // Optional so the view still compiles/previews without an updater (e.g.
     // if Sparkle ever fails to start); the button just disables itself then.
     let updater: SPUStandardUpdaterController?
-    @State private var pairingEntry: SenderController.DeviceEntry?
+
 
     var body: some View {
         VStack(spacing: 0) {
@@ -735,7 +767,9 @@ struct ContentView: View {
                                 if let target = entry.preferredTarget {
                                     if case .wifi(let result) = target,
                                        !controller.isPaired(result) {
-                                        Button("Pair…") { pairingEntry = entry }
+                                        Button("Pair…") {
+                                            PairWindow.show(entry: entry, controller: controller)
+                                        }
                                             .controlSize(.small)
                                             .help("WiFi streaming is encrypted and requires a one-time pairing. Open Settings → Pair a Mac on the device, then enter the code here.")
                                     } else {
@@ -881,9 +915,6 @@ struct ContentView: View {
             .padding(.vertical, 10)
         }
         .frame(width: 440, height: 540)
-        .sheet(item: $pairingEntry) { entry in
-            PairSheet(entry: entry, controller: controller)
-        }
     }
 
     @ViewBuilder
@@ -952,7 +983,7 @@ final class CheckForUpdatesViewModel: ObservableObject {
 struct PairSheet: View {
     let entry: SenderController.DeviceEntry
     let controller: SenderController
-    @Environment(\.dismiss) private var dismiss
+    let onClose: () -> Void
     @State private var pin = ""
     @State private var busy = false
     @State private var error: String?
@@ -977,7 +1008,7 @@ struct PairSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { onClose() }
                     .disabled(busy)
                 Button(busy ? "Pairing…" : "Pair") {
                     guard case .wifi(let result)? = entry.wifiTarget else { return }
@@ -986,7 +1017,7 @@ struct PairSheet: View {
                     Task {
                         do {
                             try await controller.pair(with: result, pin: trimmedPIN)
-                            dismiss()
+                            onClose()
                         } catch {
                             self.error = error.localizedDescription
                         }
