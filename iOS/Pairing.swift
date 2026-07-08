@@ -182,18 +182,30 @@ enum PairingStore {
     }
 
     private static func setPSK(_ psk: Data, for macID: String) {
+        // Non-migrating, device-only: a long-term network auth key must not
+        // sync to other devices or iCloud Keychain.
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: macID,
+            kSecAttrSynchronizable as String: false,
         ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = psk
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let status = SecItemAdd(add as CFDictionary, nil)
-        if status != errSecSuccess {
-            Log.info("pairing: keychain store failed (\(status))")
+        let attrs: [String: Any] = [
+            kSecValueData as String: psk,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        // Update-in-place when present so a failed add can't lose an existing
+        // PSK; only add (with the accessibility policy) when absent.
+        let updateStatus = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            var add = base
+            add.merge(attrs) { _, new in new }
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            if addStatus != errSecSuccess {
+                Log.info("pairing: keychain add failed (\(addStatus))")
+            }
+        } else if updateStatus != errSecSuccess {
+            Log.info("pairing: keychain update failed (\(updateStatus))")
         }
     }
 

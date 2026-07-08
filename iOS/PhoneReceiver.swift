@@ -295,9 +295,19 @@ final class PhoneReceiver: ObservableObject {
     }
 
     private static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
-        let peer = String(describing: endpoint)
-        return peer.hasPrefix("127.0.0.1") || peer.hasPrefix("::1")
-            || peer.hasPrefix("localhost")
+        // Structural parse, not string-prefix matching: only accept an
+        // actual loopback IP host. Reject .service and unresolved names on
+        // inbound plaintext listeners (usbmux forwards from 127.0.0.1/::1).
+        guard case .hostPort(let host, _) = endpoint else { return false }
+        switch host {
+        case .ipv4(let a):
+            return a.isLoopback
+        case .ipv6(let a):
+            // Also accept IPv4-mapped loopback (::ffff:127.0.0.0/8).
+            return a.isLoopback || (a.asIPv4?.isLoopback ?? false)
+        @unknown default:
+            return false
+        }
     }
 
     /// Take over as THE video/control connection (either listener). Replaces
@@ -575,7 +585,7 @@ final class PhoneReceiver: ObservableObject {
             if audioPlayer == nil { audioPlayer = StreamAudioPlayer() }
             // WiFi rides a jittery radio (even on its own audio connection);
             // USB is a low-latency wire. Match the jitter buffer depth.
-            audioPlayer?.highJitter = (transport == "WiFi")
+            audioPlayer?.setHighJitter(transport == "WiFi")
             audioPlayer?.enqueue(pcm, sampleRate: sr)
             // Audible latency estimate: Mac send → here (clock-mapped) +
             // whatever sits in the player queue + the output stage.
@@ -675,6 +685,10 @@ final class PhoneReceiver: ObservableObject {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 18) {
             [weak self] data, _, isComplete, error in
             guard let self else { return }
+            // Ignore late callbacks from a replaced/stale connection: the
+            // video buffer is shared, so a stale read must not corrupt the
+            // current stream or trip the length-cap cancel on the wrong conn.
+            guard conn === self.connection else { return }
             if let data, !data.isEmpty {
                 self.lastDataReceived = Date()
                 self.bytesThisWindow += data.count

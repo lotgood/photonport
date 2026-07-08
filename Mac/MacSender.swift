@@ -135,18 +135,22 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     // Audio rides its own queue — see the tap wiring in startCapture.
     private let audioQueue = DispatchQueue(label: "sender.audio", qos: .userInteractive)
     // ProRes and the raised bitrates are sized for the measured ~1Gbps
-    // usbmux link; TCP (WiFi or -host tunnels) stays conservative.
+    // usbmux link; every non-usbmux TCP path (WiFi AND manual -host/-port
+    // tunnels) stays conservative.
     private var isUSBTransport: Bool {
         if case .usb = transport { return true }
         return false
     }
-    // WiFi can't carry the USB-tier native-120fps HDR config. The HEVC
-    // encoder needs ~20ms/frame at native res (a ~50fps ceiling; ProRes on
-    // the dedicated block isn't an option off USB), and the radio's usable
-    // bitrate is a fraction of the ~1Gbps usbmux link. Pushing native 120
-    // there just saturates the encoder and socket, so frames queue as pure
-    // latency and drop in bulk (measured: e2e 30–275ms, 200–400 drops/s).
-    // Cap WiFi to 60fps and a resolution ceiling so the encoder keeps pace.
+    // Only the usbmux path is treated as the fast link. Any other TCP path
+    // (WiFi Bonjour, or a manual -host/-port tunnel which is typically an
+    // SSH/iproxy hop of unknown bandwidth) gets the conservative profile:
+    // a non-usbmux HEVC encoder needs ~20ms/frame at native res (a ~50fps
+    // ceiling; ProRes on the dedicated block is USB-only), and the link's
+    // usable bitrate is a fraction of usbmux. Pushing native 120 there just
+    // saturates the encoder and socket, so frames queue as latency and drop
+    // in bulk (measured on WiFi: e2e 30–275ms, 200–400 drops/s). Cap to
+    // 60fps and a resolution ceiling so the encoder keeps pace. This is a
+    // deliberate "conservative TCP" mode, not WiFi-only.
     private var effectiveScale: Double {
         isUSBTransport ? quality.scale : min(quality.scale, 0.6)
     }
@@ -915,8 +919,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     // chunk queues behind hundreds of KB of in-flight ProRes frames
     // (head-of-line blocking measured as ~60ms of audio arrival latency at
     // 240Mbps). A second TCP connection makes audio delivery independent.
-    // Bonjour WiFi endpoints can't derive port+1 — they keep the shared
-    // socket (audio still works, just with the old latency).
+    // USB derives port+1; WiFi (Bonjour) opens a second TLS connection to the
+    // same secure service tagged as the audio channel (see dialAudioConnection).
     private var audioConnection: NWConnection?
     private var audioConnectionReady = false
     private var audioDialInFlight = false
@@ -1487,8 +1491,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                                      : quality.bitrate(usb: isUSBTransport)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
         if !isUSBTransport {
-            // WiFi shares one TCP socket for video+audio+control and rides a
-            // marginal radio. AverageBitRate is only a long-term target, so a
+            // A non-usbmux TCP link (WiFi) rides a marginal radio; video still
+            // shares its TCP connection with control (audio has its own).
+            // AverageBitRate is only a long-term target, so a
             // complex-frame burst floods the link, drops packets, and TCP
             // head-of-line blocking then freezes the WHOLE multiplex for the
             // retransmit RTO — the periodic ~30–90s stalls seen in the logs

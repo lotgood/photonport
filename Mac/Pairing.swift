@@ -181,17 +181,30 @@ enum PairingStore {
     }
 
     static func setPSK(_ psk: Data, for deviceID: String) {
+        // Non-migrating, device-only: a long-term network auth key must not
+        // sync to other devices or iCloud Keychain.
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: deviceID,
+            kSecAttrSynchronizable as String: false,
         ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = psk
-        let status = SecItemAdd(add as CFDictionary, nil)
-        if status != errSecSuccess {
-            Log.info("pairing: keychain store failed (\(status))")
+        // Update-in-place when present so a failed add can't lose an existing
+        // PSK; only add (with the accessibility policy) when absent.
+        let attrs: [String: Any] = [
+            kSecValueData as String: psk,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let updateStatus = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            var add = base
+            add.merge(attrs) { _, new in new }
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            if addStatus != errSecSuccess {
+                Log.info("pairing: keychain add failed (\(addStatus))")
+            }
+        } else if updateStatus != errSecSuccess {
+            Log.info("pairing: keychain update failed (\(updateStatus))")
         }
     }
 
@@ -253,10 +266,12 @@ enum PairingClient {
         // continuation is never resumed, and the group awaits all children.)
         return try await withCheckedThrowingContinuation { cont in
             let done = ContinuationGate()
-            func finish(_ result: Result<NWEndpoint, Error>) {
-                guard done.claim() else { return }
+            @discardableResult
+            func finish(_ result: Result<NWEndpoint, Error>) -> Bool {
+                guard done.claim() else { return false }
                 browser.cancel()
                 cont.resume(with: result)
+                return true
             }
             browser.browseResultsChangedHandler = { results, _ in
                 for result in results {
@@ -289,8 +304,9 @@ enum PairingClient {
             }
             browser.start(queue: .global())
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                Log.info("pairing/discover: timed out after \(Int(timeout))s")
-                finish(.failure(PairingError.serviceNotFound))
+                if finish(.failure(PairingError.serviceNotFound)) {
+                    Log.info("pairing/discover: timed out after \(Int(timeout))s")
+                }
             }
         }
     }

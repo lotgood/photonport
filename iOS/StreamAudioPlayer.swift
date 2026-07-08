@@ -43,7 +43,10 @@ final class StreamAudioPlayer {
     // ~35–60ms, enough to ride typical radio jitter without the constant
     // full-flush glitches, without piling on latency. Set (on the audio
     // queue) from the receiver's transport.
-    var highJitter = false
+    // Queue-confined: written via setHighJitter on `queue`, read only on
+    // `queue` by the derived thresholds below.
+    private var highJitter = false
+    func setHighJitter(_ value: Bool) { queue.async { self.highJitter = value } }
     private var prebufferChunks: Int { highJitter ? 6 : 3 }     // ~32ms vs ~16ms
     private var freshnessSeconds: TimeInterval { highJitter ? 0.15 : 0.08 }
     private var hardShedMs: Double { highJitter ? 100 : 60 }
@@ -51,9 +54,14 @@ final class StreamAudioPlayer {
     private var driftSeconds: TimeInterval { highJitter ? 3 : 2 }
     private var generation = 0
     private var lastLowQueueAt = Date()
-    // Telemetry (racy cross-thread reads are fine for an overlay number):
-    // audio sitting in the player queue right now, and the output stage.
-    private(set) var queuedMs: Double = 0
+    // Telemetry. queuedMs is written on `queue` and read cross-thread for the
+    // overlay; guard it with a lock so the read is not a Swift data race.
+    private let telemetryLock = NSLock()
+    private var _queuedMs: Double = 0
+    private(set) var queuedMs: Double {
+        get { telemetryLock.lock(); defer { telemetryLock.unlock() }; return _queuedMs }
+        set { telemetryLock.lock(); defer { telemetryLock.unlock() }; _queuedMs = newValue }
+    }
     var outputLatencyMs: Double {
         let s = AVAudioSession.sharedInstance()
         return (s.outputLatency + s.ioBufferDuration) * 1000
@@ -61,13 +69,12 @@ final class StreamAudioPlayer {
 
     func enqueue(_ pcm16: Data, sampleRate: Double) {
         // Freshness gate: engine startup blocks this queue for ~200ms and
-        // chunks pile up behind it; playing them late is pure latency
-        // (measured: a startup flood parked the queue just under the cap,
-        // pinning audio at 75ms forever). Stale audio is worthless — drop
-        // anything that waited more than 80ms for its turn.
-        let deadline = Date().addingTimeInterval(freshnessSeconds)
+        // chunks pile up behind it; playing them late is pure latency. Stale
+        // audio is worthless — drop anything that waited too long. The
+        // threshold reads highJitter, so evaluate it on `queue`.
+        let arrivedAt = Date()
         queue.async {
-            guard Date() < deadline else { return }
+            guard Date().timeIntervalSince(arrivedAt) < self.freshnessSeconds else { return }
             self.schedule(pcm16, sampleRate: sampleRate)
         }
     }
