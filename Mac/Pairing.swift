@@ -166,13 +166,21 @@ enum PairingStore {
         return fresh
     }
 
-    static func psk(for deviceID: String) -> Data? {
-        let query: [String: Any] = [
+    // Every operation targets macOS's data-protection keychain so
+    // kSecAttrAccessible*ThisDeviceOnly is honored (Apple DTS guidance).
+    private static func baseQuery(_ deviceID: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: deviceID,
-            kSecReturnData as String: true,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecAttrSynchronizable as String: false,
         ]
+    }
+
+    static func psk(for deviceID: String) -> Data? {
+        var query = baseQuery(deviceID)
+        query[kSecReturnData as String] = true
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
             return nil
@@ -180,15 +188,11 @@ enum PairingStore {
         return result as? Data
     }
 
-    static func setPSK(_ psk: Data, for deviceID: String) {
-        // Non-migrating, device-only: a long-term network auth key must not
-        // sync to other devices or iCloud Keychain.
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: deviceID,
-            kSecAttrSynchronizable as String: false,
-        ]
+    /// Returns false if the key could not be stored — callers MUST NOT treat
+    /// the device as paired on failure.
+    @discardableResult
+    static func setPSK(_ psk: Data, for deviceID: String) -> Bool {
+        let base = baseQuery(deviceID)
         // Update-in-place when present so a failed add can't lose an existing
         // PSK; only add (with the accessibility policy) when absent.
         let attrs: [String: Any] = [
@@ -196,6 +200,7 @@ enum PairingStore {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         let updateStatus = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
         if updateStatus == errSecItemNotFound {
             var add = base
             add.merge(attrs) { _, new in new }
@@ -203,18 +208,14 @@ enum PairingStore {
             if addStatus != errSecSuccess {
                 Log.info("pairing: keychain add failed (\(addStatus))")
             }
-        } else if updateStatus != errSecSuccess {
-            Log.info("pairing: keychain update failed (\(updateStatus))")
+            return addStatus == errSecSuccess
         }
+        Log.info("pairing: keychain update failed (\(updateStatus))")
+        return false
     }
 
     static func removePSK(for deviceID: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: deviceID,
-        ]
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete(baseQuery(deviceID) as CFDictionary)
     }
 }
 

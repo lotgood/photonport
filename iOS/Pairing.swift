@@ -153,11 +153,15 @@ enum PairingStore {
         }
     }
 
-    static func add(macID: String, name: String, psk: Data) {
-        setPSK(psk, for: macID)
+    /// Returns false if the key could not be stored — the index (which drives
+    /// the "paired" list + the TLS PSK set) is only updated on success.
+    @discardableResult
+    static func add(macID: String, name: String, psk: Data) -> Bool {
+        guard setPSK(psk, for: macID) else { return false }
         var index = UserDefaults.standard.dictionary(forKey: indexKey) as? [String: String] ?? [:]
         index[macID] = name
         UserDefaults.standard.set(index, forKey: indexKey)
+        return true
     }
 
     static func remove(macID: String) {
@@ -181,7 +185,8 @@ enum PairingStore {
         return result as? Data
     }
 
-    private static func setPSK(_ psk: Data, for macID: String) {
+    @discardableResult
+    private static func setPSK(_ psk: Data, for macID: String) -> Bool {
         // Non-migrating, device-only: a long-term network auth key must not
         // sync to other devices or iCloud Keychain.
         let base: [String: Any] = [
@@ -197,6 +202,7 @@ enum PairingStore {
         // Update-in-place when present so a failed add can't lose an existing
         // PSK; only add (with the accessibility policy) when absent.
         let updateStatus = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
         if updateStatus == errSecItemNotFound {
             var add = base
             add.merge(attrs) { _, new in new }
@@ -204,9 +210,10 @@ enum PairingStore {
             if addStatus != errSecSuccess {
                 Log.info("pairing: keychain add failed (\(addStatus))")
             }
-        } else if updateStatus != errSecSuccess {
-            Log.info("pairing: keychain update failed (\(updateStatus))")
+            return addStatus == errSecSuccess
         }
+        Log.info("pairing: keychain update failed (\(updateStatus))")
+        return false
     }
 
     private static func removePSK(for macID: String) {

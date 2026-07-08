@@ -305,6 +305,8 @@ final class PhoneReceiver: ObservableObject {
         case .ipv6(let a):
             // Also accept IPv4-mapped loopback (::ffff:127.0.0.0/8).
             return a.isLoopback || (a.asIPv4?.isLoopback ?? false)
+        case .name:
+            return false   // never trust an unresolved name as loopback
         @unknown default:
             return false
         }
@@ -503,6 +505,9 @@ final class PhoneReceiver: ObservableObject {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) {
             [weak self] data, _, isComplete, error in
             guard let self else { return }
+            // Ignore late reads from a replaced audio connection: audioBuffer
+            // is shared, so a stale read must not corrupt the current stream.
+            guard conn === self.audioConnection else { return }
             if let data, !data.isEmpty {
                 self.audioBuffer.append(data)
                 var cursor = self.audioBuffer.startIndex

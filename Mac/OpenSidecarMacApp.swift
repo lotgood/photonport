@@ -359,7 +359,9 @@ final class SenderController: ObservableObject {
                 Log.info("pairing: device id mismatch (got \(deviceID.prefix(8)), expected \(targetID.prefix(8))) — refusing")
                 throw PairingError.rejected("Pairing failed — the device identity did not match.")
             }
-            PairingStore.setPSK(psk, for: deviceID)
+            guard PairingStore.setPSK(psk, for: deviceID) else {
+                throw PairingError.rejected("Pairing failed — couldn't save the key to the Keychain.")
+            }
             Log.info("pairing: succeeded with \"\(name)\" (device \(deviceID.prefix(8))) — connecting")
             connect(to: .wifi(result), userInitiated: true)
         } catch {

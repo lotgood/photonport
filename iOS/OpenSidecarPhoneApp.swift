@@ -672,7 +672,10 @@ struct PairMacView: View {
         let s = PairingServer(
             serviceName: receiver.serviceName,
             onPaired: { macID, macName, psk in
-                PairingStore.add(macID: macID, name: macName, psk: psk)
+                guard PairingStore.add(macID: macID, name: macName, psk: psk) else {
+                    Log.info("pairing: keychain store failed — not marking paired")
+                    return
+                }
                 receiver.reloadSecureListener()
                 DispatchQueue.main.async {
                     pairedName = macName
