@@ -82,7 +82,7 @@ struct ReceiverScreen: View {
                 model.receiver.setOrientation(portrait: size.height > size.width)
             }
             .sheet(isPresented: $showOnboarding) {
-                OnboardingView { onboardingDismissed = true }
+                OnboardingView(receiver: model.receiver) { onboardingDismissed = true }
             }
         }
         .ignoresSafeArea(edges: isStreaming ? .all : [])
@@ -185,6 +185,7 @@ struct IdleView: View {
 /// is two apps, and the iOS side is useless without the Mac app running.
 struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
+    let receiver: PhoneReceiver
     let onClose: () -> Void
 
     var body: some View {
@@ -225,6 +226,16 @@ struct OnboardingView: View {
                             .padding(.vertical, 6)
                     }
                     .buttonStyle(.borderedProminent)
+
+                    NavigationLink {
+                        PairMacView(receiver: receiver) { }
+                    } label: {
+                        Label("Pair this \(deviceKind) over WiFi", systemImage: "wifi")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.bordered)
 
                     Text("You can find this link again anytime in Settings — shake the \(deviceKind) to open it.")
                         .font(.footnote)
