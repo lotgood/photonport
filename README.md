@@ -66,9 +66,18 @@ experimental display/audio work stays here.
   measured ~1Gbps usbmux link.
 - **Audio tap routing** — a CoreAudio process tap (`mutedWhenTapped`,
   macOS 14.2+) mutes the Mac and forwards 5.3ms PCM buffers on a dedicated
-  TCP connection so audio never queues behind video frames. If the Mac's
-  default output is Bluetooth headphones, forwarding pauses and audio stays
-  on the headphones.
+  connection (its own TCP socket on USB, its own TLS connection over WiFi)
+  so audio never queues behind video frames. If the Mac's default output is
+  Bluetooth headphones, forwarding pauses and audio stays on the headphones.
+- **WiFi transport (pairing + TLS, transport-tuned)** — WiFi runs over
+  TLS-PSK after a one-time PIN pairing (see Security). It can't carry the
+  USB-tier native-120fps HDR config — the HEVC encoder needs ~20ms/frame at
+  native res (ProRes isn't available off USB) and the radio's usable
+  bitrate is a fraction of usbmux — so WiFi is capped to 60fps and a
+  reduced capture scale, with a hard encoder burst cap (DataRateLimits) and
+  a deeper audio jitter buffer. Measured on the tested pair (−64dBm 5GHz):
+  ~20ms e2e p50, stable ~113ms audio. TCP still head-of-line-stalls on
+  radio packet loss, so occasional brief hitches remain — USB avoids them.
 - Fixes worth noting for upstream: H.264 silently rejects every frame above
   its level-5.2 pixel-rate ceiling (VideoToolbox returns noErr + nil buffer);
   backpressure drops must not force IDRs; a saturated encoder needs an
@@ -77,15 +86,16 @@ experimental display/audio work stays here.
 ## Known limitations / non-goals
 
 - **Unverified**: anything that is not the tested pair — Intel Macs,
-  macOS 14/15 fallbacks, 60Hz/SDR devices, iPhone receivers, WiFi
-  performance, multi-device sessions, HDR color accuracy beyond "highlights
-  visibly render".
+  macOS 14/15 fallbacks, 60Hz/SDR devices, iPhone receivers, WiFi on other
+  networks/APs, multi-device sessions, HDR color accuracy beyond "highlights
+  visibly render". (WiFi was measured on the tested pair only.)
 - **Private API**: the virtual display (and its EDR mode) can break on any
   macOS update, and the Mac app can never ship in the Mac App Store.
-- **WiFi**: paired + TLS, but still sized conservatively — the dedicated
-  audio socket and the raised bitrates are USB-only; WiFi sessions use the
-  legacy bitrates and the shared socket. Older senders/receivers cannot
-  talk to this fork over WiFi anymore (plaintext is rejected).
+- **WiFi**: paired + TLS and transport-tuned (60fps + reduced resolution,
+  its own audio TLS connection, conservative bitrates), but a lossy radio
+  still causes occasional brief hitches TCP can't hide. Older
+  senders/receivers can't talk to this fork over WiFi anymore (plaintext is
+  rejected; pairing required).
 - Out of scope: Windows/Android, audio input (mic) forwarding.
 
 ## Toggles (`defaults write dev.hyupji.photonport.mac.debug …`)
