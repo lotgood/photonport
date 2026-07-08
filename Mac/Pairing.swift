@@ -6,23 +6,28 @@
 // Pairing (Mac side) — establishes a long-term per-device secret so WiFi
 // sessions can run over TLS-PSK instead of plaintext TCP.
 //
-// Model (simplified Bluetooth numeric-entry pairing):
-//   1. The receiver shows a single-use 6-digit PIN and advertises a
-//      short-lived pairing instance (the video service type carrying a
-//      `pair=1` TXT flag) while its pairing screen is open. No standing
-//      unauthenticated surface otherwise.
-//   2. The Mac connects and both sides run X25519 ECDH. The Mac proves it
-//      knows the PIN with an HMAC over both public keys keyed by a
-//      PIN-bound derivation of the shared secret.
-//   3. Both sides derive a 32-byte PSK from the ECDH secret (never from
-//      the PIN) and store it. Subsequent WiFi connections use TLS-PSK.
+// Protocol (mutual SAS numeric comparison with a commitment phase, in the
+// spirit of Bluetooth Numeric Comparison / ZRTP):
+//   1. While the device's pairing screen is open it advertises a short-lived
+//      pairing instance (the video service type carrying a `pair=1` TXT
+//      flag). No standing unauthenticated surface otherwise.
+//   2. Each side generates an ephemeral X25519 key + 16-byte nonce and first
+//      exchanges a HASH COMMITMENT over (role, installID, name, pub, nonce).
+//      Only after both commitments are in does each side REVEAL its opening;
+//      the peer aborts unless the reveal hashes back to the earlier commit.
+//   3. Both derive a 6-digit SAS and a 32-byte PSK from the ECDH secret and a
+//      transcript of both openings. The SAS is shown on BOTH screens; the
+//      human confirming the two codes match is the authentication. The PSK is
+//      stored only on that confirmation and is never sent on the wire.
 //
-// Threat notes: a passive observer can offline-crack the 6-digit PIN from
-// the proof, but the PIN is single-use and dead by then, and the PSK
-// depends on the ECDH secret the observer doesn't have. An active MITM
-// must guess the PIN online — one failed proof invalidates it. The wire
-// protocol is framed JSON, same [4-byte BE length][payload] as the rest
-// of the app.
+// Why the commitment matters: without committing before revealing, an active
+// same-LAN MITM running fake endpoints on both legs could grind its own
+// ephemeral key/nonce until both screens show the SAME 6-digit code (~10^6
+// offline trials) and defeat the human check. Committing first binds each
+// party to its keys before it can see the peer's, so the attacker is reduced
+// to a 1-in-10^6 online guess per attempt. No low-entropy secret is ever
+// transmitted, so there is no offline PIN oracle. Framing is the app's usual
+// [4-byte BE length][JSON payload].
 
 import Foundation
 import Network
@@ -30,12 +35,11 @@ import CryptoKit
 
 // MARK: - Wire messages
 
-// One message, sent in both directions: each side announces its identity,
-// ephemeral X25519 public key, and a random nonce. No low-entropy secret
-// (PIN) is ever transmitted or proven — authentication is the human
-// comparing the derived SAS on both screens (Bluetooth numeric-comparison
-// style), which defeats an active same-LAN fake endpoint without exposing
-// an offline PIN oracle.
+// Two message types flow in both directions. First a PairCommit (a hash of
+// the opening below) is exchanged; only then is the PairHello opening revealed
+// and checked against the peer's earlier commit. No low-entropy secret (PIN)
+// is ever transmitted — authentication is the human comparing the derived SAS
+// on both screens, which the commitment phase makes ungrindable.
 struct PairHello: Codable {
     var type = "pair-hello"
     let v: Int              // protocol version (2)
@@ -44,6 +48,13 @@ struct PairHello: Codable {
     let name: String?       // Mac's user-visible name (device omits)
     let pub: String         // X25519 public key, base64
     let nonce: String       // 16 random bytes, base64
+}
+
+// Hash commitment to an opening, exchanged before the opening is revealed.
+struct PairCommit: Codable {
+    var type = "pair-commit"
+    let v: Int
+    let commit: String      // base64 of the 32-byte SHA-256 commitment
 }
 
 // MARK: - Crypto core (identical on both platforms)
@@ -56,6 +67,7 @@ enum PairingCrypto {
     static let pairTXTKey = "pair"
     static let version = 2
     static let protocolLabel = "PhotonPort-pair-v2"
+    static let commitLabel = "PhotonPort-pair-v2-commit"
 
     static func randomNonce() -> Data? {
         var b = Data(count: 16)
@@ -63,6 +75,26 @@ enum PairingCrypto {
             SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
         }
         return ok == errSecSuccess ? b : nil
+    }
+
+    /// Hash commitment over an opening (role, install id, name, pub, nonce).
+    /// Exchanged BEFORE the opening is revealed: once a side has sent its
+    /// commit it can no longer change any of these without the peer noticing,
+    /// which is what forecloses SAS grinding by an active MITM.
+    static func commitment(role: String, installID: String, name: String?,
+                           pub: Data, nonce: Data) -> Data {
+        var h = SHA256()
+        func feed(_ d: Data) {
+            var n = UInt32(d.count).bigEndian
+            h.update(data: Data(bytes: &n, count: 4))
+            h.update(data: d)
+        }
+        feed(Data(commitLabel.utf8))
+        feed(Data(role.utf8))
+        feed(Data(installID.utf8))
+        feed(Data((name ?? "").utf8))
+        feed(pub); feed(nonce)
+        return Data(h.finalize())
     }
 
     /// Length-prefixed, role-ordered transcript binding everything that
@@ -345,31 +377,56 @@ enum PairingClient {
             conn.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    let hello = PairHello(
-                        v: PairingCrypto.version, role: "mac",
-                        installID: macInstallID, name: macName,
-                        pub: key.publicKey.rawRepresentation.base64EncodedString(),
-                        nonce: macNonce.base64EncodedString())
-                    guard let frame = PairingWire.frame(hello) else { return fail(.protocolError) }
-                    conn.send(content: frame, completion: .contentProcessed { _ in })
-                    PairingWire.receive(PairHello.self, on: conn) { peer in
-                        guard let peer, peer.v == PairingCrypto.version, peer.role == "device",
-                              let devicePub = Data(base64Encoded: peer.pub),
-                              let deviceNonce = Data(base64Encoded: peer.nonce),
-                              let deviceKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: devicePub),
-                              let shared = try? key.sharedSecretFromKeyAgreement(with: deviceKey)
+                    let macPub = key.publicKey.rawRepresentation
+                    let macCommit = PairingCrypto.commitment(
+                        role: "mac", installID: macInstallID, name: macName,
+                        pub: macPub, nonce: macNonce)
+                    guard let commitFrame = PairingWire.frame(
+                        PairCommit(v: PairingCrypto.version,
+                                   commit: macCommit.base64EncodedString()))
+                    else { return fail(.protocolError) }
+                    conn.send(content: commitFrame, completion: .contentProcessed { _ in })
+                    // Receive the device's commitment BEFORE revealing our
+                    // opening — this ordering is what stops SAS grinding.
+                    PairingWire.receive(PairCommit.self, on: conn) { dc in
+                        guard let dc, dc.v == PairingCrypto.version,
+                              let deviceCommit = Data(base64Encoded: dc.commit),
+                              deviceCommit.count == 32
                         else { return fail(.protocolError) }
-                        // The receiver must be the device we targeted.
-                        guard peer.installID == targetID else {
-                            return fail(.rejected("Pairing failed — the device identity did not match."))
+                        let hello = PairHello(
+                            v: PairingCrypto.version, role: "mac",
+                            installID: macInstallID, name: macName,
+                            pub: macPub.base64EncodedString(),
+                            nonce: macNonce.base64EncodedString())
+                        guard let frame = PairingWire.frame(hello) else { return fail(.protocolError) }
+                        conn.send(content: frame, completion: .contentProcessed { _ in })
+                        PairingWire.receive(PairHello.self, on: conn) { peer in
+                            guard let peer, peer.v == PairingCrypto.version, peer.role == "device",
+                                  let devicePub = Data(base64Encoded: peer.pub), devicePub.count == 32,
+                                  let deviceNonce = Data(base64Encoded: peer.nonce), deviceNonce.count == 16,
+                                  let deviceKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: devicePub),
+                                  let shared = try? key.sharedSecretFromKeyAgreement(with: deviceKey)
+                            else { return fail(.protocolError) }
+                            // The reveal must hash back to the earlier commit,
+                            // else the peer swapped keys after committing.
+                            let expect = PairingCrypto.commitment(
+                                role: "device", installID: peer.installID, name: peer.name,
+                                pub: devicePub, nonce: deviceNonce)
+                            guard expect == deviceCommit else {
+                                return fail(.rejected("Pairing failed — the device's commitment did not match (possible tampering on the network)."))
+                            }
+                            // The receiver must be the device we targeted.
+                            guard peer.installID == targetID else {
+                                return fail(.rejected("Pairing failed — the device identity did not match."))
+                            }
+                            let tr = PairingCrypto.transcript(
+                                macInstallID: macInstallID, deviceInstallID: peer.installID,
+                                macPub: macPub, devicePub: devicePub,
+                                macNonce: macNonce, deviceNonce: deviceNonce)
+                            let sas = PairingCrypto.sasDigits(shared: shared, transcript: tr)
+                            let psk = PairingCrypto.psk(shared: shared, transcript: tr)
+                            if done.claim() { cont.resume(returning: (peer.installID, sas, psk)) }
                         }
-                        let tr = PairingCrypto.transcript(
-                            macInstallID: macInstallID, deviceInstallID: peer.installID,
-                            macPub: key.publicKey.rawRepresentation, devicePub: devicePub,
-                            macNonce: macNonce, deviceNonce: deviceNonce)
-                        let sas = PairingCrypto.sasDigits(shared: shared, transcript: tr)
-                        let psk = PairingCrypto.psk(shared: shared, transcript: tr)
-                        if done.claim() { cont.resume(returning: (peer.installID, sas, psk)) }
                     }
                 case .failed, .cancelled:
                     fail(.protocolError)

@@ -24,6 +24,13 @@ struct PairHello: Codable {
     let nonce: String
 }
 
+// Hash commitment to an opening, exchanged before the opening is revealed.
+struct PairCommit: Codable {
+    var type = "pair-commit"
+    let v: Int
+    let commit: String
+}
+
 // MARK: - Crypto core (identical on both platforms)
 
 enum PairingCrypto {
@@ -38,6 +45,7 @@ enum PairingCrypto {
 
     static let version = 2
     static let protocolLabel = "PhotonPort-pair-v2"
+    static let commitLabel = "PhotonPort-pair-v2-commit"
 
     static func randomNonce() -> Data? {
         var b = Data(count: 16)
@@ -45,6 +53,25 @@ enum PairingCrypto {
             SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
         }
         return ok == errSecSuccess ? b : nil
+    }
+
+    /// Hash commitment over an opening (role, install id, name, pub, nonce),
+    /// exchanged before the opening is revealed so neither side can grind the
+    /// SAS after seeing the peer's keys. Mirror of Mac/Pairing.swift.
+    static func commitment(role: String, installID: String, name: String?,
+                           pub: Data, nonce: Data) -> Data {
+        var h = SHA256()
+        func feed(_ d: Data) {
+            var n = UInt32(d.count).bigEndian
+            h.update(data: Data(bytes: &n, count: 4))
+            h.update(data: d)
+        }
+        feed(Data(commitLabel.utf8))
+        feed(Data(role.utf8))
+        feed(Data(installID.utf8))
+        feed(Data((name ?? "").utf8))
+        feed(pub); feed(nonce)
+        return Data(h.finalize())
     }
 
     /// Length-prefixed, role-ordered transcript (client = Mac, server =
@@ -303,32 +330,56 @@ final class PairingServer {
             Log.info("pairing: nonce RNG failed — aborting")
             conn.cancel(); return
         }
-        PairingWire.receive(PairHello.self, on: conn) { [weak self] peer in
+        let devicePub = serverKey.publicKey.rawRepresentation
+        let deviceCommit = PairingCrypto.commitment(
+            role: "device", installID: PhoneReceiverInstallID.value, name: nil,
+            pub: devicePub, nonce: deviceNonce)
+        // Receive the Mac's commitment first, then send ours; only after both
+        // are locked in does either side reveal its opening — the ordering
+        // that stops an active MITM from grinding the SAS.
+        PairingWire.receive(PairCommit.self, on: conn) { [weak self] mc in
             guard let self, conn === self.active else { return }
-            guard let peer, peer.v == PairingCrypto.version, peer.role == "mac",
-                  let macPub = Data(base64Encoded: peer.pub),
-                  let macNonce = Data(base64Encoded: peer.nonce),
-                  let macKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: macPub),
-                  let shared = try? serverKey.sharedSecretFromKeyAgreement(with: macKey)
+            guard let mc, mc.v == PairingCrypto.version,
+                  let macCommit = Data(base64Encoded: mc.commit), macCommit.count == 32
             else { conn.cancel(); return }
-
-            let hello = PairHello(
-                v: PairingCrypto.version, role: "device",
-                installID: PhoneReceiverInstallID.value, name: nil,
-                pub: serverKey.publicKey.rawRepresentation.base64EncodedString(),
-                nonce: deviceNonce.base64EncodedString())
-            if let frame = PairingWire.frame(hello) {
-                conn.send(content: frame, completion: .contentProcessed { _ in })
+            if let cf = PairingWire.frame(PairCommit(v: PairingCrypto.version,
+                                                     commit: deviceCommit.base64EncodedString())) {
+                conn.send(content: cf, completion: .contentProcessed { _ in })
             }
-            let tr = PairingCrypto.transcript(
-                macInstallID: peer.installID, deviceInstallID: PhoneReceiverInstallID.value,
-                macPub: macPub, devicePub: serverKey.publicKey.rawRepresentation,
-                macNonce: macNonce, deviceNonce: deviceNonce)
-            let sas = PairingCrypto.sasDigits(shared: shared, transcript: tr)
-            let psk = PairingCrypto.psk(shared: shared, transcript: tr)
-            self.pending = (macID: peer.installID, macName: peer.name ?? "Mac", psk: psk)
-            Log.info("pairing: SAS ready for \"\(peer.name ?? "Mac")\"")
-            self.onSAS(sas)
+            PairingWire.receive(PairHello.self, on: conn) { [weak self] peer in
+                guard let self, conn === self.active else { return }
+                guard let peer, peer.v == PairingCrypto.version, peer.role == "mac",
+                      let macPub = Data(base64Encoded: peer.pub), macPub.count == 32,
+                      let macNonce = Data(base64Encoded: peer.nonce), macNonce.count == 16,
+                      let macKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: macPub),
+                      let shared = try? serverKey.sharedSecretFromKeyAgreement(with: macKey)
+                else { conn.cancel(); return }
+                // The Mac's reveal must hash back to its earlier commit.
+                let expect = PairingCrypto.commitment(
+                    role: "mac", installID: peer.installID, name: peer.name,
+                    pub: macPub, nonce: macNonce)
+                guard expect == macCommit else {
+                    Log.info("pairing: commitment mismatch — aborting (possible tampering)")
+                    conn.cancel(); return
+                }
+                let hello = PairHello(
+                    v: PairingCrypto.version, role: "device",
+                    installID: PhoneReceiverInstallID.value, name: nil,
+                    pub: devicePub.base64EncodedString(),
+                    nonce: deviceNonce.base64EncodedString())
+                if let frame = PairingWire.frame(hello) {
+                    conn.send(content: frame, completion: .contentProcessed { _ in })
+                }
+                let tr = PairingCrypto.transcript(
+                    macInstallID: peer.installID, deviceInstallID: PhoneReceiverInstallID.value,
+                    macPub: macPub, devicePub: devicePub,
+                    macNonce: macNonce, deviceNonce: deviceNonce)
+                let sas = PairingCrypto.sasDigits(shared: shared, transcript: tr)
+                let psk = PairingCrypto.psk(shared: shared, transcript: tr)
+                self.pending = (macID: peer.installID, macName: peer.name ?? "Mac", psk: psk)
+                Log.info("pairing: SAS ready for \"\(peer.name ?? "Mac")\"")
+                self.onSAS(sas)
+            }
         }
     }
 }
