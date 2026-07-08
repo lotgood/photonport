@@ -37,13 +37,23 @@ struct OpenSidecarMacApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    // Sparkle's standard updater. `startingUpdater: true` boots the updater
+    // True when a Sparkle appcast feed is configured (SUFeedURL in
+    // Info.plist). The fork ships without one — see the "DEFUSED" note in
+    // project.yml — so the updater must stay dormant: don't start it (a
+    // feedless start only logs an error) and hide the "Check for Updates…"
+    // UI instead of showing a button that can never work. Re-adding a feed
+    // (+ SUPublicEDKey) re-enables both automatically.
+    static let updateFeedConfigured =
+        Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
+
+    // Sparkle's standard updater. `startingUpdater` boots the updater
     // immediately so scheduled background checks (SUEnableAutomaticChecks)
     // run; the menu item drives manual "Check for Updates…". Held for the
     // app's lifetime here so every window (menu bar + control window) shares
     // one updater instance.
     let updater = SPUStandardUpdaterController(
-        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        startingUpdater: AppDelegate.updateFeedConfigured,
+        updaterDelegate: nil, userDriverDelegate: nil)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hand the updater to the control window, which is built outside the
@@ -786,7 +796,7 @@ struct ContentView: View {
                     .font(.callout)
                     .lineLimit(1)
                 Spacer()
-                if let updater {
+                if let updater, AppDelegate.updateFeedConfigured {
                     CheckForUpdatesView(updater: updater)
                 }
                 Button("Quit") { NSApp.terminate(nil) }
