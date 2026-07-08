@@ -20,6 +20,7 @@
 
 import ScreenCaptureKit
 import IOSurface
+import CoreAudio
 import VideoToolbox
 import Network
 import CoreMedia
@@ -501,25 +502,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         lastCursorSent = (-1, -1, false)
         startCursorEcho()
         if audioEnabled {
-            // Preferred: system-audio tap (macOS 14.2+) — routes sound to
-            // the device Sidecar-style (Mac speakers mute while forwarding)
-            // at ~5ms buffers. SCK audio is the dual-playing 20ms fallback.
-            // (`-audiotap NO` forces the fallback.)
-            let tapAllowed = UserDefaults.standard.object(forKey: "audiotap") == nil
-                || UserDefaults.standard.bool(forKey: "audiotap")
-            if tapAllowed {
-                audioTap = SystemAudioTap { [weak self] pcm, sr in
-                    guard let self else { return }
-                    // Dedicated queue: audio must never wait behind the
-                    // video queue's per-frame convert/encode work — that
-                    // head-of-line jitter reached the receiver as dropouts.
-                    self.audioQueue.async { self.sendAudioPCM(pcm, sampleRate: sr) }
-                }
-            }
-            if audioTap == nil {
-                do { try await startAudioCapture(display: display) }
-                catch { Log.info("audio capture failed (video unaffected): \(error)") }
-            }
+            captureSCDisplay = display
+            installDefaultOutputListener()
+            refreshAudioForwarding()
         }
         Log.info("capture started: \(pixelsWide)x\(pixelsHigh) display \(display.displayID) mode \(mode.rawValue) backend=\(cgStream != nil ? "CGDisplayStream-EDR" : "SCK") localCursor=\(localCursor) fps=\(streamFps) hdr=\(hdrActive)")
         let kind = lastHello?.kind ?? "device"
@@ -528,6 +513,90 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
 
     // MARK: - System audio forwarding
 
+
+    // Audio follows the Mac's output device: forwarding (and the Mac-side
+    // mute) only makes sense when sound would otherwise come out of the
+    // Mac's speakers. With Bluetooth headphones (AirPods) as the default
+    // output, the user's ears are already on the Mac — keep audio local
+    // and pause forwarding; resume automatically when they disconnect.
+    private var captureSCDisplay: SCDisplay?
+    private var audioRouteListenerInstalled = false
+
+    private func isDefaultOutputBluetooth() -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                         &addr, 0, nil, &size, &device) == noErr,
+              device != kAudioObjectUnknown else { return false }
+        var taddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var transport: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &taddr, 0, nil, &size, &transport) == noErr
+        else { return false }
+        return transport == kAudioDeviceTransportTypeBluetooth
+            || transport == kAudioDeviceTransportTypeBluetoothLE
+    }
+
+    private func installDefaultOutputListener() {
+        guard !audioRouteListenerInstalled else { return }
+        audioRouteListenerInstalled = true
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, queue
+        ) { [weak self] _, _ in
+            guard let self, !self.stopped else { return }
+            Log.info("default output device changed — re-evaluating audio route")
+            self.refreshAudioForwarding()
+        }
+    }
+
+    /// Idempotent: builds or tears down the forwarding path to match the
+    /// current default output device.
+    private func refreshAudioForwarding() {
+        guard audioEnabled, !stopped else { return }
+        if isDefaultOutputBluetooth() {
+            if audioTap != nil || audioStream != nil {
+                Log.info("Mac output is Bluetooth headphones — audio stays local, forwarding paused")
+            }
+            audioTap?.stop()          // un-mutes the Mac → AirPods play
+            audioTap = nil
+            audioStream?.stopCapture { _ in }
+            audioStream = nil
+            return
+        }
+        guard audioTap == nil, audioStream == nil else { return }
+        // Preferred: system-audio tap (macOS 14.2+) — routes sound to the
+        // device Sidecar-style (Mac speakers mute while forwarding) at ~5ms
+        // buffers. SCK audio is the dual-playing 20ms fallback.
+        // (`-audiotap NO` forces the fallback.)
+        let tapAllowed = UserDefaults.standard.object(forKey: "audiotap") == nil
+            || UserDefaults.standard.bool(forKey: "audiotap")
+        if tapAllowed {
+            audioTap = SystemAudioTap { [weak self] pcm, sr in
+                guard let self else { return }
+                // Dedicated queue: audio must never wait behind the video
+                // queue's per-frame convert/encode work — that head-of-line
+                // jitter reached the receiver as dropouts.
+                self.audioQueue.async { self.sendAudioPCM(pcm, sampleRate: sr) }
+            }
+        }
+        if audioTap == nil, let display = captureSCDisplay {
+            Task { [weak self] in
+                do { try await self?.startAudioCapture(display: display) }
+                catch { Log.info("audio capture failed (video unaffected): \(error)") }
+            }
+        }
+    }
     private var audioStream: SCStream?
 
     /// Dedicated audio-only SCStream — independent of the video backend so
@@ -815,19 +884,27 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     // socket (audio still works, just with the old latency).
     private var audioConnection: NWConnection?
     private var audioConnectionReady = false
+    private var audioDialInFlight = false
 
+    /// Called from becomeReady AND retried by the ping loop — a reconnect
+    /// racing the first dial cancels it via the generation guard, and
+    /// without a retry the session silently falls back to the shared
+    /// socket forever (measured as aud50 jumping 30→65ms).
     private func dialAudioConnection() {
+        guard !audioDialInFlight else { return }
         audioConnection?.cancel()
         audioConnection = nil
         audioConnectionReady = false
         let generation = dialGeneration
         switch transport {
         case .usb(let udid, let port):
+            audioDialInFlight = true
             Task { [weak self] in
                 guard let self else { return }
                 do {
                     let conn = try await Usbmux.dial(udid: udid, port: port + 1, queue: queue)
                     queue.async {
+                        self.audioDialInFlight = false
                         guard generation == self.dialGeneration, !self.stopped else {
                             conn.cancel()
                             return
@@ -835,6 +912,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                         self.adoptAudioConnection(conn)
                     }
                 } catch {
+                    queue.async { self.audioDialInFlight = false }
                     Log.info("audio connection dial failed (audio rides the video socket): \(error)")
                 }
             }
@@ -995,6 +1073,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                 let inp50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2].rounded()
                 let inp95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))].rounded()
                 self.sendJSONFrame("{\"type\":\"ping\",\"drops\":\(self.dropsTotal),\"pending\":\(self.pendingSends),\"inp50\":\(inp50),\"inp95\":\(inp95),\"capFps\":\(capFps)}")
+                // The dedicated audio socket is best-effort — keep retrying
+                // while the main connection is healthy but audio isn't.
+                if !self.audioConnectionReady { self.dialAudioConnection() }
                 // Pipeline diagnosis (`defaults write … diag -bool true`):
                 // one line per ping with every gate's state.
                 if UserDefaults.standard.bool(forKey: "diag") {

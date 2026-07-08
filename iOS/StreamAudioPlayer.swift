@@ -31,6 +31,7 @@ final class StreamAudioPlayer {
     private var needsPrebuffer = true
     private let prebufferChunks = 3
     private var generation = 0
+    private var lastLowQueueAt = Date()
     // Telemetry (racy cross-thread reads are fine for an overlay number):
     // audio sitting in the player queue right now, and the output stage.
     private(set) var queuedMs: Double = 0
@@ -93,12 +94,15 @@ final class StreamAudioPlayer {
             Log.info("audio playback started (\(Int(sampleRate))Hz stereo)")
         }
 
-        if queuedMs >= 60 {
-            // Backlog (startup flood or a burst) — skip FORWARD in one jump.
-            // Shedding one chunk at a time just parks the queue at the cap
-            // forever (measured: aud50 pinned at 75ms even while idle,
-            // because consumption always equals production, so a backlog
-            // never drains on its own).
+        // Backlog control. Consumption always equals production, so a queue
+        // that got tall NEVER drains by itself — skipping forward is the
+        // only way down. Two triggers:
+        //  - hard: ≥60ms right now (startup flood, burst)
+        //  - drift: parked above ~35ms for 2s straight (a transient that
+        //    settled below the hard cap; measured parking spots at 37-58ms
+        //    turned into permanent latency without this)
+        if queuedMs < 35 { lastLowQueueAt = Date() }
+        if queuedMs >= 60 || Date().timeIntervalSince(lastLowQueueAt) > 2 {
             droppedChunks += 1
             if droppedChunks % 20 == 1 {
                 Log.info("audio: skipped ahead to shed \(Int(queuedMs))ms backlog (\(droppedChunks) resets)")
@@ -109,6 +113,7 @@ final class StreamAudioPlayer {
             queuedMs = 0
             prebuffer.removeAll()
             needsPrebuffer = true
+            lastLowQueueAt = Date()
             player.play()
         }
         guard let format,
