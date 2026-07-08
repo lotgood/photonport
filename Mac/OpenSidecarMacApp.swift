@@ -336,38 +336,34 @@ final class SenderController: ObservableObject {
         return PairingStore.psk(for: deviceID) != nil
     }
 
-    /// Runs the PIN exchange against the device's pairing service (its
-    /// pairing screen must be open), stores the PSK, and connects.
-    func pair(with result: NWBrowser.Result, pin: String) async throws {
-        guard let name = serviceName(of: result) else {
-            throw PairingError.serviceNotFound
-        }
-        guard let targetID = txtID(of: result) else {
+    /// Step 1 of SAS pairing: swap keys with the device's pairing service and
+    /// return the 6-digit code to compare against the device's screen, plus
+    /// the (not-yet-stored) deviceID/psk. Nothing is persisted here.
+    struct PendingPairing { let deviceID: String; let psk: Data }
+
+    func beginPair(with result: NWBrowser.Result) async throws -> (sas: String, pending: PendingPairing) {
+        guard let name = serviceName(of: result), let targetID = txtID(of: result) else {
             throw PairingError.serviceNotFound   // old receiver: no install id
         }
         let macName = Host.current().localizedName ?? "Mac"
-        Log.info("pairing: starting exchange with \"\(name)\" (mac id \(PairingStore.macInstallID.prefix(8)))")
-        do {
-            let (deviceID, psk) = try await PairingClient.pair(
-                targetID: targetID, pin: pin, macName: macName,
-                macInstallID: PairingStore.macInstallID)
-            // Defense in depth: only trust a PSK for the device we targeted.
-            // (Does NOT by itself close the active-fake-endpoint hole — the
-            // pairing protocol needs a PAKE/numeric-comparison; see the
-            // security review. But never store a PSK under a mismatched id.)
-            guard deviceID == targetID else {
-                Log.info("pairing: device id mismatch (got \(deviceID.prefix(8)), expected \(targetID.prefix(8))) — refusing")
-                throw PairingError.rejected("Pairing failed — the device identity did not match.")
-            }
-            guard PairingStore.setPSK(psk, for: deviceID) else {
-                throw PairingError.rejected("Pairing failed — couldn't save the key to the Keychain.")
-            }
-            Log.info("pairing: succeeded with \"\(name)\" (device \(deviceID.prefix(8))) — connecting")
-            connect(to: .wifi(result), userInitiated: true)
-        } catch {
-            Log.info("pairing: FAILED with \"\(name)\": \(error.localizedDescription)")
-            throw error
+        Log.info("pairing: begin with \"\(name)\" (mac id \(PairingStore.macInstallID.prefix(8)))")
+        let (deviceID, sas, psk) = try await PairingClient.pair(
+            targetID: targetID, macName: macName, macInstallID: PairingStore.macInstallID)
+        return (sas, PendingPairing(deviceID: deviceID, psk: psk))
+    }
+
+    /// Step 2: the user confirmed the code matches the device's — store the
+    /// PSK and connect. Only reached after a human compared both screens,
+    /// which is what authenticates the channel against an active MITM.
+    func commitPair(with result: NWBrowser.Result, pending: PendingPairing) throws {
+        guard let targetID = txtID(of: result), pending.deviceID == targetID else {
+            throw PairingError.rejected("Pairing failed — the device identity did not match.")
         }
+        guard PairingStore.setPSK(pending.psk, for: pending.deviceID) else {
+            throw PairingError.rejected("Pairing failed — couldn't save the key to the Keychain.")
+        }
+        Log.info("pairing: confirmed with device \(pending.deviceID.prefix(8)) — connecting")
+        connect(to: .wifi(result), userInitiated: true)
     }
 
     /// Forget a device's pairing (the receiver keeps its side until removed
@@ -1012,59 +1008,80 @@ final class CheckForUpdatesViewModel: ObservableObject {
     }
 }
 
-/// One-time WiFi pairing: the user reads the 6-digit code off the device's
-/// pairing screen and types it here. Success stores the TLS-PSK and
-/// connects immediately.
+/// One-time WiFi pairing (SAS numeric comparison). The Mac and the device
+/// each derive and display the same 6-digit code from a fresh key exchange;
+/// the user confirms the two screens match, which is what authenticates the
+/// channel against an active same-LAN attacker. Only on confirmation is the
+/// TLS-PSK stored and the connection made.
 struct PairSheet: View {
     let entry: SenderController.DeviceEntry
     let controller: SenderController
     let onClose: () -> Void
-    @State private var pin = ""
-    @State private var busy = false
+    @State private var sas: String?
+    @State private var pending: SenderController.PendingPairing?
+    @State private var busy = true
     @State private var error: String?
 
-    private var trimmedPIN: String { pin.trimmingCharacters(in: .whitespaces) }
+    private var wifiResult: NWBrowser.Result? {
+        if case .wifi(let r)? = entry.wifiTarget { return r }
+        return nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pair with \(entry.name)")
                 .font(.headline)
-            Text("On the device, open Settings → Pair a Mac, then enter the 6-digit code shown there.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("6-digit code", text: $pin)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.title2, design: .monospaced))
-                .disabled(busy)
             if let error {
                 Text(error)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.red)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { onClose() }
-                    .disabled(busy)
-                Button(busy ? "Pairing…" : "Pair") {
-                    guard case .wifi(let result)? = entry.wifiTarget else { return }
-                    busy = true
-                    error = nil
-                    Task {
-                        do {
-                            try await controller.pair(with: result, pin: trimmedPIN)
-                            onClose()
-                        } catch {
-                            self.error = error.localizedDescription
-                        }
-                        busy = false
-                    }
+                HStack { Spacer(); Button("Close") { onClose() } }
+            } else if let sas {
+                Text("Confirm this code matches the one on \(entry.name):")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text(sas)
+                    .font(.system(size: 44, weight: .bold, design: .monospaced))
+                    .kerning(6)
+                    .frame(maxWidth: .infinity)
+                Text("If the codes differ, do NOT confirm — someone may be intercepting. Cancel and try again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { onClose() }.disabled(busy)
+                    Button(busy ? "Connecting…" : "Codes match") { confirm() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(busy)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(busy || trimmedPIN.count != 6)
+            } else {
+                HStack { ProgressView(); Text("Exchanging keys…").foregroundStyle(.secondary) }
             }
         }
         .padding(20)
         .frame(width: 340)
+        .task { await begin() }
+    }
+
+    private func begin() async {
+        guard let result = wifiResult else { error = "No WiFi service for this device."; busy = false; return }
+        do {
+            let (code, p) = try await controller.beginPair(with: result)
+            sas = code; pending = p; busy = false
+        } catch {
+            self.error = error.localizedDescription; busy = false
+        }
+    }
+
+    private func confirm() {
+        guard let result = wifiResult, let pending else { return }
+        busy = true; error = nil
+        do {
+            try controller.commitPair(with: result, pending: pending)
+            onClose()
+        } catch {
+            self.error = error.localizedDescription; busy = false
+        }
     }
 }
 

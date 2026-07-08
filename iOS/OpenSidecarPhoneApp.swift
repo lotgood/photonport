@@ -617,14 +617,15 @@ final class ReceiverModel: ObservableObject {
 
 // MARK: - Video layer host view
 
-/// Pairing screen: shows the single-use 6-digit code and runs the pairing
-/// listener for exactly as long as it's visible — the only moment the app
-/// exposes an unauthenticated network surface. See iOS/Pairing.swift.
+/// Pairing screen (SAS numeric comparison): runs the pairing listener while
+/// visible, shows the 6-digit code derived from the key exchange, and asks
+/// the user to confirm it matches the code on the Mac. Only that human
+/// comparison authenticates the channel — see iOS/Pairing.swift.
 struct PairMacView: View {
     let receiver: PhoneReceiver
     let onChange: () -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var pin = ""
+    @State private var sas: String?
     @State private var pairedName: String?
     @State private var server: PairingServer?
 
@@ -642,16 +643,29 @@ struct PairMacView: View {
                     .foregroundStyle(.secondary)
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent)
-            } else {
-                Text("In the PhotonPort Mac app, click Pair… on this \(deviceKind) and enter:")
+            } else if let sas {
+                Text("Check that this code matches the one on your Mac:")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Text(pin)
-                    .font(.system(size: 64, weight: .bold, design: .monospaced))
+                Text(sas)
+                    .font(.system(size: 60, weight: .bold, design: .monospaced))
                     .kerning(6)
+                Text("Only tap Confirm if the codes are identical. If they differ, someone may be intercepting — leave this screen.")
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                Button("Codes match — Confirm") {
+                    server?.confirm()
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Text("In the PhotonPort Mac app, click Pair… on this \(deviceKind).")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 ProgressView()
-                Text("The code changes after a wrong attempt and expires when you leave this screen.")
+                Text("A 6-digit code will appear on both screens to compare.")
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -671,6 +685,9 @@ struct PairMacView: View {
     private func startServer() {
         let s = PairingServer(
             serviceName: receiver.serviceName,
+            onSAS: { code in
+                DispatchQueue.main.async { sas = code }
+            },
             onPaired: { macID, macName, psk in
                 guard PairingStore.add(macID: macID, name: macName, psk: psk) else {
                     Log.info("pairing: keychain store failed — not marking paired")
@@ -681,11 +698,7 @@ struct PairMacView: View {
                     pairedName = macName
                     onChange()
                 }
-            },
-            onPINChanged: { fresh in
-                DispatchQueue.main.async { pin = fresh }
             })
-        pin = s.pin
         s.start()
         server = s
     }

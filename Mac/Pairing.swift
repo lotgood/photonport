@@ -30,28 +30,20 @@ import CryptoKit
 
 // MARK: - Wire messages
 
-struct PairStart: Codable {
-    var type = "pair-start"
-    let name: String        // Mac's user-visible name, shown on the device
-    let installID: String   // Mac's stable identity = TLS-PSK identity hint
+// One message, sent in both directions: each side announces its identity,
+// ephemeral X25519 public key, and a random nonce. No low-entropy secret
+// (PIN) is ever transmitted or proven — authentication is the human
+// comparing the derived SAS on both screens (Bluetooth numeric-comparison
+// style), which defeats an active same-LAN fake endpoint without exposing
+// an offline PIN oracle.
+struct PairHello: Codable {
+    var type = "pair-hello"
+    let v: Int              // protocol version (2)
+    let role: String        // "mac" | "device"
+    let installID: String
+    let name: String?       // Mac's user-visible name (device omits)
     let pub: String         // X25519 public key, base64
-}
-
-struct PairChallenge: Codable {
-    var type = "pair-challenge"
-    let pub: String         // receiver's X25519 public key, base64
-    let salt: String        // HKDF salt, base64
-}
-
-struct PairProof: Codable {
-    var type = "pair-proof"
-    let proof: String       // HMAC(confirmKey, pin || clientPub || serverPub), base64
-}
-
-struct PairResult: Codable {
-    var type: String        // "pair-ok" | "pair-fail"
-    var deviceID: String?   // receiver's install id (on ok)
-    var reason: String?     // human-readable (on fail)
+    let nonce: String       // 16 random bytes, base64
 }
 
 // MARK: - Crypto core (identical on both platforms)
@@ -62,43 +54,59 @@ enum PairingCrypto {
     // would need its own Local Network authorization).
     static let serviceType = "_photonport._tcp"
     static let pairTXTKey = "pair"
+    static let version = 2
+    static let protocolLabel = "PhotonPort-pair-v2"
 
-    /// confirmKey authenticates the PIN proof; psk is the long-term secret.
-    /// Separate HKDF infos keep them cryptographically independent.
-    static func confirmKey(shared: SharedSecret, salt: Data) -> SymmetricKey {
-        shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt,
-                                       sharedInfo: Data("photonport-pair-confirm".utf8),
-                                       outputByteCount: 32)
+    static func randomNonce() -> Data? {
+        var b = Data(count: 16)
+        let ok = b.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
+        }
+        return ok == errSecSuccess ? b : nil
     }
 
-    static func psk(shared: SharedSecret, salt: Data) -> Data {
-        shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt,
-                                       sharedInfo: Data("photonport-pair-psk".utf8),
-                                       outputByteCount: 32)
+    /// Length-prefixed, role-ordered transcript binding everything that
+    /// identifies this exact session, so a MITM cannot misbind or reflect:
+    /// protocol label, both install IDs, both ephemeral public keys, and both
+    /// nonces (client = Mac, server = device). Bonjour service name is
+    /// deliberately excluded — it's user-editable and Bonjour may uniquify
+    /// it, which would desync the two transcripts.
+    static func transcript(macInstallID: String, deviceInstallID: String,
+                           macPub: Data, devicePub: Data,
+                           macNonce: Data, deviceNonce: Data) -> Data {
+        var h = SHA256()
+        func feed(_ d: Data) {
+            var n = UInt32(d.count).bigEndian
+            h.update(data: Data(bytes: &n, count: 4))
+            h.update(data: d)
+        }
+        feed(Data(protocolLabel.utf8))
+        feed(Data(macInstallID.utf8))
+        feed(Data(deviceInstallID.utf8))
+        feed(macPub); feed(devicePub); feed(macNonce); feed(deviceNonce)
+        return Data(h.finalize())
+    }
+
+    /// 6-digit short authentication string derived from the ECDH secret and
+    /// the transcript. Displayed on BOTH devices for the user to compare.
+    static func sasDigits(shared: SharedSecret, transcript: Data) -> String {
+        let k = shared.hkdfDerivedSymmetricKey(
+            using: SHA256.self, salt: transcript,
+            sharedInfo: Data("photonport-pair-sas-v2".utf8), outputByteCount: 4)
+        let bytes = k.withUnsafeBytes { Array($0) }
+        // Platform-independent big-endian assembly.
+        let v = (UInt32(bytes[0]) << 24) | (UInt32(bytes[1]) << 16)
+              | (UInt32(bytes[2]) << 8) | UInt32(bytes[3])
+        return String(format: "%06u", v % 1_000_000)
+    }
+
+    /// The long-term TLS-PSK, derived only from the ECDH secret + transcript
+    /// (never from the SAS), so the displayed code carries no key material.
+    static func psk(shared: SharedSecret, transcript: Data) -> Data {
+        shared.hkdfDerivedSymmetricKey(
+            using: SHA256.self, salt: transcript,
+            sharedInfo: Data("photonport-pair-psk-v2".utf8), outputByteCount: 32)
             .withUnsafeBytes { Data($0) }
-    }
-
-    /// Binds the PIN AND both public keys, so a MITM substituting keys
-    /// cannot replay a proof it observed.
-    static func proof(confirmKey: SymmetricKey, pin: String,
-                      clientPub: Data, serverPub: Data) -> Data {
-        var msg = Data(pin.utf8)
-        msg.append(clientPub)
-        msg.append(serverPub)
-        return Data(HMAC<SHA256>.authenticationCode(for: msg, using: confirmKey))
-    }
-
-    static func validProof(_ proof: Data, confirmKey: SymmetricKey, pin: String,
-                           clientPub: Data, serverPub: Data) -> Bool {
-        var msg = Data(pin.utf8)
-        msg.append(clientPub)
-        msg.append(serverPub)
-        return HMAC<SHA256>.isValidAuthenticationCode(proof, authenticating: msg,
-                                                      using: confirmKey)
-    }
-
-    static func makePIN() -> String {
-        String(format: "%06d", Int.random(in: 0...999_999))
     }
 
     /// Client-side TLS-PSK options. TLS 1.2 PSK ciphersuite — the
@@ -225,7 +233,7 @@ enum PairingError: LocalizedError {
     case serviceNotFound     // receiver's pairing screen isn't open
     case permissionDenied    // Mac lacks Local Network permission (NoAuth)
     case protocolError
-    case rejected(String)    // wrong PIN, receiver said no
+    case rejected(String)    // receiver refused, or the user cancelled
 
     var errorDescription: String? {
         switch self {
@@ -246,11 +254,11 @@ enum PairingClient {
     /// `pair=1` TXT flag, matched by install id), runs the exchange, and
     /// returns the receiver's identity + derived PSK. The caller persists
     /// the PSK; this function has no storage side effects.
-    static func pair(targetID: String, pin: String, macName: String,
-                     macInstallID: String) async throws -> (deviceID: String, psk: Data) {
+    static func pair(targetID: String, macName: String, macInstallID: String)
+        async throws -> (deviceID: String, sas: String, psk: Data) {
         let endpoint = try await discover(targetID: targetID)
-        return try await exchange(endpoint: endpoint, pin: pin,
-                                  macName: macName, macInstallID: macInstallID)
+        return try await exchange(endpoint: endpoint, macName: macName,
+                                  macInstallID: macInstallID, targetID: targetID)
     }
 
     /// Browses the video service type for a `pair=1` instance whose `id`
@@ -268,7 +276,7 @@ enum PairingClient {
         return try await withCheckedThrowingContinuation { cont in
             let done = ContinuationGate()
             @discardableResult
-            func finish(_ result: Result<NWEndpoint, Error>) -> Bool {
+            @Sendable func finish(_ result: Result<NWEndpoint, Error>) -> Bool {
                 guard done.claim() else { return false }
                 browser.cancel()
                 cont.resume(with: result)
@@ -312,9 +320,14 @@ enum PairingClient {
         }
     }
 
-    static func exchange(endpoint: NWEndpoint, pin: String, macName: String,
-                         macInstallID: String) async throws -> (deviceID: String, psk: Data) {
+    /// Swaps one PairHello each way, derives the SAS + PSK, and returns them.
+    /// No PIN is sent; the caller displays the SAS for the user to compare
+    /// against the device's screen and only stores the PSK on confirmation.
+    static func exchange(endpoint: NWEndpoint, macName: String,
+                         macInstallID: String, targetID: String)
+        async throws -> (deviceID: String, sas: String, psk: Data) {
         let key = Curve25519.KeyAgreement.PrivateKey()
+        guard let macNonce = PairingCrypto.randomNonce() else { throw PairingError.protocolError }
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         let conn = NWConnection(to: endpoint, using: NWParameters(tls: nil, tcp: tcp))
@@ -328,34 +341,31 @@ enum PairingClient {
             conn.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    let start = PairStart(name: macName, installID: macInstallID,
-                                          pub: key.publicKey.rawRepresentation.base64EncodedString())
-                    guard let frame = PairingWire.frame(start) else { return fail(.protocolError) }
+                    let hello = PairHello(
+                        v: PairingCrypto.version, role: "mac",
+                        installID: macInstallID, name: macName,
+                        pub: key.publicKey.rawRepresentation.base64EncodedString(),
+                        nonce: macNonce.base64EncodedString())
+                    guard let frame = PairingWire.frame(hello) else { return fail(.protocolError) }
                     conn.send(content: frame, completion: .contentProcessed { _ in })
-                    PairingWire.receive(PairChallenge.self, on: conn) { challenge in
-                        guard let challenge,
-                              let serverPub = Data(base64Encoded: challenge.pub),
-                              let salt = Data(base64Encoded: challenge.salt),
-                              let serverKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: serverPub),
-                              let shared = try? key.sharedSecretFromKeyAgreement(with: serverKey)
+                    PairingWire.receive(PairHello.self, on: conn) { peer in
+                        guard let peer, peer.v == PairingCrypto.version, peer.role == "device",
+                              let devicePub = Data(base64Encoded: peer.pub),
+                              let deviceNonce = Data(base64Encoded: peer.nonce),
+                              let deviceKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: devicePub),
+                              let shared = try? key.sharedSecretFromKeyAgreement(with: deviceKey)
                         else { return fail(.protocolError) }
-
-                        let confirm = PairingCrypto.confirmKey(shared: shared, salt: salt)
-                        let proof = PairingCrypto.proof(
-                            confirmKey: confirm, pin: pin,
-                            clientPub: key.publicKey.rawRepresentation, serverPub: serverPub)
-                        guard let proofFrame = PairingWire.frame(PairProof(proof: proof.base64EncodedString()))
-                        else { return fail(.protocolError) }
-                        conn.send(content: proofFrame, completion: .contentProcessed { _ in })
-
-                        PairingWire.receive(PairResult.self, on: conn) { result in
-                            guard let result else { return fail(.protocolError) }
-                            guard result.type == "pair-ok", let deviceID = result.deviceID else {
-                                return fail(.rejected(result.reason ?? "Pairing rejected — check the PIN."))
-                            }
-                            let psk = PairingCrypto.psk(shared: shared, salt: salt)
-                            if done.claim() { cont.resume(returning: (deviceID, psk)) }
+                        // The receiver must be the device we targeted.
+                        guard peer.installID == targetID else {
+                            return fail(.rejected("Pairing failed — the device identity did not match."))
                         }
+                        let tr = PairingCrypto.transcript(
+                            macInstallID: macInstallID, deviceInstallID: peer.installID,
+                            macPub: key.publicKey.rawRepresentation, devicePub: devicePub,
+                            macNonce: macNonce, deviceNonce: deviceNonce)
+                        let sas = PairingCrypto.sasDigits(shared: shared, transcript: tr)
+                        let psk = PairingCrypto.psk(shared: shared, transcript: tr)
+                        if done.claim() { cont.resume(returning: (peer.installID, sas, psk)) }
                     }
                 case .failed, .cancelled:
                     fail(.protocolError)
@@ -364,9 +374,6 @@ enum PairingClient {
                 }
             }
             conn.start(queue: .global())
-            // A malicious/half-open service can accept the TCP connection and
-            // never send the next frame; without a deadline pair() suspends
-            // forever. Bounded, resume-once via the gate.
             DispatchQueue.global().asyncAfter(deadline: .now() + 15) {
                 fail(.protocolError)
             }

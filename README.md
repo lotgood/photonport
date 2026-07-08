@@ -20,17 +20,22 @@ experimental display/audio work stays here.
 
 ## Security — read this first
 
-- **WiFi requires pairing and runs over TLS.** A one-time 6-digit PIN
-  exchange (X25519 ECDH with a PIN-bound HMAC proof — simplified Bluetooth
-  numeric-entry pairing) establishes a per-Mac key; WiFi sessions then run
-  over TLS-PSK. The receiver's plaintext port only accepts loopback
-  (USB/usbmux) peers, and the pairing listener exists only while the
-  device's pairing screen is open. Residual risks: an active MITM during
-  the pairing moment gets exactly one online PIN guess (a failed attempt
-  regenerates the PIN); a recorded pairing handshake allows offline PIN
-  cracking, but the PIN is single-use and the session key never derives
-  from it. The `-host`/`-port` manual endpoint stays plaintext — use it
-  only for loopback-style tunnels.
+- **WiFi requires pairing and runs over TLS.** Pairing is a one-time
+  **SAS numeric comparison** (Bluetooth-style): both devices derive the same
+  6-digit code from a fresh X25519 key exchange and you confirm the two
+  screens match. No secret is typed or transmitted, so there is no offline
+  PIN oracle, and an active same-network attacker inserting a fake endpoint
+  produces *different* codes on the two screens — mismatch means "don't
+  confirm". The confirmed key is stored per-Mac (device-only Keychain) and
+  WiFi sessions run over TLS-PSK. The receiver's plaintext port only accepts
+  loopback (USB/usbmux) peers, and the pairing listener exists only while the
+  device's pairing screen is open.
+- **Residual WiFi caveats** (documented, not yet fixed): TLS-PSK has no
+  forward secrecy (a leaked long-term key can decrypt past recorded
+  sessions); a holder of a valid/stolen PSK can take over an active session
+  (no per-session binding yet). Prefer USB for anything sensitive. The
+  `-host`/`-port` manual endpoint stays plaintext — use it only for
+  loopback-style tunnels.
 - The Mac app requires Screen Recording (and, for audio, System Audio
   Recording) permission — it captures your screen and system audio and sends
   them to your device. Nothing else; no servers, no analytics, no accounts.
