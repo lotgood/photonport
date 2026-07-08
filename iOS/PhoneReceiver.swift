@@ -323,6 +323,74 @@ final class PhoneReceiver: ObservableObject {
         receive(on: conn)
     }
 
+    // First frame a WiFi audio connection sends so the receiver can tell it
+    // apart from the video connection on the shared secure listener.
+    private static let audioChannelTag = Data("{\"type\":\"audiochannel\"}".utf8)
+
+    /// The secure (WiFi) listener carries BOTH the video connection and,
+    /// separately, the audio connection (so audio PCM never head-of-line
+    /// blocks behind video frames on a lossy radio). Classify each new
+    /// connection by its first frame: a tagged one becomes the dedicated
+    /// audio connection; anything else is the video/control connection.
+    private func acceptSecure(_ conn: NWConnection) {
+        conn.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                self.lastDataReceived = Date()
+                // The video peer waits for hello before it sends anything;
+                // the audio peer ignores hello and sends its tag immediately.
+                self.sendHello(on: conn)
+                self.classifyFirstFrame(conn)
+            case .failed, .cancelled:
+                if conn === self.connection { self.setConnected(false) }
+                if conn === self.audioConnection { self.audioConnection = nil }
+            default: break
+            }
+        }
+        conn.start(queue: queue)
+    }
+
+    private func classifyFirstFrame(_ conn: NWConnection) {
+        readFrame(on: conn) { [weak self] payload in
+            guard let self else { return }
+            guard let payload else { conn.cancel(); return }
+            if payload == Self.audioChannelTag {
+                Log.info("secure audio channel adopted (dedicated socket)")
+                self.audioConnection?.cancel()
+                self.audioConnection = conn
+                self.audioBuffer.removeAll(keepingCapacity: true)
+                self.receiveAudio(on: conn)
+            } else {
+                // Video/control connection. The first frame was consumed to
+                // classify (usually the connect-time IDR); request a fresh
+                // keyframe so the decoder starts cleanly instead of choking on
+                // P-frames referencing the dropped one.
+                Log.info("secure video connection adopted")
+                self.transport = "WiFi"
+                self.connection?.cancel()
+                self.connection = conn
+                self.resetStreamState()
+                self.setConnected(true)
+                self.sendControl(["type": "keyframe"])
+                self.receive(on: conn)
+            }
+        }
+    }
+
+    /// Reads exactly one [4-byte BE length][payload] frame.
+    private func readFrame(on conn: NWConnection, completion: @escaping (Data?) -> Void) {
+        conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { header, _, _, err in
+            guard let header, header.count == 4, err == nil else { return completion(nil) }
+            let len = Int(UInt32(bigEndian: header.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
+            guard len > 0, len < 32 * 1024 * 1024 else { return completion(nil) }
+            conn.receive(minimumIncompleteLength: len, maximumLength: len) { payload, _, _, err in
+                guard let payload, payload.count == len, err == nil else { return completion(nil) }
+                completion(payload)
+            }
+        }
+    }
+
     // MARK: - Secure (WiFi) listener
     //
     // TLS-PSK with the keys established by pairing (see iOS/Pairing.swift).
@@ -348,7 +416,7 @@ final class PhoneReceiver: ObservableObject {
         }
         secure.service = advertisedService
         secure.newConnectionHandler = { [weak self] conn in
-            self?.adopt(conn, transport: "WiFi")
+            self?.acceptSecure(conn)
         }
         secure.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -397,6 +465,13 @@ final class PhoneReceiver: ObservableObject {
         }
         l.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
+            // Plaintext audio socket is USB-only (loopback). WiFi audio rides
+            // its own TLS connection on the secure listener instead.
+            guard Self.isLoopback(conn.endpoint) else {
+                Log.info("plaintext audio connection from \(String(describing: conn.endpoint)) rejected — WiFi audio uses TLS")
+                conn.cancel()
+                return
+            }
             Log.info("audio connection accepted")
             self.audioConnection?.cancel()
             self.audioConnection = conn
@@ -486,6 +561,9 @@ final class PhoneReceiver: ObservableObject {
                   let pcm = Data(base64Encoded: b64) else { return }
             let sr = obj["sr"] as? Double ?? 48_000
             if audioPlayer == nil { audioPlayer = StreamAudioPlayer() }
+            // WiFi shares this socket and jitters; USB has a dedicated
+            // low-latency audio socket. Keep the buffer depth matched.
+            audioPlayer?.highJitter = (transport == "WiFi")
             audioPlayer?.enqueue(pcm, sampleRate: sr)
             // Audible latency estimate: Mac send → here (clock-mapped) +
             // whatever sits in the player queue + the output stage.

@@ -140,6 +140,19 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         if case .usb = transport { return true }
         return false
     }
+    // WiFi can't carry the USB-tier native-120fps HDR config. The HEVC
+    // encoder needs ~20ms/frame at native res (a ~50fps ceiling; ProRes on
+    // the dedicated block isn't an option off USB), and the radio's usable
+    // bitrate is a fraction of the ~1Gbps usbmux link. Pushing native 120
+    // there just saturates the encoder and socket, so frames queue as pure
+    // latency and drop in bulk (measured: e2e 30–275ms, 200–400 drops/s).
+    // Cap WiFi to 60fps and a resolution ceiling so the encoder keeps pace.
+    private var effectiveScale: Double {
+        isUSBTransport ? quality.scale : min(quality.scale, 0.6)
+    }
+    private func cappedFps(_ fps: Int) -> Int {
+        isUSBTransport ? fps : min(fps, 60)
+    }
     // Stable per-device serial for the virtual display, so macOS can tell
     // multiple PhotonPort monitors apart and persist their arrangement.
     private let displaySerial: UInt32
@@ -290,7 +303,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
             // (and the recording indicator no longer runs with no receiver).
             await status("Waiting for the device to connect…")
             let info = try await waitForHello()
-            streamFps = info.refreshRate
+            streamFps = cappedFps(info.refreshRate)
             hdrActive = resolveHDR(info)
             let content = try await SCShareableContent.current
             guard let display = content.displays.first else {
@@ -298,8 +311,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                               userInfo: [NSLocalizedDescriptionKey: "no displays found"])
             }
             // SCDisplay reports points; capture at point resolution for M1.
-            let captureW = (Int(Double(display.width) * quality.scale)) & ~1
-            let captureH = (Int(Double(display.height) * quality.scale)) & ~1
+            let captureW = (Int(Double(display.width) * effectiveScale)) & ~1
+            let captureH = (Int(Double(display.height) * effectiveScale)) & ~1
             try await startCapture(display: display, pixelsWide: captureW, pixelsHigh: captureH)
 
         case .extend:
@@ -350,7 +363,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         let serial = info.pixelsWide >= info.pixelsHigh
             ? displaySerial
             : displaySerial ^ 0x8000_0000
-        let requestedFps = info.refreshRate
+        let requestedFps = cappedFps(info.refreshRate)
         // Resolve HDR before building the display: an EDR virtual display
         // (macOS 26 transferFunction hook) makes WindowServer composite HDR
         // content with real headroom, so the capture carries true HDR — not
@@ -369,7 +382,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         virtualDisplay = vd
         // Pace the encoder at what the display actually runs — a rejected
         // 120Hz mode means macOS only renders 60 new frames a second.
-        streamFps = vd.appliedRefreshRate
+        streamFps = cappedFps(vd.appliedRefreshRate)
         // 10-bit HEVC HLG stays worthwhile even if the EDR framebuffer fell
         // back to SDR (less banding), so hdrActive follows the negotiation,
         // not the framebuffer.
@@ -379,8 +392,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         let display = try await findSCDisplay(id: vd.displayID)
         // Quality scaling: capture/encode below native when requested — the
         // display itself stays native so window layout is unaffected.
-        let captureW = (Int(Double(pointsWide * 2) * quality.scale)) & ~1
-        let captureH = (Int(Double(pointsHigh * 2) * quality.scale)) & ~1
+        let captureW = (Int(Double(pointsWide * 2) * effectiveScale)) & ~1
+        let captureH = (Int(Double(pointsHigh * 2) * effectiveScale)) & ~1
         try await startCapture(display: display, pixelsWide: captureW, pixelsHigh: captureH)
 
         // Debug aid (`defaults write dev.hyupji.photonport.mac testPattern -bool true`):
@@ -931,7 +944,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                             conn.cancel()
                             return
                         }
-                        self.adoptAudioConnection(conn)
+                        self.adoptAudioConnection(conn, tag: false)
                     }
                 } catch {
                     queue.async { self.audioDialInFlight = false }
@@ -939,28 +952,60 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                 }
             }
         case .tcp(let endpoint):
-            guard case .hostPort(let host, let port) = endpoint,
-                  let nextPort = NWEndpoint.Port(rawValue: port.rawValue + 1) else {
-                Log.info("audio connection: endpoint has no derivable port — audio rides the video socket")
-                return
+            if case .hostPort(let host, let port) = endpoint,
+               let nextPort = NWEndpoint.Port(rawValue: port.rawValue + 1) {
+                // Manual -host/-port endpoint (loopback tunnel): dial the
+                // plaintext audio port directly, same as before.
+                let options = NWProtocolTCP.Options()
+                options.noDelay = true
+                let conn = NWConnection(host: host, port: nextPort,
+                                        using: NWParameters(tls: nil, tcp: options))
+                conn.start(queue: queue)
+                adoptAudioConnection(conn, tag: false)
+            } else {
+                // WiFi (Bonjour service): a fixed audio port isn't derivable,
+                // so open a SECOND TLS connection to the same service and tag
+                // it as the audio channel. Audio then rides its own TCP
+                // connection — no head-of-line blocking behind video frames on
+                // a lossy radio (the periodic-freeze amplifier). Same TLS-PSK.
+                let options = NWProtocolTCP.Options()
+                options.noDelay = true
+                let params: NWParameters
+                if let wifiPSK {
+                    params = NWParameters(
+                        tls: PairingCrypto.clientTLSOptions(identity: wifiPSK.identity,
+                                                            psk: wifiPSK.key),
+                        tcp: options)
+                } else {
+                    params = NWParameters(tls: nil, tcp: options)
+                }
+                params.serviceClass = .interactiveVoice
+                let conn = NWConnection(to: endpoint, using: params)
+                conn.start(queue: queue)
+                adoptAudioConnection(conn, tag: true)
             }
-            let options = NWProtocolTCP.Options()
-            options.noDelay = true
-            let conn = NWConnection(host: host, port: nextPort,
-                                    using: NWParameters(tls: nil, tcp: options))
-            conn.start(queue: queue)
-            adoptAudioConnection(conn)
         }
     }
 
-    private func adoptAudioConnection(_ conn: NWConnection) {
+    private func adoptAudioConnection(_ conn: NWConnection, tag: Bool) {
         audioConnection = conn
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
             case .ready:
+                // WiFi audio shares the secure listener with video, so it must
+                // announce itself as the audio channel before any PCM — the
+                // receiver routes tagged connections to the audio path instead
+                // of adopting them as the (replacement) video connection.
+                if tag {
+                    let payload = Data("{\"type\":\"audiochannel\"}".utf8)
+                    var header = UInt32(payload.count).bigEndian
+                    var frame = Data(bytes: &header, count: 4)
+                    frame.append(payload)
+                    conn.send(content: frame, completion: .contentProcessed { _ in })
+                }
                 self.audioConnectionReady = true
-                Log.info("audio connection ready (dedicated socket)")
+                Log.info("audio connection ready (dedicated socket\(tag ? ", tagged" : ""))")
             case .failed, .cancelled:
                 self.audioConnectionReady = false
             default: break
@@ -1441,6 +1486,20 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         let bitrate = streamFps > 60 ? quality.bitrate(usb: isUSBTransport) * 3 / 2
                                      : quality.bitrate(usb: isUSBTransport)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
+        if !isUSBTransport {
+            // WiFi shares one TCP socket for video+audio+control and rides a
+            // marginal radio. AverageBitRate is only a long-term target, so a
+            // complex-frame burst floods the link, drops packets, and TCP
+            // head-of-line blocking then freezes the WHOLE multiplex for the
+            // retransmit RTO — the periodic ~30–90s stalls seen in the logs
+            // (rtt 6ms→400-1100ms, everything spiking together, load-
+            // correlated). A hard DataRateLimit caps bytes over a short
+            // window so no single burst can saturate the link. USB has
+            // ~1Gbps of headroom and needs no cap.
+            let capBytesPerSec = bitrate / 8 * 5 / 4   // 1.25× average, 1s window
+            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_DataRateLimits,
+                                 value: [NSNumber(value: capBytesPerSec), NSNumber(value: 1.0)] as CFArray)
+        }
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: streamFps as CFNumber)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
         VTCompressionSessionPrepareToEncodeFrames(encoder)

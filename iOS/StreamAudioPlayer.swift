@@ -34,7 +34,20 @@ final class StreamAudioPlayer {
     private var droppedChunks = 0
     private var prebuffer: [AVAudioPCMBuffer] = []
     private var needsPrebuffer = true
-    private let prebufferChunks = 3
+    // Jitter tolerance depends on the link. USB (dedicated audio socket,
+    // ~5ms buffers) has almost none, so the buffer stays shallow for low
+    // latency. WiFi shares the video socket and rides a radio with periodic
+    // 100–700ms RTT spikes: the shallow thresholds shed backlog every few
+    // seconds (constant audible glitching). WiFi uses a moderately deeper
+    // buffer — it parks around ~55–100ms instead of USB's ~35–60ms, enough
+    // to ride typical radio jitter without the constant full-flush glitches,
+    // without piling on the audio latency. Set from the receiver's transport.
+    var highJitter = false
+    private var prebufferChunks: Int { highJitter ? 6 : 3 }     // ~32ms vs ~16ms
+    private var freshnessSeconds: TimeInterval { highJitter ? 0.15 : 0.08 }
+    private var hardShedMs: Double { highJitter ? 100 : 60 }
+    private var driftFloorMs: Double { highJitter ? 55 : 35 }
+    private var driftSeconds: TimeInterval { highJitter ? 3 : 2 }
     private var generation = 0
     private var lastLowQueueAt = Date()
     // Telemetry (racy cross-thread reads are fine for an overlay number):
@@ -51,7 +64,7 @@ final class StreamAudioPlayer {
         // (measured: a startup flood parked the queue just under the cap,
         // pinning audio at 75ms forever). Stale audio is worthless — drop
         // anything that waited more than 80ms for its turn.
-        let deadline = Date().addingTimeInterval(0.08)
+        let deadline = Date().addingTimeInterval(freshnessSeconds)
         queue.async {
             guard Date() < deadline else { return }
             self.schedule(pcm16, sampleRate: sampleRate)
@@ -106,8 +119,8 @@ final class StreamAudioPlayer {
         //  - drift: parked above ~35ms for 2s straight (a transient that
         //    settled below the hard cap; measured parking spots at 37-58ms
         //    turned into permanent latency without this)
-        if queuedMs < 35 { lastLowQueueAt = Date() }
-        if queuedMs >= 60 || Date().timeIntervalSince(lastLowQueueAt) > 2 {
+        if queuedMs < driftFloorMs { lastLowQueueAt = Date() }
+        if queuedMs >= hardShedMs || Date().timeIntervalSince(lastLowQueueAt) > driftSeconds {
             droppedChunks += 1
             if droppedChunks % 20 == 1 {
                 Log.info("audio: skipped ahead to shed \(Int(queuedMs))ms backlog (\(droppedChunks) resets)")
