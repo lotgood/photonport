@@ -995,6 +995,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         audioConnection = conn
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
+            // Ignore late transitions from an audio socket a reconnect has
+            // already replaced — a stale .failed/.cancelled would otherwise
+            // clear audioConnectionReady for the live audio connection.
+            guard conn === self.audioConnection else {
+                if case .ready = state { conn.cancel() }
+                return
+            }
             switch state {
             case .ready:
                 // WiFi audio shares the secure listener with video, so it must
@@ -1034,6 +1041,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         connection = conn
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
+            // Ignore late transitions from a connection a reconnect has
+            // already replaced. Without this, a stale socket's delayed .failed
+            // tears down the healthy session that superseded it (connectionReady
+            // flipped false + a spurious scheduleReconnect on the wrong session).
+            guard conn === self.connection else {
+                if case .ready = state { conn.cancel() }
+                return
+            }
             switch state {
             case .ready:
                 self.becomeReady(conn)
@@ -1075,6 +1090,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                     self.connection = conn
                     conn.stateUpdateHandler = { [weak self] state in
                         guard let self else { return }
+                        guard conn === self.connection else {
+                            if case .ready = state { conn.cancel() }
+                            return
+                        }
                         switch state {
                         case .failed(let error):
                             Log.info("usb connection failed: \(error)")
@@ -1840,9 +1859,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         pendingSends += 1
         connection.send(content: frame, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            // Clamp: scheduleReconnect() resets pendingSends to 0, so a late
-            // completion from a replaced connection must not drive it negative
-            // (which would permanently disable the backpressure gate).
+            // A completion from a connection a reconnect has already replaced
+            // must not touch the current session: scheduleReconnect() zeroes
+            // pendingSends, so decrementing here would under-count in-flight
+            // frames and slacken the backpressure gate on the live socket.
+            guard connection === self.connection else { return }
+            // Defensive clamp: pendingSends is queue-confined and now only
+            // decremented for the live connection, so it should never underflow.
             self.pendingSends = max(0, self.pendingSends - 1)
             if let error {
                 Log.info("send error: \(error)")
