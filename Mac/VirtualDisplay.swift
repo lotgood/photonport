@@ -27,8 +27,8 @@ final class VirtualDisplay {
     /// device keeps its position in System Settings across sessions.
     /// `refreshRate` above 60 and `hdr` are best-effort: attempted first,
     /// with fallback through (hdr, 60Hz) and plain SDR — the private API's
-    /// support for both varies by macOS version (EDR needs the macOS 26
-    /// transferFunction initializer; same hook BetterDisplay 4.3.3+ uses).
+    /// support for both varies by macOS version (EDR needs the newer
+    /// transferFunction initializer — see CGVirtualDisplayPrivate.h).
     init?(name: String, pointsWide: Int, pointsHigh: Int, sizeInMillimeters: CGSize,
           refreshRate: Int = 60, hdr: Bool = false, serialNum: UInt32 = 0x0001) {
         self.pointsWide = pointsWide
@@ -50,8 +50,8 @@ final class VirtualDisplay {
 
         display = CGVirtualDisplay(descriptor: descriptor)
 
-        // EDR (transferFunction:1) needs the newer initializer; probing showed
-        // tf=1 is the only value that yields EDR compositing headroom.
+        // EDR (transferFunction:1) needs the newer initializer; observed on
+        // macOS 26 as the only value that yields EDR compositing headroom.
         let tfAvailable = CGVirtualDisplayMode.instancesRespond(
             to: #selector(CGVirtualDisplayMode.init(width:height:refreshRate:transferFunction:)))
         if hdr && !tfAvailable {

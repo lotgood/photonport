@@ -1,2 +1,0 @@
-app_identifier(["com.peetzweg.opensidecar.mac", "com.peetzweg.opensidecar.ios"])
-team_id(ENV["DEVELOPMENT_TEAM"])

@@ -1,75 +1,109 @@
 # PhotonPort
 
-Turn an iPad or iPhone into a **120Hz, true-HDR, ProRes-grade** external
-display for your Mac — over a USB cable, at single-digit-millisecond latency,
-with system audio routed to the device (Sidecar-style: the Mac mutes while
-forwarding).
+> ⚠️ **EXPERIMENTAL — UNSUPPORTED — USE AT YOUR OWN RISK.**
+> This is a personal research fork, tested on exactly **one** hardware pair:
+> an Apple-Silicon Mac (M4 Max, macOS 26) and an iPad Pro 11" (M4, iOS 26)
+> over USB. Every number below was measured on that setup and **nowhere
+> else**. Fallback paths for other devices/OS versions exist in code but are
+> unverified. No binaries, no support guarantee, no roadmap promises.
+
+Turns an iPad or iPhone into a high-refresh, wide-dynamic-range external
+display for a Mac over a USB cable, with system audio routed to the device
+(the Mac mutes while forwarding, like Sidecar).
 
 PhotonPort is a fork of [OpenDisplay](https://github.com/peetzweg/opendisplay)
 by [@peetzweg](https://github.com/peetzweg) (GPL-3.0). The connection
 plumbing (usbmuxd dial, Bonjour discovery, touch injection, receiver
-scaffolding) is his; everything below is what this fork adds on top.
-This is a personal build tuned for exactly one hardware pair — an
-Apple-Silicon Mac on macOS 26 and an M4 iPad Pro — with fallbacks kept
-but unverified elsewhere.
+scaffolding) is upstream's work; this fork adds the pipeline described below.
+General-purpose bug fixes are proposed upstream where they fit; the
+experimental display/audio work stays here.
 
-## What it does (all measured, USB, M4 Max → iPad Pro 11" M4)
+## Security — read this first
 
-| | Apple Sidecar | PhotonPort |
+- **WiFi transport is UNENCRYPTED TCP with no authentication** (inherited
+  from upstream, which tracks TLS+pairing as a roadmap item). Anyone on the
+  same network can watch the stream and connect to the receiver.
+  **Use USB.** Treat WiFi as an insecure demo mode on trusted networks only.
+- The Mac app requires Screen Recording (and, for audio, System Audio
+  Recording) permission — it captures your screen and system audio and sends
+  them to your device. Nothing else; no servers, no analytics, no accounts.
+
+## What was observed on the tested setup (USB)
+
+| | Apple Sidecar | PhotonPort (tested pair) |
 |---|---|---|
 | Resolution | fixed scale | native 2816×2048 |
-| Refresh | 60Hz | **120Hz** (118fps delivered) |
-| Dynamic range | SDR | **true HDR** (EDR, HLG 10-bit) |
-| Video latency | ~30ms | **5–6ms e2e p50** |
-| Audio | routed to device | routed to device, ~30ms, own TCP socket |
-| Codec | private | ProRes 422 Proxy/LT (opt-in) or HEVC |
+| Refresh | 60Hz | 120Hz (118fps delivered) |
+| Dynamic range | SDR | HDR — EDR compositing, HLG 10-bit |
+| Video latency | ~30ms | 5–6ms e2e p50 |
+| Audio | routed to device | routed, ~30ms, dedicated TCP socket |
+| Codec | private | ProRes 422 Proxy/LT (opt-in) or HEVC / H.264 |
 
-## How (the interesting parts)
+## How it works (technical notes)
 
-- **EDR virtual display** — the macOS 26 private
-  `CGVirtualDisplayMode initWithWidth:height:refreshRate:transferFunction:`
-  initializer with `transferFunction: 1` makes WindowServer composite the
-  virtual display with real HDR headroom (`potentialEDR 5.0`). Probed
-  empirically; value 1 is the only one that works.
+- **EDR virtual display** — `CGVirtualDisplay` (the same private API every
+  virtual-display product uses) exposes a newer mode initializer with a
+  `transferFunction` parameter on recent macOS; value 1 was observed to make
+  WindowServer composite the display with real HDR headroom. Guarded by a
+  runtime selector check with an SDR fallback chain.
 - **CGDisplayStream capture for HDR** — ScreenCaptureKit tone-maps virtual
-  displays to SDR even with its macOS 15 HDR presets (measured: an EDR 4×
-  test pattern captured pinned at SDR white). The legacy CGDisplayStream
-  delivers the float16 EDR composite unclipped, so the HDR path rides it.
+  displays to SDR even with its macOS 15 HDR presets (measured with an EDR
+  test pattern). The legacy CGDisplayStream delivers the float16 EDR
+  composite unclipped, so the HDR path rides it.
 - **Reference-pinned HLG** — a Metal pass converts float16 extended-sRGB to
-  BT.2408 HLG (SDR white = 203 nits) before encoding; letting VideoToolbox
-  pick its own mapping blew highlights out on a 16×-headroom panel.
-- **ProRes over the wire** — opt-in intra-only ProRes 422 on the media
-  engine's dedicated block bypasses the HEVC engine's ~430Mpx/s ceiling:
-  native 120fps at 4ms encode, ~330Mbps on a measured ~1Gbps usbmux link.
-- **Audio tap routing** — a CoreAudio process tap (`mutedWhenTapped`) mutes
-  the Mac and forwards 5.3ms PCM buffers on a dedicated TCP connection
-  (audio never queues behind in-flight video frames).
-- Upstream fixes worth cherry-picking: H.264 silently rejects every frame
-  above its level-5.2 pixel-rate ceiling (native@120 = black screen);
+  BT.2408 HLG (SDR white = 203 nits) before encoding; VideoToolbox's own
+  mapping over-brightened highlights on a high-headroom panel.
+- **ProRes over the wire (opt-in, USB only)** — intra-only ProRes 422 on the
+  media engine's dedicated block bypasses the HEVC engine's throughput
+  ceiling (~430Mpx/s measured): native 120fps at ~4ms encode, ~330Mbps on a
+  measured ~1Gbps usbmux link.
+- **Audio tap routing** — a CoreAudio process tap (`mutedWhenTapped`,
+  macOS 14.2+) mutes the Mac and forwards 5.3ms PCM buffers on a dedicated
+  TCP connection so audio never queues behind video frames. If the Mac's
+  default output is Bluetooth headphones, forwarding pauses and audio stays
+  on the headphones.
+- Fixes worth noting for upstream: H.264 silently rejects every frame above
+  its level-5.2 pixel-rate ceiling (VideoToolbox returns noErr + nil buffer);
   backpressure drops must not force IDRs; a saturated encoder needs an
-  in-flight gate or it queues ~5 frames of pure latency.
+  in-flight gate or it queues frames as pure latency.
 
-## Toggles (personal-build style, `defaults write dev.hyupji.photonport.mac.debug …`)
+## Known limitations / non-goals
 
-- `prores proxy|lt` — ProRes wired mode (needs the bandwidth of a cable)
+- **Unverified**: anything that is not the tested pair — Intel Macs,
+  macOS 14/15 fallbacks, 60Hz/SDR devices, iPhone receivers, WiFi
+  performance, multi-device sessions, HDR color accuracy beyond "highlights
+  visibly render".
+- **Private API**: the virtual display (and its EDR mode) can break on any
+  macOS update, and the Mac app can never ship in the Mac App Store.
+- **WiFi**: unencrypted; also the dedicated audio socket and the raised
+  bitrates are sized for USB. WiFi sessions use the conservative legacy
+  bitrates and the shared socket.
+- Out of scope: encryption/pairing (see upstream roadmap), Windows/Android,
+  audio input (mic) forwarding.
+
+## Toggles (`defaults write dev.hyupji.photonport.mac.debug …`)
+
+- `prores proxy|lt` — ProRes wired mode (ignored off USB)
 - `hdr -bool NO` / `audiotap -bool NO` / `audio -bool NO` — feature opt-outs
-- `diag -bool true` / `blast -bool true` / `testPattern -bool true` — pipeline
-  diagnosis, wire-throughput test, animated load generator
+- `diag -bool true` / `blast -bool true` / `testPattern -bool true` —
+  pipeline diagnosis, wire-throughput test, animated load generator
 
 ## Building
 
 ```
-echo "DEVELOPMENT_TEAM=YOURTEAMID" > .env
+echo "DEVELOPMENT_TEAM=YOURTEAMID" > .env   # see .env.example
 ./generate.sh
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecarMac -configuration Debug -derivedDataPath build build
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecariOS -configuration Debug -destination 'platform=iOS,id=<device>' -derivedDataPath build -allowProvisioningUpdates build
 ```
 
-Internal type/scheme names still carry upstream's `OpenSidecar` prefix on
-purpose — smaller diff against upstream, easier future merges.
+Internal type/scheme names keep upstream's `OpenSidecar` prefix on purpose —
+smaller diff against upstream, easier future merges.
 
 ## License
 
-GPL-3.0, same as upstream. Original work © peetzweg and contributors;
-modifications © 2026 hyupji. Prominent-change notices live in the git
-history (`turbo` branch onward).
+GPL-3.0, same as upstream — see [LICENSE](LICENSE). Original work
+© peetzweg and contributors; modifications © 2026 hyupji (fork started
+2026-07-08; per-change notices live in the git history). If you distribute
+binaries built from this tree, GPL-3.0 requires you to provide the exact
+corresponding source.

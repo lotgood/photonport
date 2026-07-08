@@ -45,13 +45,14 @@ enum StreamQuality: String, CaseIterable {
         }
     }
 
-    // Sized for the measured transport: usbmux sustains ~1Gbps, so even
-    // Best@120fps (60Mbps) uses <7% of the wire. WiFi users can pick Fast.
-    var bitrate: Int {
+    // Transport-sized: usbmux sustains ~1Gbps (measured), so USB gets
+    // generous rates; WiFi keeps upstream's conservative numbers — an
+    // unencrypted, contended radio link is no place for 40Mbps.
+    func bitrate(usb: Bool) -> Int {
         switch self {
-        case .best: return 40_000_000
-        case .balanced: return 24_000_000
-        case .fast: return 10_000_000
+        case .best: return usb ? 40_000_000 : 18_000_000
+        case .balanced: return usb ? 24_000_000 : 10_000_000
+        case .fast: return usb ? 10_000_000 : 6_000_000
         }
     }
 
@@ -133,6 +134,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     private var audioTap: SystemAudioTap?
     // Audio rides its own queue — see the tap wiring in startCapture.
     private let audioQueue = DispatchQueue(label: "sender.audio", qos: .userInteractive)
+    // ProRes and the raised bitrates are sized for the measured ~1Gbps
+    // usbmux link; TCP (WiFi or -host tunnels) stays conservative.
+    private var isUSBTransport: Bool {
+        if case .usb = transport { return true }
+        return false
+    }
     // Stable per-device serial for the virtual display, so macOS can tell
     // multiple PhotonPort monitors apart and persist their arrangement.
     private let displaySerial: UInt32
@@ -857,6 +864,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Bookkeeping shared by both transports once a connection is live.
     private func becomeReady(_ conn: NWConnection) {
         Log.info("connection ready to \(endpointName)")
+        if case .tcp = transport {
+            Log.info("WARNING: TCP/WiFi transport is UNENCRYPTED and unauthenticated — anyone on this network can view the stream. Prefer USB.")
+        }
         connectionReady = true
         everConnected = true
         disconnectedSince = nil
@@ -1304,7 +1314,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         // Proxy ≈330Mbps / LT ≈540Mbps at native 120 — the measured ~1Gbps
         // usbmux wire takes either. 10-bit 4:2:2, so the HDR path's HLG
         // buffers ride through losslessly. (`-prores lt` for the LT flavor.)
-        if let flavor = UserDefaults.standard.string(forKey: "prores") {
+        if let flavor = UserDefaults.standard.string(forKey: "prores"), isUSBTransport {
             usingProRes = true
             usingHEVC = false
             let codec: CMVideoCodecType = flavor == "lt"
@@ -1408,7 +1418,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         // 120Hz halves the per-frame budget — give the rate controller 50%
         // more headroom so high-motion 120fps doesn't smear. (HEVC's better
         // quality-per-bit absorbs the 10-bit overhead on the HDR path.)
-        let bitrate = streamFps > 60 ? quality.bitrate * 3 / 2 : quality.bitrate
+        let bitrate = streamFps > 60 ? quality.bitrate(usb: isUSBTransport) * 3 / 2
+                                     : quality.bitrate(usb: isUSBTransport)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: streamFps as CFNumber)
         VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)

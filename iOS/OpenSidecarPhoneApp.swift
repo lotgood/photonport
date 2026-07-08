@@ -6,8 +6,10 @@ import Combine
 /// "iPad" or "iPhone" — so UI copy names the device the user is holding.
 let deviceKind = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
 
-/// Landing page — hosts the Mac app download and explains the two-app setup.
-let macAppURL = URL(string: "https://peetzweg.github.io/opendisplay/")!
+/// The fork's repository — hosts the Mac app source and explains the
+/// two-app setup. (The upstream OpenDisplay Mac app uses a different
+/// Bonjour service type and can't connect to this receiver.)
+let macAppURL = URL(string: "https://github.com/lotgood/photonport")!
 
 @main
 struct OpenSidecarPhoneApp: App {
@@ -518,11 +520,11 @@ struct SettingsView: View {
 
                 Section("About") {
                     LabeledContent("Version", value: version)
-                    Link(destination: URL(string: "https://github.com/peetzweg/opendisplay")!) {
-                        Label("GitHub — peetzweg/opendisplay", systemImage: "link")
-                    }
                     Link(destination: macAppURL) {
-                        Label("Website", systemImage: "globe")
+                        Label("GitHub — lotgood/photonport", systemImage: "link")
+                    }
+                    Link(destination: URL(string: "https://github.com/peetzweg/opendisplay")!) {
+                        Label("Based on OpenDisplay by peetzweg (GPL-3.0)", systemImage: "heart")
                     }
                 }
             }

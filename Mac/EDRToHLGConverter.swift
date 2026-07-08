@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Part of PhotonPort, a GPL-3.0 fork of OpenDisplay
+// (https://github.com/peetzweg/opendisplay, (c) peetzweg and contributors).
+// This file (c) 2026 hyupji, added in the fork.
+
 // EDRToHLGConverter — owns the EDR→HLG mapping the HDR extend path needs.
 //
 // CGDisplayStream delivers the virtual display's EDR composite as float16

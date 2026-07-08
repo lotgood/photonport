@@ -1,0 +1,32 @@
+name: Bug report
+description: Reports without hardware/OS/log details will be closed.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PhotonPort is an experimental, unsupported fork tested on a single
+        hardware pair. Reports missing the fields below will be closed.
+  - type: input
+    id: mac
+    attributes: { label: "Mac model + macOS version" }
+    validations: { required: true }
+  - type: input
+    id: device
+    attributes: { label: "iPad/iPhone model + iOS version" }
+    validations: { required: true }
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options: [USB, WiFi]
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs (/tmp/photonport-mac.log + iOS Documents/photonport-phone.log)"
+      render: text
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: "Steps to reproduce + expected vs actual" }
+    validations: { required: true }

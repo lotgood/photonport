@@ -1,6 +1,0 @@
-# OpenDisplay — free, open-source Sidecar/Duet alternative
-# Allow all crawlers full access.
-User-agent: *
-Allow: /
-
-Sitemap: https://opendisplay.app/sitemap.xml

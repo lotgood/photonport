@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Part of PhotonPort, a GPL-3.0 fork of OpenDisplay
+// (https://github.com/peetzweg/opendisplay, (c) peetzweg and contributors).
+// This file (c) 2026 hyupji, added in the fork.
+
 // SystemAudioTap — Sidecar-style audio routing without a HAL driver.
 //
 // A CoreAudio process tap (macOS 14.2+) on the global mixdown with

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Part of PhotonPort, a GPL-3.0 fork of OpenDisplay
+// (https://github.com/peetzweg/opendisplay, (c) peetzweg and contributors).
+// This file (c) 2026 hyupji, added in the fork.
+
 // StreamAudioPlayer — plays the Mac's forwarded system audio.
 //
 // The wire carries interleaved 16-bit stereo PCM chunks (~10-20ms each) on

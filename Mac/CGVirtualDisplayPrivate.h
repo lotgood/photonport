@@ -20,10 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(readonly, nonatomic) CGFloat refreshRate;
 @property(readonly, nonatomic) NSUInteger width;
 @property(readonly, nonatomic) NSUInteger height;
-// 0 = SDR (gamma). 1 = EDR: WindowServer composites the display with real
-// HDR headroom (measured potentialEDR 5.0 on macOS 26; same hook
-// BetterDisplay 4.3.3+ uses for its HDR virtual screens). Values 2+ exist
-// but showed no EDR effect in probing. Initializer present on macOS 26 —
+// 0 = SDR (gamma). 1 = EDR compositing (observed on macOS 26; other values
+// showed no EDR effect). Initializer availability varies by macOS release —
 // ALWAYS check instancesRespondToSelector before using.
 @property(readonly, nonatomic) unsigned int transferFunction;
 
