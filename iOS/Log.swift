@@ -6,7 +6,7 @@ enum Log {
     private static let queue = DispatchQueue(label: "log")
     private static let fileURL: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent("opensidecar-phone.log")
+        return docs.appendingPathComponent("photonport-phone.log")
     }()
     private static let formatter: DateFormatter = {
         let f = DateFormatter()

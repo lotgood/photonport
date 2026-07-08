@@ -28,7 +28,7 @@ final class SystemAudioTap {
         guard #available(macOS 14.2, *) else { return nil }
 
         let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
-        desc.name = "OpenDisplay System Tap"
+        desc.name = "PhotonPort System Tap"
         desc.isPrivate = true
         // The whole point: local speakers go quiet while we forward.
         desc.muteBehavior = .mutedWhenTapped
@@ -53,8 +53,8 @@ final class SystemAudioTap {
         }
 
         let aggDesc: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "OpenDisplay Tap Device",
-            kAudioAggregateDeviceUIDKey: "sh.peet.opensidecar.tap",
+            kAudioAggregateDeviceNameKey: "PhotonPort Tap Device",
+            kAudioAggregateDeviceUIDKey: "dev.hyupji.photonport.tap",
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,
             kAudioAggregateDeviceTapListKey: [

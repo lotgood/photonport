@@ -157,7 +157,7 @@ final class PhoneReceiver: ObservableObject {
     // needs an entitlement Apple gates behind approval and personal teams
     // can't get), so this is user-editable in Settings. The USB picker gets
     // the real name host-side via lockdownd regardless.
-    var serviceName = "OpenDisplay"
+    var serviceName = "PhotonPort"
 
     // Stable per-install identity, advertised in the Bonjour TXT record and
     // sent in every hello. The Mac uses it to recognize "same device, other
@@ -176,7 +176,7 @@ final class PhoneReceiver: ObservableObject {
     private var advertisedService: NWListener.Service {
         var txt = NWTXTRecord()
         txt["id"] = Self.installID
-        return NWListener.Service(name: serviceName, type: "_opensidecar._tcp",
+        return NWListener.Service(name: serviceName, type: "_photonport._tcp",
                                   domain: nil, txtRecord: txt)
     }
 

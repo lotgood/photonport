@@ -133,7 +133,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     // Audio rides its own queue — see the tap wiring in startCapture.
     private let audioQueue = DispatchQueue(label: "sender.audio", qos: .userInteractive)
     // Stable per-device serial for the virtual display, so macOS can tell
-    // multiple OpenDisplay monitors apart and persist their arrangement.
+    // multiple PhotonPort monitors apart and persist their arrangement.
     private let displaySerial: UInt32
 
     // Negotiated per session from the receiver's hello (and, in extend mode,
@@ -197,7 +197,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     // capture→encode→stream→display latency (~30ms perceived). Instead we
     // hide it from capture and stream its position on the control channel —
     // the phone draws it locally on the ~2ms path the touches use.
-    // Escape hatch: `defaults write sh.peet.opensidecar.mac localCursor -bool false`.
+    // Escape hatch: `defaults write dev.hyupji.photonport.mac localCursor -bool false`.
     private let localCursor = UserDefaults.standard.object(forKey: "localCursor") == nil
         || UserDefaults.standard.bool(forKey: "localCursor")
     private var cursorTimer: DispatchSourceTimer?
@@ -325,8 +325,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         // USB sessions can start before lockdown resolves the device name —
         // fall back to the kind from the hello rather than the generic label.
         let displayName = endpointName.hasPrefix("iPhone / iPad")
-            ? "OpenDisplay — \(info.kind)"
-            : "OpenDisplay — \(endpointName)"
+            ? "PhotonPort — \(info.kind)"
+            : "PhotonPort — \(endpointName)"
         // Orientation-specific serial: macOS persists the chosen mode per
         // serial, and a portrait mode restored onto a landscape display
         // pillarboxes the desktop INTO the framebuffer (streamed as-is).
@@ -367,7 +367,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         let captureH = (Int(Double(pointsHigh * 2) * quality.scale)) & ~1
         try await startCapture(display: display, pixelsWide: captureW, pixelsHigh: captureH)
 
-        // Debug aid (`defaults write sh.peet.opensidecar.mac testPattern -bool true`):
+        // Debug aid (`defaults write dev.hyupji.photonport.mac testPattern -bool true`):
         // an animated window on the virtual display generates a constant frame
         // stream so steady-state latency can be measured without user activity.
         if UserDefaults.standard.bool(forKey: "testPattern") {
@@ -938,7 +938,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                 case .noDevice:
                     hint = "Waiting for a USB device — plug in the iPhone or iPad…"
                 case .refused:
-                    hint = "Device found — open the OpenDisplay app on it…"
+                    hint = "Device found — open the PhotonPort app on it…"
                 default:
                     Log.info("usb dial failed: \(error)")
                     hint = "USB connection failed: \(error.localizedDescription)"

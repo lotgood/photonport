@@ -1,9 +1,9 @@
 import Foundation
 
-/// Appends timestamped lines to /tmp/opensidecar-mac.log (and stdout) so the
+/// Appends timestamped lines to /tmp/photonport-mac.log (and stdout) so the
 /// stream can be debugged without a debugger attached.
 enum Log {
-    private static let path = "/tmp/opensidecar-mac.log"
+    private static let path = "/tmp/photonport-mac.log"
     private static let queue = DispatchQueue(label: "log")
     private static let formatter: DateFormatter = {
         let f = DateFormatter()

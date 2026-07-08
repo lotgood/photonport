@@ -49,8 +49,8 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSUIElement: true
-        NSLocalNetworkUsageDescription: OpenDisplay connects to your iPad or iPhone over the local network in WiFi mode.
-        NSBonjourServices: ["_opensidecar._tcp"]
+        NSLocalNetworkUsageDescription: PhotonPort connects to your iPad or iPhone over the local network in WiFi mode.
+        NSBonjourServices: ["_photonport._tcp"]
         LSApplicationCategoryType: public.app-category.utilities
         # --- Sparkle auto-update: DEFUSED for the fork ---
         # Upstream's SUFeedURL pointed at https://opendisplay.app/appcast.xml,
@@ -59,13 +59,13 @@ targets:
         # = Sparkle stays dormant (the "Check for Updates…" UI does nothing).
         # Re-add a feed URL + matching SUPublicEDKey only once the fork hosts
         # its own signed appcast.
-        NSAudioCaptureUsageDescription: OpenDisplay forwards the Mac's sound to your iPad or iPhone while streaming.
+        NSAudioCaptureUsageDescription: PhotonPort forwards the Mac's sound to your iPad or iPhone while streaming.
         SUEnableAutomaticChecks: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.peetzweg.opensidecar.mac
-        PRODUCT_NAME: OpenDisplay
-        BUNDLE_DISPLAY_NAME: OpenDisplay
+        PRODUCT_BUNDLE_IDENTIFIER: dev.hyupji.photonport.mac
+        PRODUCT_NAME: PhotonPort
+        BUNDLE_DISPLAY_NAME: PhotonPort
         SWIFT_OBJC_BRIDGING_HEADER: Mac/OpenSidecarMac-Bridging-Header.h
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: Mac/OpenSidecarMac.entitlements
@@ -78,8 +78,8 @@ targets:
         # The distinct display name keeps the two telling apart in the
         # System Settings permission lists.
         Debug:
-          PRODUCT_BUNDLE_IDENTIFIER: com.peetzweg.opensidecar.mac.debug
-          BUNDLE_DISPLAY_NAME: OpenDisplay Dev
+          PRODUCT_BUNDLE_IDENTIFIER: dev.hyupji.photonport.mac.debug
+          BUNDLE_DISPLAY_NAME: PhotonPort Dev
   OpenSidecariOS:
     type: application
     platform: iOS
@@ -89,7 +89,7 @@ targets:
     info:
       path: iOS/Info.plist
       properties:
-        CFBundleDisplayName: OpenDisplay
+        CFBundleDisplayName: PhotonPort
         CFBundleIconName: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -100,8 +100,8 @@ targets:
         # iPads honor high refresh without it. (Apple: "Optimizing ProMotion
         # refresh rates for iPhone 13 Pro and iPad Pro".)
         CADisableMinimumFrameDurationOnPhone: true
-        NSLocalNetworkUsageDescription: OpenDisplay advertises itself on the local network so your Mac can connect over WiFi.
-        NSBonjourServices: ["_opensidecar._tcp"]
+        NSLocalNetworkUsageDescription: PhotonPort advertises itself on the local network so your Mac can connect over WiFi.
+        NSBonjourServices: ["_photonport._tcp"]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -109,6 +109,6 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.peetzweg.opensidecar.ios
+        PRODUCT_BUNDLE_IDENTIFIER: dev.hyupji.photonport.ios
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
