@@ -8,8 +8,9 @@
 //
 // Model (simplified Bluetooth numeric-entry pairing):
 //   1. The receiver shows a single-use 6-digit PIN and advertises a
-//      short-lived `_photonport-pair._tcp` service while its pairing
-//      screen is open. No standing unauthenticated surface otherwise.
+//      short-lived pairing instance (the video service type carrying a
+//      `pair=1` TXT flag) while its pairing screen is open. No standing
+//      unauthenticated surface otherwise.
 //   2. The Mac connects and both sides run X25519 ECDH. The Mac proves it
 //      knows the PIN with an HMAC over both public keys keyed by a
 //      PIN-bound derivation of the shared secret.
@@ -56,7 +57,11 @@ struct PairResult: Codable {
 // MARK: - Crypto core (identical on both platforms)
 
 enum PairingCrypto {
-    static let pairServiceType = "_photonport-pair._tcp"
+    // See iOS/Pairing.swift: pairing reuses the authorized video service
+    // type with a `pair=1` TXT flag rather than a dedicated type (which
+    // would need its own Local Network authorization).
+    static let serviceType = "_photonport._tcp"
+    static let pairTXTKey = "pair"
 
     /// confirmKey authenticates the PIN proof; psk is the long-term secret.
     /// Separate HKDF infos keep them cryptographically independent.
@@ -204,13 +209,16 @@ enum PairingStore {
 
 enum PairingError: LocalizedError {
     case serviceNotFound     // receiver's pairing screen isn't open
+    case permissionDenied    // Mac lacks Local Network permission (NoAuth)
     case protocolError
     case rejected(String)    // wrong PIN, receiver said no
 
     var errorDescription: String? {
         switch self {
         case .serviceNotFound:
-            return "Pairing service not found — open Settings → Pair a Mac on the device first."
+            return "Pairing service not found — on the device, open Settings → Pair a Mac and keep that screen up, then try again."
+        case .permissionDenied:
+            return "PhotonPort needs Local Network access. In System Settings → Privacy & Security → Local Network, enable \"PhotonPort Dev\" (or PhotonPort). If it's already on, toggle it off and back on so the new pairing service is authorized, then try again."
         case .protocolError:
             return "Pairing failed — connection error."
         case .rejected(let reason):
@@ -220,40 +228,63 @@ enum PairingError: LocalizedError {
 }
 
 enum PairingClient {
-    /// Finds the device's pairing service by its advertised name, runs the
-    /// exchange, and returns the receiver's identity + derived PSK.
-    /// The caller persists the PSK; this function has no storage side
-    /// effects (keeps it testable end-to-end).
-    static func pair(serviceName: String, pin: String, macName: String,
+    /// Finds the device's pairing service (its video service type carrying a
+    /// `pair=1` TXT flag, matched by install id), runs the exchange, and
+    /// returns the receiver's identity + derived PSK. The caller persists
+    /// the PSK; this function has no storage side effects.
+    static func pair(targetID: String, pin: String, macName: String,
                      macInstallID: String) async throws -> (deviceID: String, psk: Data) {
-        let endpoint = try await discover(serviceName: serviceName)
+        let endpoint = try await discover(targetID: targetID)
         return try await exchange(endpoint: endpoint, pin: pin,
                                   macName: macName, macInstallID: macInstallID)
     }
 
-    /// Browses `_photonport-pair._tcp` for the exact service name. The
-    /// service only exists while the device's pairing screen is open.
-    static func discover(serviceName: String,
+    /// Browses the video service type for a `pair=1` instance whose `id`
+    /// matches the target device. That instance only exists while the
+    /// device's pairing screen is open.
+    static func discover(targetID: String,
                          timeout: TimeInterval = 10) async throws -> NWEndpoint {
-        let browser = NWBrowser(for: .bonjour(type: PairingCrypto.pairServiceType, domain: nil),
-                                using: NWParameters())
+        Log.info("pairing/discover: browsing \(PairingCrypto.serviceType) for pair=1 id=\(targetID.prefix(8))")
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: PairingCrypto.serviceType, domain: nil),
+                                using: .tcp)
         defer { browser.cancel() }
         return try await withThrowingTaskGroup(of: NWEndpoint.self) { group in
             group.addTask {
                 try await withCheckedThrowingContinuation { cont in
                     let done = ContinuationGate()
                     browser.browseResultsChangedHandler = { results, _ in
+                        Log.info("pairing/discover: \(results.count) result(s)")
                         for result in results {
-                            if case .service(let name, _, _, _) = result.endpoint,
-                               name == serviceName {
-                                if done.claim() { cont.resume(returning: result.endpoint) }
-                                return
-                            }
+                            guard case .bonjour(let txt) = result.metadata,
+                                  txt[PairingCrypto.pairTXTKey] == "1",
+                                  txt["id"] == targetID else { continue }
+                            Log.info("pairing/discover: matched pairing instance for \(targetID.prefix(8))")
+                            if done.claim() { cont.resume(returning: result.endpoint) }
+                            return
                         }
                     }
+
                     browser.stateUpdateHandler = { state in
-                        if case .failed = state, done.claim() {
-                            cont.resume(throwing: PairingError.serviceNotFound)
+                        switch state {
+                        case .failed(let error):
+                            Log.info("pairing/discover: browser FAILED: \(error)")
+                            // -65555 = kDNSServiceErr_NoAuth: no Local Network
+                            // authorization for this service type — distinct
+                            // guidance from "service not advertised".
+                            let denied: Bool
+                            if case .dns(let code) = error, code == -65555 { denied = true }
+                            else { denied = false }
+                            if done.claim() {
+                                cont.resume(throwing: denied
+                                    ? PairingError.permissionDenied
+                                    : PairingError.serviceNotFound)
+                            }
+                        case .waiting(let error):
+                            Log.info("pairing/discover: browser waiting: \(error)")
+                        case .ready:
+                            Log.info("pairing/discover: browser ready")
+                        default:
+                            break
                         }
                     }
                     browser.start(queue: .global())
@@ -261,6 +292,7 @@ enum PairingClient {
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(timeout))
+                Log.info("pairing/discover: timed out after \(Int(timeout))s")
                 throw PairingError.serviceNotFound
             }
             guard let first = try await group.next() else {

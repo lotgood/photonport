@@ -41,7 +41,14 @@ struct PairResult: Codable {
 // MARK: - Crypto core (identical on both platforms)
 
 enum PairingCrypto {
-    static let pairServiceType = "_photonport-pair._tcp"
+    // Pairing reuses the already-authorized video service type instead of a
+    // dedicated one: macOS/iOS grant Local Network access per declared
+    // service type, so a separate _photonport-pair._tcp would need its own
+    // authorization (and silently NoAuth's until granted). The pairing
+    // listener advertises _photonport._tcp with a `pair=1` TXT flag; the
+    // Mac matches on that flag + the install id.
+    static let serviceType = "_photonport._tcp"
+    static let pairTXTKey = "pair"
 
     static func confirmKey(shared: SharedSecret, salt: Data) -> SymmetricKey {
         shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt,
@@ -203,7 +210,7 @@ enum PairingStore {
 // MARK: - Server (runs only while the pairing screen is open)
 
 /// One-shot pairing listener: ephemeral port, advertised over Bonjour as
-/// `_photonport-pair._tcp` under the receiver's service name. Handles one
+/// the video service type with a `pair=1` TXT flag, under the receiver's
 /// connection at a time; a failed PIN proof invalidates the PIN (the UI
 /// shows the fresh one) and drops the connection. After
 /// `maxFailedAttempts` the listener shuts down entirely.
@@ -248,8 +255,12 @@ final class PairingServer {
             Log.info("pairing: listener failed to start")
             return
         }
+        var txt = NWTXTRecord()
+        txt[PairingCrypto.pairTXTKey] = "1"
+        txt["id"] = PhoneReceiverInstallID.value
         listener.service = NWListener.Service(name: serviceName,
-                                              type: PairingCrypto.pairServiceType)
+                                              type: PairingCrypto.serviceType,
+                                              domain: nil, txtRecord: txt)
         listener.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
             // One pairing at a time; a newcomer replaces a stalled attempt.
@@ -260,7 +271,7 @@ final class PairingServer {
         }
         listener.start(queue: queue)
         self.listener = listener
-        Log.info("pairing: advertising \(PairingCrypto.pairServiceType) as \"\(serviceName)\"")
+        Log.info("pairing: advertising \(PairingCrypto.serviceType) (pair=1) as \"\(serviceName)\"")
     }
 
     private func handle(_ conn: NWConnection) {

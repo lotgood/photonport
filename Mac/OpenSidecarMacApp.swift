@@ -291,8 +291,24 @@ final class SenderController: ObservableObject {
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.discovered = Array(results)
+                Log.info("video browse: \(results.count) result(s)")
+                // A device showing its pairing screen advertises a second
+                // instance of this type with pair=1 — that's the pairing
+                // endpoint, not a streamable device, so keep it out of the list.
+                self.discovered = results.filter { result in
+                    if case .bonjour(let txt) = result.metadata,
+                       txt[PairingCrypto.pairTXTKey] == "1" { return false }
+                    return true
+                }
                 self.autoConnect()
+            }
+        }
+        browser.stateUpdateHandler = { state in
+            switch state {
+            case .failed(let error): Log.info("video browse: FAILED \(error)")
+            case .waiting(let error): Log.info("video browse: waiting \(error)")
+            case .ready: Log.info("video browse: ready")
+            default: break
             }
         }
         browser.start(queue: .main)
@@ -326,11 +342,14 @@ final class SenderController: ObservableObject {
         guard let name = serviceName(of: result) else {
             throw PairingError.serviceNotFound
         }
+        guard let targetID = txtID(of: result) else {
+            throw PairingError.serviceNotFound   // old receiver: no install id
+        }
         let macName = Host.current().localizedName ?? "Mac"
         Log.info("pairing: starting exchange with \"\(name)\" (mac id \(PairingStore.macInstallID.prefix(8)))")
         do {
             let (deviceID, psk) = try await PairingClient.pair(
-                serviceName: name, pin: pin, macName: macName,
+                targetID: targetID, pin: pin, macName: macName,
                 macInstallID: PairingStore.macInstallID)
             PairingStore.setPSK(psk, for: deviceID)
             Log.info("pairing: succeeded with \"\(name)\" (device \(deviceID.prefix(8))) — connecting")

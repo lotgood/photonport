@@ -50,10 +50,10 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSUIElement: true
         NSLocalNetworkUsageDescription: PhotonPort connects to your iPad or iPhone over the local network in WiFi mode.
-        # Both the video/control service and the pairing service must be
-        # declared: macOS/iOS only permit advertising or browsing Bonjour
-        # service types listed here — an undeclared type fails instantly.
-        NSBonjourServices: ["_photonport._tcp", "_photonport-pair._tcp"]
+        # Bonjour service type must be declared for advertising/browsing.
+        # Pairing reuses this same type (with a pair=1 TXT flag) so it needs
+        # no separate declaration or Local Network authorization.
+        NSBonjourServices: ["_photonport._tcp"]
         LSApplicationCategoryType: public.app-category.utilities
         # --- Sparkle auto-update: DEFUSED for the fork ---
         # Upstream's SUFeedURL pointed at https://opendisplay.app/appcast.xml,
@@ -104,7 +104,7 @@ targets:
         # refresh rates for iPhone 13 Pro and iPad Pro".)
         CADisableMinimumFrameDurationOnPhone: true
         NSLocalNetworkUsageDescription: PhotonPort advertises itself on the local network so your Mac can connect over WiFi.
-        NSBonjourServices: ["_photonport._tcp", "_photonport-pair._tcp"]
+        NSBonjourServices: ["_photonport._tcp"]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
