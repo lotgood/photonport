@@ -234,7 +234,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
 
     init(transport: SenderTransport, name: String, mode: CaptureMode,
          quality: StreamQuality = .best, hdrAllowed: Bool = true,
-         audioEnabled: Bool = true, displaySerial: UInt32 = 0x0001) {
+         audioEnabled: Bool = true, displaySerial: UInt32 = 0x0001,
+         wifiPSK: (identity: String, key: Data)? = nil) {
         self.transport = transport
         self.endpointName = name
         self.mode = mode
@@ -242,8 +243,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
         self.hdrAllowed = hdrAllowed
         self.audioEnabled = audioEnabled
         self.displaySerial = displaySerial
+        self.wifiPSK = wifiPSK
         super.init()
     }
+
+    // TLS-PSK credentials for the WiFi transport, established by pairing
+    // (see Mac/Pairing.swift). nil = plaintext dial — only correct for
+    // loopback-style manual endpoints (-host/-port tunnels); the receiver
+    // rejects plaintext from the network.
+    private let wifiPSK: (identity: String, key: Data)?
 
     // MARK: - Lifecycle
 
@@ -865,7 +873,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     private func becomeReady(_ conn: NWConnection) {
         Log.info("connection ready to \(endpointName)")
         if case .tcp = transport {
-            Log.info("WARNING: TCP/WiFi transport is UNENCRYPTED and unauthenticated — anyone on this network can view the stream. Prefer USB.")
+            if wifiPSK != nil {
+                Log.info("TCP transport secured with TLS-PSK (paired)")
+            } else {
+                Log.info("WARNING: TCP transport is UNENCRYPTED and unauthenticated — only safe for loopback tunnels. WiFi requires pairing.")
+            }
         }
         connectionReady = true
         everConnected = true
@@ -960,7 +972,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     private func connectTCP(_ endpoint: NWEndpoint) {
         let options = NWProtocolTCP.Options()
         options.noDelay = true   // latency matters more than throughput here
-        let params = NWParameters(tls: nil, tcp: options)
+        let params: NWParameters
+        if let wifiPSK {
+            params = NWParameters(
+                tls: PairingCrypto.clientTLSOptions(identity: wifiPSK.identity,
+                                                    psk: wifiPSK.key),
+                tcp: options)
+        } else {
+            params = NWParameters(tls: nil, tcp: options)
+        }
         let conn = NWConnection(to: endpoint, using: params)
         connection = conn
         conn.stateUpdateHandler = { [weak self] state in

@@ -187,8 +187,8 @@ final class PhoneReceiver: ObservableObject {
         queue.async {
             guard resolved != self.serviceName else { return }
             self.serviceName = resolved
-            if self.listener != nil {
-                self.listener?.service = self.advertisedService
+            if self.secureListener != nil {
+                self.secureListener?.service = self.advertisedService
                 Log.info("re-advertising as \"\(resolved)\"")
             }
         }
@@ -261,34 +261,17 @@ final class PhoneReceiver: ObservableObject {
             setStatus("Listener failed: \(error.localizedDescription)")
             return
         }
-        // Advertise on the local network so the Mac can discover us for WiFi
-        // mode (USB/usbmux connects straight to the port and ignores this).
-        listener?.service = advertisedService
+        // Plaintext is USB-only: usbmux-forwarded (cable) connections arrive
+        // from loopback. WiFi arrives on the TLS listener below — a
+        // non-loopback peer here is a legacy plaintext sender or a probe.
         listener?.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
-            Log.info("new connection from \(String(describing: conn.endpoint))")
-            // usbmux-forwarded (cable) connections arrive from loopback;
-            // anything else came over the network.
-            let peer = String(describing: conn.endpoint)
-            self.transport = (peer.hasPrefix("127.0.0.1") || peer.hasPrefix("::1")
-                              || peer.hasPrefix("localhost")) ? "USB" : "WiFi"
-            // Replace any existing connection and reset decoder state.
-            self.connection?.cancel()
-            self.connection = conn
-            self.resetStreamState()
-            conn.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready:
-                    self?.lastDataReceived = Date()
-                    self?.setConnected(true)
-                    self?.sendHello(on: conn)
-                case .failed, .cancelled:
-                    self?.setConnected(false)
-                default: break
-                }
+            guard Self.isLoopback(conn.endpoint) else {
+                Log.info("plaintext connection from \(String(describing: conn.endpoint)) rejected — WiFi requires pairing + TLS")
+                conn.cancel()
+                return
             }
-            conn.start(queue: self.queue)
-            self.receive(on: conn)
+            self.adopt(conn, transport: "USB")
         }
         listener?.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -307,7 +290,85 @@ final class PhoneReceiver: ObservableObject {
             }
         }
         listener?.start(queue: queue)
+        startSecureListener()
         startAudioListener()
+    }
+
+    private static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
+        let peer = String(describing: endpoint)
+        return peer.hasPrefix("127.0.0.1") || peer.hasPrefix("::1")
+            || peer.hasPrefix("localhost")
+    }
+
+    /// Take over as THE video/control connection (either listener). Replaces
+    /// any existing connection and resets decoder state.
+    private func adopt(_ conn: NWConnection, transport: String) {
+        Log.info("new \(transport) connection from \(String(describing: conn.endpoint))")
+        self.transport = transport
+        connection?.cancel()
+        connection = conn
+        resetStreamState()
+        conn.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                self?.lastDataReceived = Date()
+                self?.setConnected(true)
+                self?.sendHello(on: conn)
+            case .failed, .cancelled:
+                self?.setConnected(false)
+            default: break
+            }
+        }
+        conn.start(queue: queue)
+        receive(on: conn)
+    }
+
+    // MARK: - Secure (WiFi) listener
+    //
+    // TLS-PSK with the keys established by pairing (see iOS/Pairing.swift).
+    // Ephemeral port: the Bonjour advertisement — which carries the actual
+    // port — lives HERE, so senders that resolve the service reach TLS.
+    // Legacy plaintext senders fail the handshake instead of streaming in
+    // the clear, and the plaintext port above no longer accepts non-loopback
+    // peers at all.
+    private var secureListener: NWListener?
+
+    private func startSecureListener() {
+        secureListener?.cancel()
+        secureListener = nil
+        let peers = PairingStore.peers()
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        let params = NWParameters(tls: PairingCrypto.serverTLSOptions(peers: peers), tcp: tcp)
+        params.allowLocalEndpointReuse = true
+        params.serviceClass = .interactiveVideo
+        guard let secure = try? NWListener(using: params) else {
+            Log.info("secure listener failed to start — WiFi mode unavailable")
+            return
+        }
+        secure.service = advertisedService
+        secure.newConnectionHandler = { [weak self] conn in
+            self?.adopt(conn, transport: "WiFi")
+        }
+        secure.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                Log.info("secure WiFi listener ready — \(peers.count) paired Mac(s)")
+            case .failed(let error):
+                Log.info("secure listener failed: \(error) — restarting in 1s")
+                self.queue.asyncAfter(deadline: .now() + 1) { self.startSecureListener() }
+            default: break
+            }
+        }
+        secure.start(queue: queue)
+        secureListener = secure
+    }
+
+    /// Pairings changed (Mac added or removed): rebuild the TLS listener so
+    /// its PSK set matches. Called by the Settings UI.
+    func reloadSecureListener() {
+        queue.async { self.startSecureListener() }
     }
 
     // MARK: - Dedicated audio listener (port+1)

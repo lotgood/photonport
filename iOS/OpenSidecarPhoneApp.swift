@@ -445,6 +445,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("showAnalytics") private var showAnalytics = false
     @AppStorage("metalRenderer") private var metalRenderer = false
+    @State private var pairedMacs = PairingStore.pairedMacs
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -477,6 +478,30 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    ForEach(pairedMacs, id: \.id) { mac in
+                        Label(mac.name, systemImage: "laptopcomputer")
+                    }
+                    .onDelete { offsets in
+                        for offset in offsets {
+                            PairingStore.remove(macID: pairedMacs[offset].id)
+                        }
+                        pairedMacs = PairingStore.pairedMacs
+                        receiver.reloadSecureListener()
+                    }
+                    NavigationLink {
+                        PairMacView(receiver: receiver) {
+                            pairedMacs = PairingStore.pairedMacs
+                        }
+                    } label: {
+                        Label("Pair a Mac", systemImage: "plus.circle")
+                    }
+                } header: {
+                    Text("Paired Macs")
+                } footer: {
+                    Text("WiFi streaming is encrypted and only works with paired Macs. USB needs no pairing. Swipe a Mac to remove it.")
+                }
+
+                Section {
                     Toggle("Performance overlay", isOn: $showAnalytics)
                     Toggle("Metal renderer (experimental)", isOn: $metalRenderer)
                 } header: {
@@ -500,7 +525,7 @@ struct SettingsView: View {
                 Section {
                     Label("USB: plug in the cable, run the Mac app — it connects automatically through the wire (lowest latency).",
                           systemImage: "cable.connector")
-                    Label("WiFi: both devices on the same network, then pick this \(deviceKind) in the Mac app's Connection menu.",
+                    Label("WiFi: pair this \(deviceKind) with your Mac once (above), then pick it in the Mac app's Connection menu.",
                           systemImage: "wifi")
                     Label("Rotate the \(deviceKind) for a vertical second monitor.",
                           systemImage: "rectangle.portrait.rotate")
@@ -591,6 +616,77 @@ final class ReceiverModel: ObservableObject {
 }
 
 // MARK: - Video layer host view
+
+/// Pairing screen: shows the single-use 6-digit code and runs the pairing
+/// listener for exactly as long as it's visible — the only moment the app
+/// exposes an unauthenticated network surface. See iOS/Pairing.swift.
+struct PairMacView: View {
+    let receiver: PhoneReceiver
+    let onChange: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var pin = ""
+    @State private var pairedName: String?
+    @State private var server: PairingServer?
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            if let pairedName {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.green)
+                Text("Paired with \(pairedName)")
+                    .font(.title3.bold())
+                Text("You can now stream over WiFi from that Mac.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Text("In the PhotonPort Mac app, click Pair… on this \(deviceKind) and enter:")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Text(pin)
+                    .font(.system(size: 64, weight: .bold, design: .monospaced))
+                    .kerning(6)
+                ProgressView()
+                Text("The code changes after a wrong attempt and expires when you leave this screen.")
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
+            Spacer()
+        }
+        .padding(24)
+        .navigationTitle("Pair a Mac")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { startServer() }
+        .onDisappear {
+            server?.stop()
+            server = nil
+        }
+    }
+
+    private func startServer() {
+        let s = PairingServer(
+            serviceName: receiver.serviceName,
+            onPaired: { macID, macName, psk in
+                PairingStore.add(macID: macID, name: macName, psk: psk)
+                receiver.reloadSecureListener()
+                DispatchQueue.main.async {
+                    pairedName = macName
+                    onChange()
+                }
+            },
+            onPINChanged: { fresh in
+                DispatchQueue.main.async { pin = fresh }
+            })
+        pin = s.pin
+        s.start()
+        server = s
+    }
+}
 
 /// UIView whose backing layer is the AVSampleBufferDisplayLayer.
 /// Forwards touches as normalized video-space coordinates (touchscreen mode).

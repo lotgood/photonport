@@ -20,10 +20,17 @@ experimental display/audio work stays here.
 
 ## Security — read this first
 
-- **WiFi transport is UNENCRYPTED TCP with no authentication** (inherited
-  from upstream, which tracks TLS+pairing as a roadmap item). Anyone on the
-  same network can watch the stream and connect to the receiver.
-  **Use USB.** Treat WiFi as an insecure demo mode on trusted networks only.
+- **WiFi requires pairing and runs over TLS.** A one-time 6-digit PIN
+  exchange (X25519 ECDH with a PIN-bound HMAC proof — simplified Bluetooth
+  numeric-entry pairing) establishes a per-Mac key; WiFi sessions then run
+  over TLS-PSK. The receiver's plaintext port only accepts loopback
+  (USB/usbmux) peers, and the pairing listener exists only while the
+  device's pairing screen is open. Residual risks: an active MITM during
+  the pairing moment gets exactly one online PIN guess (a failed attempt
+  regenerates the PIN); a recorded pairing handshake allows offline PIN
+  cracking, but the PIN is single-use and the session key never derives
+  from it. The `-host`/`-port` manual endpoint stays plaintext — use it
+  only for loopback-style tunnels.
 - The Mac app requires Screen Recording (and, for audio, System Audio
   Recording) permission — it captures your screen and system audio and sends
   them to your device. Nothing else; no servers, no analytics, no accounts.
@@ -75,11 +82,11 @@ experimental display/audio work stays here.
   visibly render".
 - **Private API**: the virtual display (and its EDR mode) can break on any
   macOS update, and the Mac app can never ship in the Mac App Store.
-- **WiFi**: unencrypted; also the dedicated audio socket and the raised
-  bitrates are sized for USB. WiFi sessions use the conservative legacy
-  bitrates and the shared socket.
-- Out of scope: encryption/pairing (see upstream roadmap), Windows/Android,
-  audio input (mic) forwarding.
+- **WiFi**: paired + TLS, but still sized conservatively — the dedicated
+  audio socket and the raised bitrates are USB-only; WiFi sessions use the
+  legacy bitrates and the shared socket. Older senders/receivers cannot
+  talk to this fork over WiFi anymore (plaintext is rejected).
+- Out of scope: Windows/Android, audio input (mic) forwarding.
 
 ## Toggles (`defaults write dev.hyupji.photonport.mac.debug …`)
 

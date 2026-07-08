@@ -279,6 +279,37 @@ final class SenderController: ObservableObject {
         return nil
     }
 
+    // MARK: - Pairing
+
+    /// True when a pairing PSK exists for this WiFi service (keyed by the
+    /// receiver's install id from the Bonjour TXT record).
+    func isPaired(_ result: NWBrowser.Result) -> Bool {
+        guard let deviceID = txtID(of: result) else { return false }
+        return PairingStore.psk(for: deviceID) != nil
+    }
+
+    /// Runs the PIN exchange against the device's pairing service (its
+    /// pairing screen must be open), stores the PSK, and connects.
+    func pair(with result: NWBrowser.Result, pin: String) async throws {
+        guard let name = serviceName(of: result) else {
+            throw PairingError.serviceNotFound
+        }
+        let macName = Host.current().localizedName ?? "Mac"
+        let (deviceID, psk) = try await PairingClient.pair(
+            serviceName: name, pin: pin, macName: macName,
+            macInstallID: PairingStore.macInstallID)
+        PairingStore.setPSK(psk, for: deviceID)
+        Log.info("paired with \(name) — connecting")
+        connect(to: .wifi(result), userInitiated: true)
+    }
+
+    /// Forget a device's pairing (the receiver keeps its side until removed
+    /// there too — reconnecting just requires pairing again).
+    func unpair(_ result: NWBrowser.Result) {
+        guard let deviceID = txtID(of: result) else { return }
+        PairingStore.removePSK(for: deviceID)
+    }
+
     /// Same hardware? Strong match: the service's install id equals the id
     /// this USB device announced in a (past or present) hello. Fallback for
     /// old receivers: lockdown device name equals the service name.
@@ -432,6 +463,7 @@ final class SenderController: ObservableObject {
         }
 
         let transport: SenderTransport
+        var wifiPSK: (identity: String, key: Data)?
         switch target {
         case .usb(let udid):
             guard let portNum = UInt16(port) else { return }
@@ -443,13 +475,26 @@ final class SenderController: ObservableObject {
                 transport = .usb(udid: udid, port: portNum)
             }
         case .wifi(let result):
+            // WiFi requires a pairing-established PSK — the receiver's TLS
+            // listener rejects everything else. Auto-connect quietly skips
+            // unpaired devices; the UI offers "Pair…" instead of "Connect".
+            guard let deviceID = txtID(of: result),
+                  let key = PairingStore.psk(for: deviceID) else {
+                if userInitiated {
+                    Log.info("wifi connect to unpaired device \(id) refused — pair first")
+                }
+                wifiRemembered.remove(id)
+                return
+            }
+            wifiPSK = (identity: PairingStore.macInstallID, key: key)
             transport = .tcp(result.endpoint)
         }
 
         let name = label(for: target)
         let sender = MacSender(transport: transport, name: name, mode: mode,
                                quality: quality, hdrAllowed: hdr, audioEnabled: audio,
-                               displaySerial: Self.displaySerial(for: id))
+                               displaySerial: Self.displaySerial(for: id),
+                               wifiPSK: wifiPSK)
         let session = DeviceSession(id: id, target: target, name: name, sender: sender)
         sender.onStatus = { [weak session] text in
             session?.status = text
@@ -634,6 +679,7 @@ struct ContentView: View {
     // Optional so the view still compiles/previews without an updater (e.g.
     // if Sparkle ever fails to start); the button just disables itself then.
     let updater: SPUStandardUpdaterController?
+    @State private var pairingEntry: SenderController.DeviceEntry?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -687,10 +733,17 @@ struct ContentView: View {
                                 }
                                 Spacer()
                                 if let target = entry.preferredTarget {
-                                    Button("Connect") {
-                                        controller.connect(to: target, userInitiated: true)
+                                    if case .wifi(let result) = target,
+                                       !controller.isPaired(result) {
+                                        Button("Pair…") { pairingEntry = entry }
+                                            .controlSize(.small)
+                                            .help("WiFi streaming is encrypted and requires a one-time pairing. Open Settings → Pair a Mac on the device, then enter the code here.")
+                                    } else {
+                                        Button("Connect") {
+                                            controller.connect(to: target, userInitiated: true)
+                                        }
+                                        .controlSize(.small)
                                     }
-                                    .controlSize(.small)
                                 }
                             }
                         }
@@ -828,6 +881,9 @@ struct ContentView: View {
             .padding(.vertical, 10)
         }
         .frame(width: 440, height: 540)
+        .sheet(item: $pairingEntry) { entry in
+            PairSheet(entry: entry, controller: controller)
+        }
     }
 
     @ViewBuilder
@@ -887,6 +943,62 @@ final class CheckForUpdatesViewModel: ObservableObject {
     init(updater: SPUUpdater) {
         updater.publisher(for: \.canCheckForUpdates)
             .assign(to: &$canCheckForUpdates)
+    }
+}
+
+/// One-time WiFi pairing: the user reads the 6-digit code off the device's
+/// pairing screen and types it here. Success stores the TLS-PSK and
+/// connects immediately.
+struct PairSheet: View {
+    let entry: SenderController.DeviceEntry
+    let controller: SenderController
+    @Environment(\.dismiss) private var dismiss
+    @State private var pin = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    private var trimmedPIN: String { pin.trimmingCharacters(in: .whitespaces) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Pair with \(entry.name)")
+                .font(.headline)
+            Text("On the device, open Settings → Pair a Mac, then enter the 6-digit code shown there.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("6-digit code", text: $pin)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.title2, design: .monospaced))
+                .disabled(busy)
+            if let error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .disabled(busy)
+                Button(busy ? "Pairing…" : "Pair") {
+                    guard case .wifi(let result)? = entry.wifiTarget else { return }
+                    busy = true
+                    error = nil
+                    Task {
+                        do {
+                            try await controller.pair(with: result, pin: trimmedPIN)
+                            dismiss()
+                        } catch {
+                            self.error = error.localizedDescription
+                        }
+                        busy = false
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(busy || trimmedPIN.count != 6)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
     }
 }
 
