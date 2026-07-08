@@ -56,6 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updaterDelegate: nil, userDriverDelegate: nil)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // One line of ground truth for "which OS-gated features exist here"
+        // — the first thing to check in a log from an unfamiliar setup.
+        CapabilityProbe.logSummary()
         // Hand the updater to the control window, which is built outside the
         // SwiftUI App scene (NSHostingView), so it can offer the same button.
         MainWindow.updater = updater
@@ -724,7 +727,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Forward system audio", isOn: $controller.audio)
                         .onChange(of: controller.audio) { controller.restartAll() }
-                    Text("Plays the Mac's sound on the device too. macOS keeps playing locally as well — turn the Mac's volume down if you hear it twice.")
+                    Text("Routes the Mac's sound to the device — the Mac mutes while forwarding, like Sidecar. Bluetooth headphones keep playing locally instead. (Before macOS 14.2 the sound plays on both ends.)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -776,6 +779,25 @@ struct ContentView: View {
                         help: "Required for WiFi mode. If no device appears in the Devices list, allow PhotonPort under Privacy & Security → Local Network on this Mac AND on the device — and keep the PhotonPort app open there.",
                         anchor: "Privacy_LocalNetwork"
                     )
+                }
+
+                // Private-API / OS-version misses. Hidden entirely when
+                // everything probes fine: this section existing IS the alarm.
+                if !CapabilityProbe.allGood {
+                    Section("Compatibility") {
+                        if !CapabilityProbe.virtualDisplayAPI {
+                            capabilityRow(broken: true, "Virtual display API missing",
+                                "This macOS no longer ships the private CGVirtualDisplay API — Extend mode cannot work. Mirror mode is unaffected.")
+                        }
+                        if !CapabilityProbe.edrVirtualDisplay {
+                            capabilityRow(broken: false, "HDR compositing unavailable",
+                                "This macOS has no EDR virtual-display mode — streams stay SDR even with HDR enabled.")
+                        }
+                        if !CapabilityProbe.audioTapAPI {
+                            capabilityRow(broken: false, "Audio tap unavailable (needs macOS 14.2)",
+                                "Audio falls back to playing on both the Mac and the device.")
+                        }
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -835,6 +857,20 @@ struct ContentView: View {
                     PermissionMonitor.openPrivacyPane(anchor)
                 }
                 .controlSize(.small)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func capabilityRow(broken: Bool, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Image(systemName: broken ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(broken ? Color.red : Color.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

@@ -35,6 +35,15 @@ final class VirtualDisplay {
         self.pointsHigh = pointsHigh
         self.appliedRefreshRate = max(refreshRate, 1)
 
+        // Weak-linked private API (see CGVirtualDisplayPrivate.h): touching
+        // the classes when a macOS update removed them would crash — bail to
+        // the caller's no-display error path instead. Surfaced at launch by
+        // CapabilityProbe/the control window's Compatibility section.
+        guard CapabilityProbe.virtualDisplayAPI else {
+            Log.info("CGVirtualDisplay API missing on this macOS — cannot create virtual displays")
+            return nil
+        }
+
         let descriptor = CGVirtualDisplayDescriptor()
         descriptor.setDispatchQueue(DispatchQueue.main)
         descriptor.name = name
@@ -52,8 +61,7 @@ final class VirtualDisplay {
 
         // EDR (transferFunction:1) needs the newer initializer; observed on
         // macOS 26 as the only value that yields EDR compositing headroom.
-        let tfAvailable = CGVirtualDisplayMode.instancesRespond(
-            to: #selector(CGVirtualDisplayMode.init(width:height:refreshRate:transferFunction:)))
+        let tfAvailable = CapabilityProbe.edrVirtualDisplay
         if hdr && !tfAvailable {
             Log.info("EDR virtual display unavailable (no transferFunction initializer on this macOS) — SDR framebuffer")
         }

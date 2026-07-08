@@ -32,8 +32,16 @@ final class SystemAudioTap {
         self.onPCM = onPCM
         guard #available(macOS 14.2, *) else { return nil }
 
+        // Per-instance identity: multi-device sessions run one tap each, and
+        // aggregate-device UIDs are system-global — a fixed UID makes the
+        // SECOND session's AudioHardwareCreateAggregateDevice fail with
+        // 'nope' (verified), silently demoting that device to the dual-
+        // playing SCK fallback. Unique UIDs give every session its own
+        // working tap: all devices hear the mixdown, the Mac stays muted
+        // until the last muting tap is destroyed.
+        let instanceID = UUID().uuidString
         let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
-        desc.name = "PhotonPort System Tap"
+        desc.name = "PhotonPort System Tap \(instanceID)"
         desc.isPrivate = true
         // The whole point: local speakers go quiet while we forward.
         desc.muteBehavior = .mutedWhenTapped
@@ -59,7 +67,7 @@ final class SystemAudioTap {
 
         let aggDesc: [String: Any] = [
             kAudioAggregateDeviceNameKey: "PhotonPort Tap Device",
-            kAudioAggregateDeviceUIDKey: "dev.hyupji.photonport.tap",
+            kAudioAggregateDeviceUIDKey: "dev.hyupji.photonport.tap.\(instanceID)",
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,
             kAudioAggregateDeviceTapListKey: [

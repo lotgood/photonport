@@ -15,6 +15,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class CGVirtualDisplayDescriptor;
 
+// weak_import on every class: a macOS update that drops the private API must
+// not kill the app at load time (strong ObjC class refs are bound by dyld).
+// With weak linking the refs bind to nil and the app still launches;
+// CapabilityProbe checks presence via the runtime before any use.
+__attribute__((weak_import))
 @interface CGVirtualDisplayMode : NSObject
 
 @property(readonly, nonatomic) CGFloat refreshRate;
@@ -30,6 +35,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+__attribute__((weak_import))
 @interface CGVirtualDisplaySettings : NSObject
 
 @property(retain, nonatomic) NSArray<CGVirtualDisplayMode *> *modes;
@@ -39,6 +45,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+__attribute__((weak_import))
 @interface CGVirtualDisplay : NSObject
 
 @property(readonly, nonatomic) NSArray *modes;
@@ -59,6 +66,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+__attribute__((weak_import))
 @interface CGVirtualDisplayDescriptor : NSObject
 
 @property(retain, nonatomic) dispatch_queue_t queue;
