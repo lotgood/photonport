@@ -247,59 +247,51 @@ enum PairingClient {
         Log.info("pairing/discover: browsing \(PairingCrypto.serviceType) for pair=1 id=\(targetID.prefix(8))")
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: PairingCrypto.serviceType, domain: nil),
                                 using: .tcp)
-        defer { browser.cancel() }
-        return try await withThrowingTaskGroup(of: NWEndpoint.self) { group in
-            group.addTask {
-                try await withCheckedThrowingContinuation { cont in
-                    let done = ContinuationGate()
-                    browser.browseResultsChangedHandler = { results, _ in
-                        Log.info("pairing/discover: \(results.count) result(s)")
-                        for result in results {
-                            guard case .bonjour(let txt) = result.metadata,
-                                  txt[PairingCrypto.pairTXTKey] == "1",
-                                  txt["id"] == targetID else { continue }
-                            Log.info("pairing/discover: matched pairing instance for \(targetID.prefix(8))")
-                            if done.claim() { cont.resume(returning: result.endpoint) }
-                            return
-                        }
-                    }
-
-                    browser.stateUpdateHandler = { state in
-                        switch state {
-                        case .failed(let error):
-                            Log.info("pairing/discover: browser FAILED: \(error)")
-                            // -65555 = kDNSServiceErr_NoAuth: no Local Network
-                            // authorization for this service type — distinct
-                            // guidance from "service not advertised".
-                            let denied: Bool
-                            if case .dns(let code) = error, code == -65555 { denied = true }
-                            else { denied = false }
-                            if done.claim() {
-                                cont.resume(throwing: denied
-                                    ? PairingError.permissionDenied
-                                    : PairingError.serviceNotFound)
-                            }
-                        case .waiting(let error):
-                            Log.info("pairing/discover: browser waiting: \(error)")
-                        case .ready:
-                            Log.info("pairing/discover: browser ready")
-                        default:
-                            break
-                        }
-                    }
-                    browser.start(queue: .global())
+        // Single continuation with a resume-once gate and a scheduled timeout.
+        // (A task group here would hang: if the browser goes ready but never
+        // matches, the timeout child throws while the browser child's
+        // continuation is never resumed, and the group awaits all children.)
+        return try await withCheckedThrowingContinuation { cont in
+            let done = ContinuationGate()
+            func finish(_ result: Result<NWEndpoint, Error>) {
+                guard done.claim() else { return }
+                browser.cancel()
+                cont.resume(with: result)
+            }
+            browser.browseResultsChangedHandler = { results, _ in
+                for result in results {
+                    guard case .bonjour(let txt) = result.metadata,
+                          txt[PairingCrypto.pairTXTKey] == "1",
+                          txt["id"] == targetID else { continue }
+                    Log.info("pairing/discover: matched pairing instance for \(targetID.prefix(8))")
+                    finish(.success(result.endpoint))
+                    return
                 }
             }
-            group.addTask {
-                try await Task.sleep(for: .seconds(timeout))
+            browser.stateUpdateHandler = { state in
+                switch state {
+                case .failed(let error):
+                    Log.info("pairing/discover: browser FAILED: \(error)")
+                    // -65555 = kDNSServiceErr_NoAuth: no Local Network
+                    // authorization — distinct guidance from "not advertised".
+                    let denied: Bool
+                    if case .dns(let code) = error, code == -65555 { denied = true }
+                    else { denied = false }
+                    finish(.failure(denied ? PairingError.permissionDenied
+                                           : PairingError.serviceNotFound))
+                case .waiting(let error):
+                    Log.info("pairing/discover: browser waiting: \(error)")
+                case .ready:
+                    Log.info("pairing/discover: browser ready")
+                default:
+                    break
+                }
+            }
+            browser.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 Log.info("pairing/discover: timed out after \(Int(timeout))s")
-                throw PairingError.serviceNotFound
+                finish(.failure(PairingError.serviceNotFound))
             }
-            guard let first = try await group.next() else {
-                throw PairingError.serviceNotFound
-            }
-            group.cancelAll()
-            return first
         }
     }
 
@@ -355,6 +347,12 @@ enum PairingClient {
                 }
             }
             conn.start(queue: .global())
+            // A malicious/half-open service can accept the TCP connection and
+            // never send the next frame; without a deadline pair() suspends
+            // forever. Bounded, resume-once via the gate.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15) {
+                fail(.protocolError)
+            }
         }
     }
 }

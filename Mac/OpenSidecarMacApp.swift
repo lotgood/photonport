@@ -351,6 +351,14 @@ final class SenderController: ObservableObject {
             let (deviceID, psk) = try await PairingClient.pair(
                 targetID: targetID, pin: pin, macName: macName,
                 macInstallID: PairingStore.macInstallID)
+            // Defense in depth: only trust a PSK for the device we targeted.
+            // (Does NOT by itself close the active-fake-endpoint hole — the
+            // pairing protocol needs a PAKE/numeric-comparison; see the
+            // security review. But never store a PSK under a mismatched id.)
+            guard deviceID == targetID else {
+                Log.info("pairing: device id mismatch (got \(deviceID.prefix(8)), expected \(targetID.prefix(8))) — refusing")
+                throw PairingError.rejected("Pairing failed — the device identity did not match.")
+            }
             PairingStore.setPSK(psk, for: deviceID)
             Log.info("pairing: succeeded with \"\(name)\" (device \(deviceID.prefix(8))) — connecting")
             connect(to: .wifi(result), userInitiated: true)

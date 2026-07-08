@@ -36,12 +36,13 @@ final class StreamAudioPlayer {
     private var needsPrebuffer = true
     // Jitter tolerance depends on the link. USB (dedicated audio socket,
     // ~5ms buffers) has almost none, so the buffer stays shallow for low
-    // latency. WiFi shares the video socket and rides a radio with periodic
-    // 100–700ms RTT spikes: the shallow thresholds shed backlog every few
-    // seconds (constant audible glitching). WiFi uses a moderately deeper
-    // buffer — it parks around ~55–100ms instead of USB's ~35–60ms, enough
-    // to ride typical radio jitter without the constant full-flush glitches,
-    // without piling on the audio latency. Set from the receiver's transport.
+    // latency. WiFi has its own TLS audio connection too, but rides a radio
+    // with periodic RTT spikes, so the shallow thresholds shed backlog every
+    // few seconds (constant audible glitching). WiFi therefore uses a
+    // moderately deeper buffer — it parks around ~55–100ms instead of USB's
+    // ~35–60ms, enough to ride typical radio jitter without the constant
+    // full-flush glitches, without piling on latency. Set (on the audio
+    // queue) from the receiver's transport.
     var highJitter = false
     private var prebufferChunks: Int { highJitter ? 6 : 3 }     // ~32ms vs ~16ms
     private var freshnessSeconds: TimeInterval { highJitter ? 0.15 : 0.08 }

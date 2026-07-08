@@ -362,17 +362,23 @@ final class PhoneReceiver: ObservableObject {
                 self.audioBuffer.removeAll(keepingCapacity: true)
                 self.receiveAudio(on: conn)
             } else {
-                // Video/control connection. The first frame was consumed to
-                // classify (usually the connect-time IDR); request a fresh
-                // keyframe so the decoder starts cleanly instead of choking on
-                // P-frames referencing the dropped one.
+                // Video/control connection. Preserve the frame consumed to
+                // classify (normally the connect-time IDR + SPS/PPS): re-frame
+                // it back into the video buffer and drain, instead of dropping
+                // it. (Dropping it and sending a keyframe request was a bug —
+                // the Mac only honors {"type":"kf"}, not "keyframe", so the
+                // decoder could sit black until the next forced IDR.)
                 Log.info("secure video connection adopted")
                 self.transport = "WiFi"
                 self.connection?.cancel()
                 self.connection = conn
                 self.resetStreamState()
                 self.setConnected(true)
-                self.sendControl(["type": "keyframe"])
+                var header = UInt32(payload.count).bigEndian
+                var framed = Data(bytes: &header, count: 4)
+                framed.append(payload)
+                self.buffer.append(framed)
+                self.drainFrames()
                 self.receive(on: conn)
             }
         }
@@ -493,6 +499,12 @@ final class PhoneReceiver: ObservableObject {
                 while self.audioBuffer.distance(from: cursor, to: self.audioBuffer.endIndex) >= 4 {
                     let len = self.audioBuffer[cursor..<self.audioBuffer.index(cursor, offsetBy: 4)]
                         .withUnsafeBytes { Int(UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self))) }
+                    guard len >= 0, len <= 4 * 1024 * 1024 else {
+                        Log.info("audio frame length \(len) out of range — dropping audio connection")
+                        conn.cancel()
+                        self.audioBuffer.removeAll(keepingCapacity: false)
+                        return
+                    }
                     guard self.audioBuffer.distance(from: cursor, to: self.audioBuffer.endIndex) >= 4 + len else { break }
                     let start = self.audioBuffer.index(cursor, offsetBy: 4)
                     let end = self.audioBuffer.index(start, offsetBy: len)
@@ -561,8 +573,8 @@ final class PhoneReceiver: ObservableObject {
                   let pcm = Data(base64Encoded: b64) else { return }
             let sr = obj["sr"] as? Double ?? 48_000
             if audioPlayer == nil { audioPlayer = StreamAudioPlayer() }
-            // WiFi shares this socket and jitters; USB has a dedicated
-            // low-latency audio socket. Keep the buffer depth matched.
+            // WiFi rides a jittery radio (even on its own audio connection);
+            // USB is a low-latency wire. Match the jitter buffer depth.
             audioPlayer?.highJitter = (transport == "WiFi")
             audioPlayer?.enqueue(pcm, sampleRate: sr)
             // Audible latency estimate: Mac send → here (clock-mapped) +
@@ -688,6 +700,12 @@ final class PhoneReceiver: ObservableObject {
         while buffer.distance(from: cursor, to: buffer.endIndex) >= 4 {
             let len = buffer[cursor..<buffer.index(cursor, offsetBy: 4)]
                 .withUnsafeBytes { Int(UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self))) }
+            guard len >= 0, len <= 64 * 1024 * 1024 else {
+                Log.info("video frame length \(len) out of range — dropping connection")
+                connection?.cancel()
+                buffer.removeAll(keepingCapacity: false)
+                return
+            }
             guard buffer.distance(from: cursor, to: buffer.endIndex) >= 4 + len else { break }
             let start = buffer.index(cursor, offsetBy: 4)
             let end = buffer.index(start, offsetBy: len)

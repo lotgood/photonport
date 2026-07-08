@@ -277,8 +277,14 @@ final class PairingServer {
     private func handle(_ conn: NWConnection) {
         let serverKey = Curve25519.KeyAgreement.PrivateKey()
         var salt = Data(count: 16)
-        _ = salt.withUnsafeMutableBytes {
+        let rng = salt.withUnsafeMutableBytes {
             SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
+        }
+        guard rng == errSecSuccess else {
+            // Fail closed: never derive keys from an all-zero salt.
+            Log.info("pairing: salt RNG failed (\(rng)) — aborting")
+            conn.cancel()
+            return
         }
         PairingWire.receive(PairStart.self, on: conn) { [weak self] start in
             guard let self, conn === self.active else { return }
