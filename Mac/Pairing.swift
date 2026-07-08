@@ -174,14 +174,18 @@ enum PairingStore {
         return fresh
     }
 
-    // Every operation targets macOS's data-protection keychain so
-    // kSecAttrAccessible*ThisDeviceOnly is honored (Apple DTS guidance).
+    // macOS uses the default (file) keychain here: the data-protection
+    // keychain (kSecUseDataProtectionKeychain) requires an app-identifier /
+    // keychain-access-group entitlement this dev/unsigned build doesn't
+    // carry, and requesting it returns errSecMissingEntitlement (-34018),
+    // which was silently blocking pairing from saving its key. The file
+    // keychain still honors Synchronizable=false; kSecAttrAccessible is a
+    // data-protection attribute and is simply ignored here (harmless).
     private static func baseQuery(_ deviceID: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: deviceID,
-            kSecUseDataProtectionKeychain as String: true,
             kSecAttrSynchronizable as String: false,
         ]
     }
