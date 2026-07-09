@@ -8,9 +8,10 @@ options:
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    # 2.x is the current major (latest 2.9.x) and the first Sparkle line to
-    # support SPM. `from:` allows compatible 2.x updates.
-    from: "2.6.0"
+    # Pin the exact audited version. The generated Xcode project (including
+    # Package.resolved) is intentionally ignored, so a range here would make
+    # fresh clones and CI resolve different dependency code over time.
+    exactVersion: "2.9.4"
 schemes:
   OpenSidecarMac:
     build:
@@ -27,10 +28,11 @@ settings:
     DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.9"
-    # Version defaults for local builds. CI overrides both via xcargs:
-    # MARKETING_VERSION from the release tag, CURRENT_PROJECT_VERSION from
-    # the GitHub Actions run number (monotonic, keeps TestFlight builds unique).
-    MARKETING_VERSION: "0.0.0"
+    # Version defaults. The local release scripts (scripts/release-mac.sh /
+    # scripts/release-ios.sh) override both via xcargs: MARKETING_VERSION from
+    # the release tag, CURRENT_PROJECT_VERSION as a date-based build number
+    # (YYYYMMDDHHMM — monotonic, keeps TestFlight builds unique).
+    MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   OpenSidecarMac:
@@ -55,15 +57,16 @@ targets:
         # no separate declaration or Local Network authorization.
         NSBonjourServices: ["_photonport._tcp"]
         LSApplicationCategoryType: public.app-category.utilities
-        # --- Sparkle auto-update: DEFUSED for the fork ---
-        # Upstream's SUFeedURL pointed at https://opendisplay.app/appcast.xml,
-        # which would silently auto-update this build back to an upstream
-        # release and wipe the fork's changes. No feed + no automatic checks
-        # = Sparkle stays dormant (the "Check for Updates…" UI does nothing).
-        # Re-add a feed URL + matching SUPublicEDKey only once the fork hosts
-        # its own signed appcast.
         NSAudioCaptureUsageDescription: PhotonPort forwards the Mac's sound to your iPad or iPhone while streaming.
-        SUEnableAutomaticChecks: false
+        # --- Sparkle auto-update (re-armed for the fork's own appcast) ---
+        # Feed + public EdDSA key point at the fork's self-hosted appcast on
+        # GitHub Pages. AppDelegate.updateFeedConfigured detects SUFeedURL and
+        # boots the updater; scheduled checks run via SUEnableAutomaticChecks.
+        # Public half of the Sparkle EdDSA update key. The private key remains
+        # in the release operator's Keychain and offline backup.
+        SUFeedURL: https://lotgood.github.io/photonport/appcast.xml
+        SUPublicEDKey: OgeM+zwZUrTx+CbaioTG9E7oM0ufYVcnS5sQRqTriiw=
+        SUEnableAutomaticChecks: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.hyupji.photonport.mac
@@ -96,6 +99,10 @@ targets:
         CFBundleIconName: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # This asserts an export-compliance exemption, not an absence of
+        # cryptography. PhotonPort uses CryptoKit + TLS-PSK; complete Apple's
+        # encryption questionnaire before distribution (docs/RELEASE.md).
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         # ProMotion: without this key iPhones cap app-driven layer updates at

@@ -14,15 +14,40 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+      - name: Scan full history for secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pairing-vectors:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Verify Mac/iOS pairing parity
+        run: ./scripts/test-pairing-vectors.sh
+
   build:
     # macos-26 for the iOS 26 SDK (same reason upstream's release workflow
     # pins it — see upstream 0.6.7).
     runs-on: macos-26
+    timeout-minutes: 30
+    needs: [secrets, pairing-vectors]
     strategy:
       fail-fast: false
       matrix:
@@ -32,10 +57,17 @@ jobs:
           - scheme: OpenSidecariOS
             destination: generic/platform=iOS
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: |
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.45.4/xcodegen.zip
+          echo "090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef  $RUNNER_TEMP/xcodegen.zip" \
+            | shasum -a 256 --check
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
 
       - name: Generate project
         run: ./generate.sh

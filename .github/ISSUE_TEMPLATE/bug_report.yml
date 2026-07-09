@@ -6,6 +6,8 @@ body:
       value: |
         PhotonPort is an experimental, unsupported fork tested on a single
         hardware pair. Reports missing the fields below will be closed.
+        Logs can contain device-name, shortened device-ID, and network details.
+        Redact anything you do not want published before submitting this issue.
   - type: input
     id: mac
     attributes: { label: "Mac model + macOS version" }
@@ -24,6 +26,7 @@ body:
     id: logs
     attributes:
       label: "Logs (/tmp/photonport-mac.log + iOS Documents/photonport-phone.log)"
+      description: "Redact device names, device identifiers, IP addresses, Bonjour names, and any captured personal information before posting."
       render: text
     validations: { required: true }
   - type: textarea

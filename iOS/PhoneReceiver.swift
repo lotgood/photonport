@@ -267,7 +267,7 @@ final class PhoneReceiver: ObservableObject {
         listener?.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
             guard Self.isLoopback(conn.endpoint) else {
-                Log.info("plaintext connection from \(String(describing: conn.endpoint)) rejected — WiFi requires pairing + TLS")
+                Log.info("non-loopback plaintext connection rejected — WiFi requires pairing + TLS")
                 conn.cancel()
                 return
             }
@@ -315,7 +315,7 @@ final class PhoneReceiver: ObservableObject {
     /// Take over as THE video/control connection (either listener). Replaces
     /// any existing connection and resets decoder state.
     private func adopt(_ conn: NWConnection, transport: String) {
-        Log.info("new \(transport) connection from \(String(describing: conn.endpoint))")
+        Log.info("new \(transport) connection accepted")
         self.transport = transport
         connection?.cancel()
         connection = conn
@@ -486,7 +486,7 @@ final class PhoneReceiver: ObservableObject {
             // Plaintext audio socket is USB-only (loopback). WiFi audio rides
             // its own TLS connection on the secure listener instead.
             guard Self.isLoopback(conn.endpoint) else {
-                Log.info("plaintext audio connection from \(String(describing: conn.endpoint)) rejected — WiFi audio uses TLS")
+                Log.info("non-loopback plaintext audio connection rejected — WiFi audio uses TLS")
                 conn.cancel()
                 return
             }

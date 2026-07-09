@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0] — PhotonPort 포크 첫 공개 릴리스 (2026-07-09)
+
+PhotonPort는 peetzweg/opendisplay (GPL-3.0)의 실험적 포크입니다. 상위(upstream) 이력은 아래에 그대로 보존합니다.
+
+### 배포
+* Mac: Developer ID 서명·공증 DMG를 GitHub Release로 공개 + Sparkle appcast 자동업데이트
+* iOS: 현 수신기 코드를 TestFlight(내부→외부)로 배포, 수출규정 면제 선언(ITSAppUsesNonExemptEncryption=false)
+* 버전 0.1.0 포크 라인 시작, 날짜기반 빌드번호
+
 ## [0.11.0](https://github.com/peetzweg/opendisplay/compare/v0.10.1...v0.11.0) (2026-07-07)
 
 

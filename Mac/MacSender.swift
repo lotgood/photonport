@@ -99,7 +99,10 @@ enum SenderTransport {
 }
 
 @available(macOS 14.0, *)
-final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
+// Mutable transport/capture state is confined to `queue`; UI callbacks hop to
+// MainActor explicitly. The unchecked conformance documents that invariant
+// for Dispatch's @Sendable closures until this type can become an actor.
+final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
 
     // Status surfaced to the UI (updated on main thread).
     @MainActor var onStatus: ((String) -> Void)?
@@ -422,7 +425,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
             Log.info("reconfiguring for \(target.pixelsWide)x\(target.pixelsHigh)")
             if let stream { try? await stream.stopCapture() }
             stream = nil
-            audioStream?.stopCapture { _ in }
+            if let audioStream { try? await audioStream.stopCapture() }
             audioStream = nil
             audioTap?.stop()   // un-mutes the Mac between rebuilds
             audioTap = nil
@@ -1082,7 +1085,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
             guard let self else { return }
             do {
                 let conn = try await Usbmux.dial(udid: udid, port: port, queue: queue)
-                queue.async {
+                queue.async { [weak self] in
+                    guard let self else { conn.cancel(); return }
                     guard generation == self.dialGeneration, !self.stopped else {
                         conn.cancel()
                         return
@@ -1119,7 +1123,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
                     Log.info("usb dial failed: \(error)")
                     hint = "USB connection failed: \(error.localizedDescription)"
                 }
-                queue.async {
+                queue.async { [weak self] in
+                    guard let self else { return }
                     guard generation == self.dialGeneration, !self.stopped else { return }
                     Task { await self.status(hint) }
                     self.scheduleReconnect()
@@ -1379,7 +1384,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate {
     private func waitForHello() async throws -> PhoneInfo {
         if let lastHello { return lastHello }
         return try await withCheckedThrowingContinuation { continuation in
-            queue.async {
+            queue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
                 if let hello = self.lastHello {
                     continuation.resume(returning: hello)
                 } else {
