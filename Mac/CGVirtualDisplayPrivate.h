@@ -1,6 +1,11 @@
 //
 //  CGVirtualDisplayPrivate.h
 //
+//  SPDX-License-Identifier: Apache-2.0
+//  Derived from KhaosT/CGVirtualDisplay:
+//  https://github.com/KhaosT/CGVirtualDisplay
+//  Local compatibility additions are documented in git history.
+//
 //  Reverse-engineered interface of the private CoreGraphics virtual display
 //  API. Originally published by Khaos Tian (VirtualDisplayExp) and used in
 //  DeskPad, BetterDisplay et al. Private API: historically capped at 60 Hz

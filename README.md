@@ -112,9 +112,15 @@ experimental display/audio work stays here.
 
 ## Building
 
+Requirements: an Apple-Silicon or Intel Mac supported by Xcode, Xcode 26 or
+newer, and XcodeGen 2.45.4. The macOS target deploys to macOS 14.0+; the iOS
+target deploys to iOS/iPadOS 17.0+. Runtime compatibility outside the tested
+hardware/OS pair remains unverified.
+
 ```
 echo "DEVELOPMENT_TEAM=YOURTEAMID" > .env   # see .env.example
 ./generate.sh
+./scripts/test-pairing-vectors.sh
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecarMac -configuration Debug -derivedDataPath build build
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecariOS -configuration Debug -destination 'platform=iOS,id=<device>' -derivedDataPath build -allowProvisioningUpdates build
 ```
@@ -129,3 +135,7 @@ GPL-3.0, same as upstream — see [LICENSE](LICENSE). Original work
 2026-07-08; per-change notices live in the git history). If you distribute
 binaries built from this tree, GPL-3.0 requires you to provide the exact
 corresponding source.
+
+See [Third-Party Notices](THIRD_PARTY_NOTICES.md),
+[asset licensing](ASSETS.md), [Security Policy](SECURITY.md),
+[Privacy Policy](PRIVACY.md), and [Contributing](CONTRIBUTING.md).

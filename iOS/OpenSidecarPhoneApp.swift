@@ -9,7 +9,8 @@ let deviceKind = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
 /// The fork's repository — hosts the Mac app source and explains the
 /// two-app setup. (The upstream OpenDisplay Mac app uses a different
 /// Bonjour service type and can't connect to this receiver.)
-let macAppURL = URL(string: "https://github.com/lotgood/photonport")!
+let macAppURL = URL(string: "https://github.com/lotgood/photonport/releases/latest")!
+let privacyPolicyURL = URL(string: "https://lotgood.github.io/photonport/privacy.html")!
 
 @main
 struct OpenSidecarPhoneApp: App {
@@ -556,6 +557,9 @@ struct SettingsView: View {
 
                 Section("About") {
                     LabeledContent("Version", value: version)
+                    Link(destination: privacyPolicyURL) {
+                        Label("Privacy Policy", systemImage: "hand.raised")
+                    }
                     Link(destination: macAppURL) {
                         Label("GitHub — lotgood/photonport", systemImage: "link")
                     }

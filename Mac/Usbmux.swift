@@ -15,6 +15,22 @@
 import Foundation
 import Network
 
+/// Thread-safe one-shot gate for continuation callbacks. Network.framework's
+/// state handler is @Sendable even when callers provide a serial queue, so a
+/// captured mutable Bool would become an error in Swift 6 mode.
+private final class UsbmuxContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
+}
+
 struct UsbmuxDevice: Hashable, Identifiable {
     let deviceID: Int     // usbmuxd's handle — changes on every replug
     let udid: String      // stable hardware identifier
@@ -138,17 +154,16 @@ enum Usbmux {
     static func open(queue: DispatchQueue) async throws -> NWConnection {
         let conn = NWConnection(to: .unix(path: socketPath), using: .tcp)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            var resumed = false   // the handler fires on `queue` (serial)
+            let gate = UsbmuxContinuationGate()
             conn.stateUpdateHandler = { state in
-                guard !resumed else { return }
                 switch state {
                 case .ready:
-                    resumed = true
+                    guard gate.claim() else { return }
                     cont.resume()
                 case .failed(let error), .waiting(let error):
                     // No path updates on a Unix socket — .waiting would hang
                     // forever, so treat it as failure and let callers retry.
-                    resumed = true
+                    guard gate.claim() else { return }
                     conn.cancel()
                     cont.resume(throwing: error)
                 default:
@@ -253,13 +268,13 @@ final class UsbmuxDeviceWatcher {
         case "Attached":
             guard let device = Usbmux.device(
                 fromProperties: message["Properties"] as? [String: Any] ?? [:]) else { return }
-            Log.info("usbmux attached: \(device.udid)")
+            Log.info("usbmux attached: id-prefix=\(device.udid.prefix(8))")
             devices[deviceID] = device
             publish()
             resolveName(deviceID: deviceID)
         case "Detached":
             if let device = devices.removeValue(forKey: deviceID) {
-                Log.info("usbmux detached: \(device.udid)")
+                Log.info("usbmux detached: id-prefix=\(device.udid.prefix(8))")
                 publish()
             }
         default:

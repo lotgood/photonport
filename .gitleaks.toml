@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Sparkle EdDSA public verification keys are intentionally committed"
+condition = "AND"
+paths = ['''^project\.yml$''']
+regexes = [
+  '''OgeM\+zwZUrTx\+CbaioTG9E7oM0ufYVcnS5sQRqTriiw=''',
+  '''rYxlIePmwzi2bRo/qIsuY2TqTnQ34li2gQhJpGBiumw=''',
+]

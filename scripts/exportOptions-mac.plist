@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Developer ID export options for the macOS DMG (self-distributed, notarized).
+  TEAMID_PLACEHOLDER is substituted with $DEVELOPMENT_TEAM by scripts/release-mac.sh
+  at build time (plist files do not expand environment variables).
+-->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>developer-id</string>
+    <key>teamID</key>
+    <string>TEAMID_PLACEHOLDER</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>signingCertificate</key>
+    <string>Developer ID Application</string>
+</dict>
+</plist>
