@@ -91,10 +91,10 @@ export ASC_KEY_PATH=$HOME/.private_keys/AuthKey_XXXXXXXXXX.p8
 
 ## 2. Cut a release (0.1.0)
 
-PhotonPort keeps upstream's historical `v0.1.0`…`v0.11.0` tags. Fork releases
-therefore use a namespaced Git tag (`photonport-v0.1.0`) while the app's
-marketing version remains `0.1.0`. Never move or reuse an inherited upstream
-tag.
+PhotonPort releases use a namespaced Git tag (`photonport-v0.1.0`) while the
+app's marketing version remains `0.1.0`. Do not mirror OpenDisplay release tags
+into `origin`; they remain available from the `upstream` remote when historical
+comparison is needed.
 
 1. Bump/confirm `MARKETING_VERSION` in `project.yml`, update `CHANGELOG.md`,
    run all tests/builds, commit, merge to `main`, and push so local
@@ -103,8 +103,8 @@ tag.
    ```sh
    git tag -s photonport-v0.1.0 -m "PhotonPort 0.1.0"
    ```
-   Use an annotated tag if a signing key is not configured, but do not use a
-   lightweight or inherited `v0.1.0` tag.
+   Use an annotated tag if a signing key is not configured. Do not substitute
+   an unnamespaced tag such as `v0.1.0`.
 3. Build the notarized DMG + signed appcast:
    ```sh
    ./scripts/release-mac.sh 0.1.0
