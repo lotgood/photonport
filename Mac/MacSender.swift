@@ -1836,6 +1836,32 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     // signal ~0.75 (≈770/1023) — sustained peaks near 1023 while HDR content
     // plays prove the EDR composite survives into the capture; peaks pinned
     // ≤~770 mean the Mac side is serving tone-mapped SDR.
+    private func floatFromHalfBits(_ bits: UInt16) -> Float {
+        let sign = UInt32(bits & 0x8000) << 16
+        let exponent = Int((bits >> 10) & 0x1f)
+        var fraction = UInt32(bits & 0x03ff)
+        let floatBits: UInt32
+
+        switch exponent {
+        case 0 where fraction == 0:
+            floatBits = sign
+        case 0:
+            var normalizedExponent = -14
+            while fraction & 0x0400 == 0 {
+                fraction <<= 1
+                normalizedExponent -= 1
+            }
+            fraction &= 0x03ff
+            floatBits = sign | UInt32(normalizedExponent + 127) << 23 | fraction << 13
+        case 0x1f:
+            floatBits = sign | 0x7f80_0000 | fraction << 13
+        default:
+            floatBits = sign | UInt32(exponent - 15 + 127) << 23 | fraction << 13
+        }
+
+        return Float(bitPattern: floatBits)
+    }
+
     private func logCapturePeak(_ buffer: CVPixelBuffer) {
         let fmt = CVPixelBufferGetPixelFormatType(buffer)
         let cc = String(bytes: [UInt8(fmt >> 24 & 0xff), UInt8(fmt >> 16 & 0xff),
@@ -1851,10 +1877,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             var peak: Float = 0
             var y = 0
             while y < height {
-                let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float16.self)
+                let row = base.advanced(by: y * stride).assumingMemoryBound(to: UInt16.self)
                 var x = 0
                 while x < width * 4 {            // RGBA; alpha rides along, harmless
-                    let v = Float(row[x])
+                    let v = floatFromHalfBits(row[x])
                     if v > peak { peak = v }
                     x += 32                      // every 8th pixel
                 }
