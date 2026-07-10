@@ -1,11 +1,10 @@
 # Changelog
 
-All notable PhotonPort changes will be documented in this file. PhotonPort has
-not published a signed binary release yet.
+All notable PhotonPort changes will be documented in this file.
 
 ## [Unreleased]
 
-### 0.1.0 candidate — 2026-07-09
+## [0.1.0] - 2026-07-10
 
 ### Added
 
