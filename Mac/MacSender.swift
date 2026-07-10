@@ -1139,6 +1139,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         } else {
             params = NWParameters(tls: nil, tcp: options)
         }
+        // WMM QoS: the video frames flow Mac -> device on THIS connection, and
+        // packets are marked by their sender — without this the video stream
+        // rides best-effort AC_BE and eats WiFi contention as p95 frame-latency
+        // spikes (the audio dial and the device's listeners already mark
+        // theirs). No effect on USB/loopback.
+        params.serviceClass = .interactiveVideo
         let conn = NWConnection(to: endpoint, using: params)
         connection = conn
         conn.stateUpdateHandler = { [weak self] state in
