@@ -37,12 +37,10 @@ struct OpenSidecarMacApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    // True when a Sparkle appcast feed is configured (SUFeedURL in
-    // Info.plist). The fork ships without one — see the "DEFUSED" note in
-    // project.yml — so the updater must stay dormant: don't start it (a
-    // feedless start only logs an error) and hide the "Check for Updates…"
-    // UI instead of showing a button that can never work. Re-adding a feed
-    // (+ SUPublicEDKey) re-enables both automatically.
+    // True when the fork's Sparkle feed is configured (SUFeedURL in
+    // Info.plist). Keep the updater dormant only for local/custom builds that
+    // omit the feed; release builds use the EdDSA-verified Pages appcast and
+    // expose scheduled and manual update checks.
     static let updateFeedConfigured =
         Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
 

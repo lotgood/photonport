@@ -9,7 +9,7 @@
 #   ASC_KEY_ID         App Store Connect API key id
 #   ASC_ISSUER_ID      App Store Connect issuer id
 #   ASC_KEY_PATH       path to AuthKey_<id>.p8
-#   EXPORT_COMPLIANCE_CONFIRMED=1 after completing Apple's encryption flow
+#   EXPORT_COMPLIANCE_CONFIRMED=1 after external export review covering Mac+iOS
 #   APPLE_DISTRIBUTION_TERMS_REVIEWED=1 after reviewing GPL/Apple terms
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -24,7 +24,7 @@ require_release_source "$VERSION"
 : "${ASC_KEY_PATH:?set ASC_KEY_PATH (path to AuthKey_*.p8)}"
 [[ -f "$ASC_KEY_PATH" ]] || { echo "ASC_KEY_PATH does not exist: $ASC_KEY_PATH" >&2; exit 1; }
 require_acknowledgement EXPORT_COMPLIANCE_CONFIRMED \
-  "completing and recording Apple's encryption/export-compliance determination"
+  "completing and recording the Mac+iOS encryption/export-classification review"
 require_acknowledgement APPLE_DISTRIBUTION_TERMS_REVIEWED \
   "reviewing GPL-3.0 and Apple/TestFlight distribution terms"
 plutil -lint iOS/PrivacyInfo.xcprivacy

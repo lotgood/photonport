@@ -30,12 +30,17 @@ experimental display/audio work stays here.
   WiFi sessions run over TLS-PSK. The receiver's plaintext port only accepts
   loopback (USB/usbmux) peers, and the pairing listener exists only while the
   device's pairing screen is open.
-- **Residual WiFi caveats** (documented, not yet fixed): TLS-PSK has no
-  forward secrecy (a leaked long-term key can decrypt past recorded
-  sessions); a holder of a valid/stolen PSK can take over an active session
-  (no per-session binding yet). Prefer USB for anything sensitive. The
-  `-host`/`-port` manual endpoint stays plaintext — use it only for
-  loopback-style tunnels.
+- **Stream sessions are receiver-bound.** After the receiver-first hello, protocol
+  v3 authenticates the claimed Mac identity, returns a receiver proof, and binds
+  the dedicated audio socket to the accepted primary session. A second primary
+  from the same or another paired identity is rejected until the user disconnects
+  or the receiver's 5-second liveness timeout releases ownership.
+- **Residual WiFi caveats:** TLS-PSK has no forward secrecy, so a leaked long-term
+  key can decrypt past recorded sessions. A valid or stolen PSK can still claim an
+  idle receiver first and lock out the legitimate Mac until disconnect/timeout,
+  or impersonate a receiver to that Mac; v3 prevents silent replacement but does
+  not revoke a stolen key. Prefer USB for anything sensitive. The `-host`/`-port`
+  manual endpoint stays plaintext—use it only for loopback-style tunnels.
 - The Mac app requires Screen Recording (and, for audio, System Audio
   Recording) permission — it captures your screen and system audio and sends
   them to your device. Nothing else; no servers, no analytics, no accounts.
@@ -121,6 +126,7 @@ hardware/OS pair remains unverified.
 echo "DEVELOPMENT_TEAM=YOURTEAMID" > .env   # see .env.example
 ./generate.sh
 ./scripts/test-pairing-vectors.sh
+./scripts/test-session-binding.sh
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecarMac -configuration Debug -derivedDataPath build build
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecariOS -configuration Debug -destination 'platform=iOS,id=<device>' -derivedDataPath build -allowProvisioningUpdates build
 ```

@@ -97,36 +97,58 @@ into `origin`; they remain available from the `upstream` remote when historical
 comparison is needed.
 
 1. Bump/confirm `MARKETING_VERSION` in `project.yml`, update `CHANGELOG.md`,
-   run all tests/builds, commit, merge to `main`, and push so local
-   `origin/main` equals `HEAD`.
-2. Create the release tag on that exact clean commit:
+   run the protocol-v3 regressions and both unsigned builds, commit, merge to
+   `main`, and push so local `origin/main` equals `HEAD`:
+   ```sh
+   ./scripts/test-pairing-vectors.sh
+   ./scripts/test-session-binding.sh
+   ./generate.sh
+   xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecarMac \
+     -configuration Debug -derivedDataPath build-mac CODE_SIGNING_ALLOWED=NO build
+   xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecariOS \
+     -configuration Debug -destination 'generic/platform=iOS' \
+     -derivedDataPath build-ios CODE_SIGNING_ALLOWED=NO build
+   ```
+   The device evidence must also reject same/cross-identity takeover, bad
+   primary/accept/audio proofs, stale generation/session IDs, replayed audio
+   nonces, audio-before-primary timeout, and pre-accept capture/audio. It must
+   cover primary cancel, the 5-second receiver timeout, USB replug, and teardown.
+2. Obtain and privately record an external export-classification review covering
+   **both** the Mac DMG and the iOS/TestFlight build. Apply any required changes,
+   rerun step 1, then set `EXPORT_COMPLIANCE_CONFIRMED=1`. This gate blocks both
+   distributions; it is separate from the TestFlight-only terms review below.
+3. Create the release tag on that exact clean commit, but do not push it yet:
    ```sh
    git tag -s photonport-v0.1.0 -m "PhotonPort 0.1.0"
    ```
    Use an annotated tag if a signing key is not configured. Do not substitute
    an unnamespaced tag such as `v0.1.0`.
-3. Build the notarized DMG + signed appcast:
+4. Build the notarized DMG + signed appcast:
    ```sh
    ./scripts/release-mac.sh 0.1.0
    ```
-   Outputs the DMG, appcast, and SHA-256 files in `dist/`.
-4. Complete Apple's encryption/export questionnaire and review GPL-3.0 versus
-   Apple/TestFlight distribution terms. Record the result, then explicitly
-   acknowledge both local release gates:
-   ```sh
-   export EXPORT_COMPLIANCE_CONFIRMED=1
-   export APPLE_DISTRIBUTION_TERMS_REVIEWED=1
-   ```
-5. Build & upload the iOS TestFlight build:
+   Verify codesign, Gatekeeper, notarization/stapling, checksums, appcast URL,
+   EdDSA signature, and the embedded Sparkle public key against the private key.
+5. **AC#9 runtime smoke (blocking):** install this exact notarized candidate on
+   the supported Mac and run one USB Mac↔iPad session covering virtual display,
+   capture, input, audio, disconnect/reconnect, and replug. Confirm redacted
+   `CapabilityProbe` and session-v3 reason logs are healthy.
+6. On any failure, delete the unpublished local tag and candidate artifacts, fix
+   on a new commit, and restart. On success, push the tag, create and verify a
+   draft GitHub Release, publish it, then verify Pages, `releases/latest`, the DMG
+   URL, and the appcast before announcing. If the release-triggered Pages deploy
+   is blocked or the feed is stale, run **Actions → Pages → Run workflow** from
+   `main` with the exact published `photonport-v*` tag; invalid or unpublished tags
+   fail closed.
+7. Before any TestFlight upload, obtain and privately record the separate external
+   GPL-3.0/Apple/TestFlight terms review and App Privacy determination. Only this
+   iOS gate permits `APPLE_DISTRIBUTION_TERMS_REVIEWED=1`; it does not gate the Mac
+   GitHub Release once the export review and Mac evidence are complete.
+8. Build and upload the internal TestFlight candidate:
    ```sh
    ./scripts/release-ios.sh 0.1.0
    ```
-6. **Publish** (see §3): push the namespaced tag, create a draft GitHub Release,
-   attach every required artifact, then publish it. Publishing triggers the
-   Pages workflow that deploys the privacy policy and appcast.
-7. **Runtime smoke (blocking):** install the notarized DMG on a clean
-   Mac, run one USB Mac↔iPad session (virtual display + capture + input +
-   audio), and confirm `CapabilityProbe` logs are healthy **before** announcing.
+   Verify processing, privacy metadata, and the recorded export-compliance state.
 
 The build number (`CURRENT_PROJECT_VERSION`) is injected by the scripts as a
 date stamp (`YYYYMMDDHHMM`) to keep TestFlight builds monotonic.
@@ -135,9 +157,15 @@ date stamp (`YYYYMMDDHHMM`) to keep TestFlight builds monotonic.
 
 ## 3. Publish checklist (manual, GitHub)
 
-- [ ] Make `github.com/lotgood/photonport` **public** and `git push`.
-- [ ] Repo → Settings → Pages → set source to **GitHub Actions**. Confirm
-      `https://lotgood.github.io/photonport/appcast.xml` serves.
+- [ ] Confirm `github.com/lotgood/photonport` remains **public** and the release
+      commit is pushed to `origin/main`.
+- [ ] Repo → Settings → Pages uses **GitHub Actions**. Before the first PhotonPort
+      release, `privacy.html` must return 200 and `appcast.xml` is expected to be
+      absent; privacy-only pushes must not fabricate an appcast.
+- [ ] Repo → Settings → Environments → `github-pages` permits deployment tags
+      matching `photonport-v*` in addition to the default branch. Without this
+      rule, the release-published event can be rejected before deployment; the
+      validated manual-dispatch path from `main` is the recovery route.
 - [ ] Create a draft GitHub Release **`photonport-v0.1.0`**. Attach
       `PhotonPort-0.1.0.dmg`, its `.sha256`, `appcast.xml`, and
       `appcast.xml.sha256`, then publish. The DMG download URL must match
@@ -145,7 +173,9 @@ date stamp (`YYYYMMDDHHMM`) to keep TestFlight builds monotonic.
       (`.../releases/download/photonport-v0.1.0/`).
 - [ ] Verify the in-app link: `.../releases/latest` returns **200** and shows
       the DMG.
-- [ ] Verify `privacy.html` and `appcast.xml` on Pages return **200**.
+- [ ] Verify `privacy.html` and `appcast.xml` on Pages return **200**. Confirm the
+      deployed appcast checksum and selected-tag enclosure; CI covers privacy push,
+      namespaced/non-namespaced release, and dispatch selection semantics.
 - [ ] TestFlight: internal testers first (no review); expand to an external
       public link only after Beta App Review.
 
@@ -160,21 +190,31 @@ date stamp (`YYYYMMDDHHMM`) to keep TestFlight builds monotonic.
 - AC#4 iOS `0.1.0` processes on TestFlight, has an accepted privacy manifest,
   and shows the expected recorded export-compliance state.
 - AC#5 `MARKETING_VERSION=0.1.0`, date-based build number, CHANGELOG section present.
-- AC#6 Unsigned `build.yml` stays green for both targets.
-- AC#7 README keeps the EXPERIMENTAL / single-hardware-pair framing.
+- AC#6 Protocol-v3 vectors, session ownership/replay harness, and unsigned builds
+  stay green for both targets.
+- AC#7 README keeps the EXPERIMENTAL / single-hardware-pair framing and accurately
+  distinguishes receiver binding from the remaining stolen-PSK/no-PFS risks.
 - AC#8 Release artifacts/credentials are ignored; LICENSE, third-party notices,
   and asset notices ship with the DMG.
-- AC#9 (**blocking**) runtime smoke on the actual release OS passes before going public.
+- AC#9 (**blocking**) the supported-device USB runtime smoke passes on the exact
+  notarized candidate before the Mac release is published.
+- AC#10 Export review covers Mac and iOS before either distribution; the separate
+  GPL/Apple/TestFlight terms review is complete before the iOS upload.
 
-## 5. Distribution compliance record
+## 5. Distribution compliance records
 
-Before setting either acknowledgement variable, save a private record of:
+Maintain two private records with distinct approval scopes:
 
-- the App Store Connect encryption answers and any declaration/approval code;
-- the exact CryptoKit/TLS functionality reviewed;
-- the GPL-3.0 and Apple/TestFlight terms review conclusion;
-- the privacy policy URL and App Privacy answers;
-- the release commit, tag, certificate identity, notarization submission ID,
-  checksums, and hardware smoke-test result.
+1. **Export classification (Mac and iOS):** the exact CryptoKit/TLS-PSK/session-v3
+   functionality reviewed; Mac DMG and iOS/TestFlight distribution scope; Apple
+   encryption answers and any declaration, exemption, approval code, or required
+   changes; reviewer/conclusion/date; release commit and version.
+2. **GPL/Apple/TestFlight terms (iOS only):** the GPL-3.0-only derivative and
+   Apple/TestFlight terms conclusion, intended internal-TestFlight scope, privacy
+   policy URL, App Privacy answers, reviewer/conclusion/date, commit and version.
 
-The acknowledgement variables are guardrails, not legal or export advice.
+The release evidence record additionally captures tag, certificate identity,
+notarization submission ID, checksums, appcast digest/signature verification,
+Pages URLs, and the supported-hardware AC#9 result. Environment acknowledgements
+are local guardrails, not legal or export advice, and never substitute for these
+records.

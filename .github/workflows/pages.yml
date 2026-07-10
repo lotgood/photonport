@@ -6,13 +6,15 @@ on:
     paths:
       - ".github/workflows/pages.yml"
       - "docs/privacy.html"
+      - "scripts/select-pages-appcast.py"
+      - "scripts/verify-pages-appcast.py"
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
         description: "Published PhotonPort release tag"
-        required: false
+        required: true
         type: string
 
 permissions:
@@ -32,7 +34,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      EVENT_NAME: ${{ github.event_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+      DISPATCH_TAG: ${{ inputs.tag || '' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -41,12 +45,50 @@ jobs:
           mkdir public
           cp docs/privacy.html public/privacy.html
 
-      - name: Add Sparkle appcast
-        if: env.RELEASE_TAG != ''
+      - name: Resolve appcast to preserve
+        id: appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "$RUNNER_TEMP/release-pages.json"
+          jq 'add' "$RUNNER_TEMP/release-pages.json" \
+            > "$RUNNER_TEMP/releases.json"
+          python3 scripts/select-pages-appcast.py \
+            --event "$EVENT_NAME" \
+            --release-tag "$RELEASE_TAG" \
+            --dispatch-tag "$DISPATCH_TAG" \
+            --releases-json "$RUNNER_TEMP/releases.json" \
+            > "$RUNNER_TEMP/appcast-selection.json"
+          echo "mode=$(jq -r .mode "$RUNNER_TEMP/appcast-selection.json")" >> "$GITHUB_OUTPUT"
+          echo "tag=$(jq -r .tag "$RUNNER_TEMP/appcast-selection.json")" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r .url "$RUNNER_TEMP/appcast-selection.json")" >> "$GITHUB_OUTPUT"
+          echo "checksum_url=$(jq -r .checksum_url "$RUNNER_TEMP/appcast-selection.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Add preserved Sparkle appcast
+        if: steps.appcast.outputs.mode == 'appcast'
+        env:
+          APPCAST_URL: ${{ steps.appcast.outputs.url }}
+          APPCAST_TAG: ${{ steps.appcast.outputs.tag }}
+          APPCAST_CHECKSUM_URL: ${{ steps.appcast.outputs.checksum_url }}
         run: |
           curl --fail --location --retry 3 \
-            --output public/appcast.xml \
-            "https://github.com/lotgood/photonport/releases/download/${RELEASE_TAG}/appcast.xml"
+            --output "$RUNNER_TEMP/appcast.xml" \
+            "$APPCAST_URL"
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/appcast.xml.sha256" \
+            "$APPCAST_CHECKSUM_URL"
+          python3 scripts/verify-pages-appcast.py \
+            --appcast "$RUNNER_TEMP/appcast.xml" \
+            --checksum "$RUNNER_TEMP/appcast.xml.sha256" \
+            --tag "$APPCAST_TAG"
+          mv "$RUNNER_TEMP/appcast.xml" public/appcast.xml
+          echo "::notice::Preserved and verified appcast from $APPCAST_TAG"
+
+      - name: Note first-release privacy-only deployment
+        if: steps.appcast.outputs.mode == 'privacy-only'
+        run: echo "::notice::No published PhotonPort appcast exists yet; deploying privacy only"
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:

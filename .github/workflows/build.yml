@@ -46,13 +46,23 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Verify Mac/iOS pairing parity
         run: ./scripts/test-pairing-vectors.sh
+      - name: Verify session ownership and replay state
+        run: ./scripts/test-session-binding.sh
+
+  pages-appcast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Verify Pages appcast event matrix
+        run: python3 -m unittest Tests/test_pages_appcast.py
 
   build:
     # macos-26 for the iOS 26 SDK (same reason upstream's release workflow
     # pins it — see upstream 0.6.7).
     runs-on: macos-26
     timeout-minutes: 30
-    needs: [secrets, pairing-vectors]
+    needs: [secrets, pairing-vectors, pages-appcast]
     strategy:
       fail-fast: false
       matrix:

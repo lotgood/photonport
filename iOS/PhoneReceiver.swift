@@ -12,6 +12,8 @@
 
 import Foundation
 import Network
+import CryptoKit
+
 import AVFoundation
 import CoreMedia
 import VideoToolbox
@@ -54,10 +56,30 @@ final class PhoneReceiver: ObservableObject {
     @Published var connected = false
     @Published var videoSize = CGSize.zero   // for touch coordinate mapping
     @Published var perf = PerfStats()
+    @Published var sessionPeer = ""
+    @Published var sessionTransport = ""
+
 
     private var listener: NWListener?
     private var listenerHealthy = false
     private var connection: NWConnection?
+    private struct SessionChallenge {
+        let deviceNonce: Data
+        let usbSeed: Data?
+        let transport: String
+    }
+
+    private struct ActiveSession {
+        let macID: String
+        let sessionID: Data
+        let generation: UInt64
+        let channelSecret: SymmetricKey
+        let primary: NWConnection
+        let challenge: SessionChallenge
+    }
+
+    private var activeSession: ActiveSession?
+    private var ownership = SessionOwnershipState()
     private let queue = DispatchQueue(label: "receiver.video")
     private var buffer = Data()
     private var formatDesc: CMVideoFormatDescription?
@@ -195,23 +217,27 @@ final class PhoneReceiver: ObservableObject {
     }
 
     func setNativePanel(long: Int, short: Int, scale: Double) {
-        nativeLong = long
-        nativeShort = short
-        deviceScale = scale
-        if devicePixelsWide == 0 {   // default landscape until the view reports
-            devicePixelsWide = long
-            devicePixelsHigh = short
+        queue.async {
+            self.nativeLong = long
+            self.nativeShort = short
+            self.deviceScale = scale
+            if self.devicePixelsWide == 0 {
+                self.devicePixelsWide = long
+                self.devicePixelsHigh = short
+            }
         }
     }
 
     func setOrientation(portrait: Bool) {
-        let w = portrait ? nativeShort : nativeLong
-        let h = portrait ? nativeLong : nativeShort
-        guard w > 0, w != devicePixelsWide else { return }
-        devicePixelsWide = w
-        devicePixelsHigh = h
-        Log.info("orientation changed -> \(portrait ? "portrait" : "landscape") \(w)x\(h)")
-        if let connection { sendHello(on: connection) }
+        queue.async {
+            let w = portrait ? self.nativeShort : self.nativeLong
+            let h = portrait ? self.nativeLong : self.nativeShort
+            guard w > 0, w != self.devicePixelsWide else { return }
+            self.devicePixelsWide = w
+            self.devicePixelsHigh = h
+            Log.info("orientation changed -> \(portrait ? "portrait" : "landscape") \(w)x\(h)")
+            if let connection = self.connection { self.sendHello(on: connection) }
+        }
     }
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
@@ -271,7 +297,8 @@ final class PhoneReceiver: ObservableObject {
                 conn.cancel()
                 return
             }
-            self.adopt(conn, transport: "USB")
+            self.acceptCandidate(conn, transport: "USB", expected: .primary)
+
         }
         listener?.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -312,87 +339,245 @@ final class PhoneReceiver: ObservableObject {
         }
     }
 
-    /// Take over as THE video/control connection (either listener). Replaces
-    /// any existing connection and resets decoder state.
-    private func adopt(_ conn: NWConnection, transport: String) {
-        Log.info("new \(transport) connection accepted")
-        self.transport = transport
-        connection?.cancel()
-        connection = conn
-        resetStreamState()
-        conn.stateUpdateHandler = { [weak self] state in
+    // MARK: - Session-v3 connection admission
+
+    private enum ExpectedConnectionRole: Equatable {
+        case primary, audio, either
+    }
+
+    private func makeChallenge(transport: String) -> SessionChallenge? {
+        guard let deviceNonce = SessionCrypto.randomBytes(count: 32) else { return nil }
+        let seed = transport == "USB" ? SessionCrypto.randomBytes(count: 32) : nil
+        if transport == "USB", seed == nil { return nil }
+        return SessionChallenge(deviceNonce: deviceNonce, usbSeed: seed, transport: transport)
+    }
+
+    private func acceptCandidate(_ conn: NWConnection, transport: String,
+                                 expected: ExpectedConnectionRole) {
+        guard let challenge = makeChallenge(transport: transport) else {
+            Log.info("session challenge generation failed")
+            conn.cancel()
+            return
+        }
+        conn.stateUpdateHandler = { [weak self, weak conn] state in
+            guard let self, let conn else { return }
             switch state {
             case .ready:
-                self?.lastDataReceived = Date()
-                self?.setConnected(true)
-                self?.sendHello(on: conn)
+                self.sendHello(on: conn, challenge: challenge)
+                self.classifyFirstFrame(conn, challenge: challenge, expected: expected)
+                self.scheduleCandidateTimeout(conn)
             case .failed, .cancelled:
-                self?.setConnected(false)
-            default: break
+                if self.activeSession?.primary === conn { self.endActiveSession(reason: "primary_closed") }
+                if conn === self.audioConnection { self.audioConnection = nil }
+            default:
+                break
             }
         }
         conn.start(queue: queue)
+    }
+
+    private func scheduleCandidateTimeout(_ conn: NWConnection) {
+        queue.asyncAfter(deadline: .now() + SessionTiming.handshakeTimeout) { [weak self, weak conn] in
+            guard let self, let conn,
+                  self.activeSession?.primary !== conn,
+                  self.audioConnection !== conn else { return }
+            Log.info("session v3 first-frame timeout")
+            conn.cancel()
+        }
+    }
+
+    private func classifyFirstFrame(_ conn: NWConnection, challenge: SessionChallenge,
+                                    expected: ExpectedConnectionRole) {
+        readFrame(on: conn) { [weak self] payload in
+            guard let self, let payload,
+                  let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+                  let type = object["type"] as? String else {
+                conn.cancel()
+                return
+            }
+            switch type {
+            case "session-open" where expected != .audio:
+                guard let message = try? JSONDecoder().decode(SessionOpen.self, from: payload) else {
+                    conn.cancel(); return
+                }
+                self.acceptPrimary(conn, message: message, challenge: challenge)
+            case "channel-open" where expected != .primary:
+                guard let message = try? JSONDecoder().decode(SessionChannelOpen.self, from: payload) else {
+                    conn.cancel(); return
+                }
+                self.acceptAudio(conn, message: message, allowPending: true)
+            default:
+                Log.info("session connection rejected: unexpected first frame \(type)")
+                _ = self.sendSessionMessage(
+                    SessionBusy(v: SessionCrypto.version, reason: "incompatible"),
+                    on: conn)
+                conn.cancel()
+            }
+        }
+    }
+
+    private func acceptPrimary(_ conn: NWConnection, message: SessionOpen,
+                               challenge: SessionChallenge) {
+        guard message.v == SessionCrypto.version,
+              message.deviceInstallID == Self.installID,
+              let macNonce = Data(base64Encoded: message.macNonce), macNonce.count == 32,
+              let suppliedProof = Data(base64Encoded: message.primaryProof),
+              let ikm = challenge.usbSeed ?? PairingStore.psk(for: message.macInstallID) else {
+            rejectPrimary(conn, reason: "invalid_session_open")
+            return
+        }
+        let primaryKey = SessionCrypto.primaryKey(
+            ikm: ikm, macInstallID: message.macInstallID,
+            deviceInstallID: Self.installID, macNonce: macNonce,
+            deviceNonce: challenge.deviceNonce)
+        let expectedProof = SessionCrypto.primaryProof(
+            key: primaryKey, macInstallID: message.macInstallID,
+            deviceInstallID: Self.installID, macNonce: macNonce,
+            deviceNonce: challenge.deviceNonce)
+        guard SessionCrypto.constantTimeEqual(suppliedProof, expectedProof) else {
+            rejectPrimary(conn, reason: "primary_auth_failed")
+            return
+        }
+        guard let sessionID = SessionCrypto.randomBytes(count: 16) else {
+            rejectPrimary(conn, reason: "random_failed")
+            return
+        }
+        let lease: SessionOwnershipState.Lease
+        switch ownership.claim(macInstallID: message.macInstallID) {
+        case .accepted(let accepted):
+            lease = accepted
+        case .busy:
+            rejectPrimary(conn, reason: "session_busy")
+            return
+        }
+        let channelSecret = SessionCrypto.channelSecret(
+            primaryKey: primaryKey, sessionID: sessionID,
+            generation: lease.generation)
+        let proof = SessionCrypto.acceptProof(
+            key: channelSecret, sessionID: sessionID,
+            generation: lease.generation,
+            macInstallID: message.macInstallID,
+            deviceInstallID: Self.installID, macNonce: macNonce,
+            deviceNonce: challenge.deviceNonce)
+        let accept = SessionAccept(
+            v: SessionCrypto.version,
+            sessionID: sessionID.base64EncodedString(),
+            generation: lease.generation,
+            acceptProof: proof.base64EncodedString())
+        guard sendSessionMessage(accept, on: conn) else {
+            ownership.release(macInstallID: lease.macInstallID,
+                              generation: lease.generation)
+            conn.cancel()
+            return
+        }
+
+        activeSession = ActiveSession(
+            macID: message.macInstallID, sessionID: sessionID,
+            generation: lease.generation, channelSecret: channelSecret,
+            primary: conn, challenge: challenge)
+        connection = conn
+        transport = challenge.transport
+        lastDataReceived = Date()
+        resetStreamState()
+        setConnected(true)
+        let peerName = challenge.transport == "USB"
+            ? "USB Mac"
+            : PairingStore.pairedMacs.first { $0.id == message.macInstallID }?.name
+                ?? "Paired Mac"
+        DispatchQueue.main.async {
+            self.sessionPeer = peerName
+            self.sessionTransport = challenge.transport
+        }
+        Log.info("session v3 primary accepted (\(challenge.transport), generation \(lease.generation))")
         receive(on: conn)
     }
 
-    // First frame a WiFi audio connection sends so the receiver can tell it
-    // apart from the video connection on the shared secure listener.
-    private static let audioChannelTag = Data("{\"type\":\"audiochannel\"}".utf8)
-
-    /// The secure (WiFi) listener carries BOTH the video connection and,
-    /// separately, the audio connection (so audio PCM never head-of-line
-    /// blocks behind video frames on a lossy radio). Classify each new
-    /// connection by its first frame: a tagged one becomes the dedicated
-    /// audio connection; anything else is the video/control connection.
-    private func acceptSecure(_ conn: NWConnection) {
-        conn.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            switch state {
-            case .ready:
-                self.lastDataReceived = Date()
-                // The video peer waits for hello before it sends anything;
-                // the audio peer ignores hello and sends its tag immediately.
-                self.sendHello(on: conn)
-                self.classifyFirstFrame(conn)
-            case .failed, .cancelled:
-                if conn === self.connection { self.setConnected(false) }
-                if conn === self.audioConnection { self.audioConnection = nil }
-            default: break
-            }
-        }
-        conn.start(queue: queue)
+    private func rejectPrimary(_ conn: NWConnection, reason: String) {
+        _ = sendSessionMessage(SessionBusy(v: SessionCrypto.version, reason: reason), on: conn)
+        Log.info("session v3 primary rejected: \(reason)")
+        conn.cancel()
     }
 
-    private func classifyFirstFrame(_ conn: NWConnection) {
-        readFrame(on: conn) { [weak self] payload in
-            guard let self else { return }
-            guard let payload else { conn.cancel(); return }
-            if payload == Self.audioChannelTag {
-                Log.info("secure audio channel adopted (dedicated socket)")
-                self.audioConnection?.cancel()
-                self.audioConnection = conn
-                self.audioBuffer.removeAll(keepingCapacity: true)
-                self.receiveAudio(on: conn)
-            } else {
-                // Video/control connection. Preserve the frame consumed to
-                // classify (normally the connect-time IDR + SPS/PPS): re-frame
-                // it back into the video buffer and drain, instead of dropping
-                // it. (Dropping it and sending a keyframe request was a bug —
-                // the Mac only honors {"type":"kf"}, not "keyframe", so the
-                // decoder could sit black until the next forced IDR.)
-                Log.info("secure video connection adopted")
-                self.transport = "WiFi"
-                self.connection?.cancel()
-                self.connection = conn
-                self.resetStreamState()
-                self.setConnected(true)
-                var header = UInt32(payload.count).bigEndian
-                var framed = Data(bytes: &header, count: 4)
-                framed.append(payload)
-                self.buffer.append(framed)
-                self.drainFrames()
-                self.receive(on: conn)
+    private func acceptAudio(_ conn: NWConnection, message: SessionChannelOpen,
+                             allowPending: Bool) {
+        guard let active = activeSession else {
+            guard allowPending else {
+                _ = sendSessionMessage(
+                    SessionBusy(v: SessionCrypto.version, reason: "audio_without_primary"),
+                    on: conn)
+                conn.cancel()
+                return
             }
+            queue.asyncAfter(deadline: .now() + SessionTiming.audioBeforePrimaryPending) { [weak self, weak conn] in
+                guard let self, let conn else { return }
+                self.acceptAudio(conn, message: message, allowPending: false)
+            }
+            return
+        }
+        guard message.v == SessionCrypto.version,
+              message.macInstallID == active.macID,
+              message.channel == "audio",
+              message.generation == active.generation,
+              let sessionID = Data(base64Encoded: message.sessionID),
+              sessionID == active.sessionID,
+              let nonce = Data(base64Encoded: message.nonce), nonce.count == 32,
+              let proof = Data(base64Encoded: message.proof) else {
+            Log.info("session v3 audio rejected: stale or mismatched channel")
+            _ = sendSessionMessage(
+                SessionBusy(v: SessionCrypto.version, reason: "stale_audio_channel"),
+                on: conn)
+            conn.cancel()
+            return
+        }
+        let expected = SessionCrypto.channelProof(
+            key: active.channelSecret, sessionID: active.sessionID,
+            generation: active.generation, channel: "audio", nonce: nonce)
+        guard SessionCrypto.constantTimeEqual(proof, expected),
+              ownership.consumeChannelNonce(
+                macInstallID: message.macInstallID,
+                generation: message.generation,
+                nonce: nonce) else {
+            Log.info("session v3 audio rejected: proof mismatch or replay")
+            _ = sendSessionMessage(
+                SessionBusy(v: SessionCrypto.version, reason: "audio_proof_or_replay"),
+                on: conn)
+            conn.cancel()
+            return
+        }
+        audioConnection?.cancel()
+        audioConnection = conn
+        audioBuffer.removeAll(keepingCapacity: true)
+        Log.info("session v3 audio channel accepted")
+        receiveAudio(on: conn)
+    }
+
+    @discardableResult
+    private func sendSessionMessage<T: Encodable>(_ message: T, on conn: NWConnection) -> Bool {
+        guard let frame = PairingWire.frame(message) else { return false }
+        conn.send(content: frame, completion: .contentProcessed { error in
+            if let error { Log.info("session send error: \(error)") }
+        })
+        return true
+    }
+
+    func disconnectActiveSession() {
+        queue.async { self.endActiveSession(reason: "user_disconnect") }
+    }
+
+    private func endActiveSession(reason: String) {
+        guard let active = activeSession else { return }
+        Log.info("session v3 ended: \(reason) (generation \(active.generation))")
+        ownership.release(macInstallID: active.macID, generation: active.generation)
+        activeSession = nil
+        if connection === active.primary { connection = nil }
+        active.primary.cancel()
+        audioConnection?.cancel()
+        audioConnection = nil
+        audioBuffer.removeAll(keepingCapacity: true)
+        setConnected(false)
+        DispatchQueue.main.async {
+            self.sessionPeer = ""
+            self.sessionTransport = ""
         }
     }
 
@@ -401,7 +586,7 @@ final class PhoneReceiver: ObservableObject {
         conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { header, _, _, err in
             guard let header, header.count == 4, err == nil else { return completion(nil) }
             let len = Int(UInt32(bigEndian: header.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
-            guard len > 0, len < 32 * 1024 * 1024 else { return completion(nil) }
+            guard len > 0, len < 1 << 20 else { return completion(nil) }
             conn.receive(minimumIncompleteLength: len, maximumLength: len) { payload, _, _, err in
                 guard let payload, payload.count == len, err == nil else { return completion(nil) }
                 completion(payload)
@@ -410,13 +595,7 @@ final class PhoneReceiver: ObservableObject {
     }
 
     // MARK: - Secure (WiFi) listener
-    //
-    // TLS-PSK with the keys established by pairing (see iOS/Pairing.swift).
-    // Ephemeral port: the Bonjour advertisement — which carries the actual
-    // port — lives HERE, so senders that resolve the service reach TLS.
-    // Legacy plaintext senders fail the handshake instead of streaming in
-    // the clear, and the plaintext port above no longer accepts non-loopback
-    // peers at all.
+
     private var secureListener: NWListener?
 
     private func startSecureListener() {
@@ -434,7 +613,7 @@ final class PhoneReceiver: ObservableObject {
         }
         secure.service = advertisedService
         secure.newConnectionHandler = { [weak self] conn in
-            self?.acceptSecure(conn)
+            self?.acceptCandidate(conn, transport: "WiFi", expected: .either)
         }
         secure.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -444,26 +623,20 @@ final class PhoneReceiver: ObservableObject {
             case .failed(let error):
                 Log.info("secure listener failed: \(error) — restarting in 1s")
                 self.queue.asyncAfter(deadline: .now() + 1) { self.startSecureListener() }
-            default: break
+            default:
+                break
             }
         }
         secure.start(queue: queue)
         secureListener = secure
     }
 
-    /// Pairings changed (Mac added or removed): rebuild the TLS listener so
-    /// its PSK set matches. Called by the Settings UI.
     func reloadSecureListener() {
         queue.async { self.startSecureListener() }
     }
 
     // MARK: - Dedicated audio listener (port+1)
-    //
-    // The Mac sends audio on its own TCP connection so PCM chunks never
-    // queue behind in-flight ProRes/HEVC frames (head-of-line blocking on
-    // the shared socket measured ~60ms of audio arrival latency under
-    // 240Mbps video load). Same [4B length][JSON] framing; payloads are
-    // routed through the same JSON handler.
+
     private var audioListener: NWListener?
     private var audioConnection: NWConnection?
     private var audioBuffer = Data()
@@ -477,28 +650,21 @@ final class PhoneReceiver: ObservableObject {
         params.allowLocalEndpointReuse = true
         params.serviceClass = .interactiveVoice
         guard let audioPort = NWEndpoint.Port(rawValue: port + 1),
-              let l = try? NWListener(using: params, on: audioPort) else {
+              let listener = try? NWListener(using: params, on: audioPort) else {
             Log.info("audio listener failed — audio will ride the video socket")
             return
         }
-        l.newConnectionHandler = { [weak self] conn in
+        listener.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
-            // Plaintext audio socket is USB-only (loopback). WiFi audio rides
-            // its own TLS connection on the secure listener instead.
             guard Self.isLoopback(conn.endpoint) else {
                 Log.info("non-loopback plaintext audio connection rejected — WiFi audio uses TLS")
                 conn.cancel()
                 return
             }
-            Log.info("audio connection accepted")
-            self.audioConnection?.cancel()
-            self.audioConnection = conn
-            self.audioBuffer.removeAll(keepingCapacity: true)
-            conn.start(queue: self.queue)
-            self.receiveAudio(on: conn)
+            self.acceptCandidate(conn, transport: "USB", expected: .audio)
         }
-        l.start(queue: queue)
-        audioListener = l
+        listener.start(queue: queue)
+        audioListener = listener
     }
 
     private func receiveAudio(on conn: NWConnection) {
@@ -610,12 +776,9 @@ final class PhoneReceiver: ObservableObject {
     private func scheduleWatchdog() {
         queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self else { return }
-            if let conn = self.connection, conn.state == .ready,
-               Date().timeIntervalSince(self.lastDataReceived) > 5 {
-                Log.info("watchdog: nothing from the Mac for >5s — dropping connection")
-                conn.cancel()
-                self.connection = nil
-                self.setConnected(false)
+            if self.connection?.state == .ready,
+               Date().timeIntervalSince(self.lastDataReceived) > SessionTiming.receiverOwnershipTimeout {
+                self.endActiveSession(reason: "watchdog_timeout")
             }
             self.scheduleWatchdog()
         }
@@ -645,9 +808,13 @@ final class PhoneReceiver: ObservableObject {
 
     // MARK: - Control messages (phone -> Mac)
 
-    private func sendHello(on conn: NWConnection) {
-        sendControl([
-            "type": "hello",
+    private func sendHello(on conn: NWConnection, challenge: SessionChallenge? = nil) {
+        guard let challenge = challenge ?? (activeSession?.primary === conn
+            ? activeSession?.challenge : nil) else { return }
+        var message: [String: Any] = [
+            "type": "server-hello",
+            "sessionVersion": SessionCrypto.version,
+            "deviceNonce": challenge.deviceNonce.base64EncodedString(),
             "pixelsWide": devicePixelsWide,
             "pixelsHigh": devicePixelsHigh,
             "scale": deviceScale,
@@ -655,8 +822,12 @@ final class PhoneReceiver: ObservableObject {
             "id": Self.installID,
             "maxFps": deviceMaxFps,
             "hdr": deviceSupportsHDR,
-        ], on: conn)
-        Log.info("hello sent (maxFps=\(deviceMaxFps) hdr=\(deviceSupportsHDR))")
+        ]
+        if let seed = challenge.usbSeed {
+            message["usbSessionSeed"] = seed.base64EncodedString()
+        }
+        sendControl(message, on: conn)
+        Log.info("session v3 server hello sent (\(challenge.transport))")
     }
 
     /// Touch events: x/y normalized [0,1] in video space, origin top-left.
@@ -702,11 +873,11 @@ final class PhoneReceiver: ObservableObject {
             }
             if let error {
                 Log.info("receive error: \(error)")
+                self.endActiveSession(reason: "receive_error")
                 return
             }
             if isComplete {
-                Log.info("peer closed connection")
-                self.setConnected(false)
+                self.endActiveSession(reason: "peer_closed")
                 return
             }
             self.receive(on: conn)

@@ -24,9 +24,20 @@ the upstream project unless they also affect PhotonPort-specific code.
 
 ## Current security boundaries
 
-- WiFi requires human-confirmed SAS pairing and then uses TLS-PSK.
-- USB/usbmux traffic is plaintext and is accepted only from loopback peers.
+- WiFi requires human-confirmed SAS pairing, then uses TLS-PSK plus receiver-first
+  protocol-v3 proofs that bind the primary and audio connections to one active
+  receiver session.
+- The receiver permits one active primary across all paired identities. Same- or
+  cross-identity replacement is rejected until explicit disconnect, connection
+  loss, or the 5-second liveness timeout.
+- USB/usbmux traffic is plaintext, accepted only from structural loopback peers,
+  and uses a fresh per-connection session seed for the v3 proof.
+  The seed binds one primary connection and its channels; it does not authenticate
+  a human or paired Mac identity against a locally compromised device. The UI
+  therefore labels such sessions generically as “USB Mac.”
 - The manual host/port endpoint is plaintext and is intended only for trusted
   loopback-style tunnels.
-- TLS-PSK currently has no forward secrecy or active-session binding. These are
-  documented residual risks, not claims of complete transport security.
+- TLS-PSK has no forward secrecy. A valid or stolen PSK may claim an idle receiver
+  first (causing a temporary lockout) or impersonate a receiver to the Mac; session
+  binding prevents silent takeover of an already active receiver but does not
+  provide key revocation or PFS. Prefer USB for sensitive use.
