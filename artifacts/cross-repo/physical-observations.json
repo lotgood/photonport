@@ -1,0 +1,51 @@
+{
+  "_meta": {
+    "logs": "Mac /tmp/photonport-mac.log, device Documents/photonport-phone.log",
+    "observer": "user (device owner), live USB session, 2026-07-10/11 KST",
+    "setup": "M4 Max host (macOS 27) + iPad Pro 11-inch M4 (iPadOS 27), USB cable, extend mode, CGDisplayStream-EDR backend, dev-signed builds: iOS f648668, Mac 3e21563"
+  },
+  "usb_120hz": {
+    "evidence": "User confirmed 120fps pass; Mac log 'fps=120' with virtual display created at 120Hz; device announced maxFps=120.",
+    "status": "pass"
+  },
+  "usb_audio": {
+    "evidence": "User confirmed audio has no issues; device log 'audio playback started (48000Hz stereo)' with Mac system audio tap live at 48000Hz.",
+    "status": "pass"
+  },
+  "usb_disconnect": {
+    "evidence": "User confirmed disconnect/reconnect pass; logs show repeated session teardown ('session v3 ended: peer_closed') and rebinding with fresh generations, stream resuming each time.",
+    "status": "pass"
+  },
+  "usb_display": {
+    "evidence": "User confirmed extended display streaming works end-to-end; Mac log: 'capture started: 2816x1940 display 17 mode extend backend=CGDisplayStream-EDR localCursor=true fps=120 hdr=true'; device log: 'status: Receiving 2816x1940 (ProRes)'.",
+    "status": "pass"
+  },
+  "usb_hdr": {
+    "evidence": "User confirmed HDR pass; Mac log negotiated 'hdr=true' with EDR capture backend and status 'Extending to iPad (2816x1940 @120Hz HDR)'.",
+    "status": "pass"
+  },
+  "usb_input": {
+    "evidence": "User confirmed touch input has no issues (touch phases injected on the Mac). Perceived mouse-cursor lag was diagnosed as implicit CALayer animation on the 120Hz local-cursor overlay, fixed in photonport-ios commit f648668, and user confirmed the delay is gone.",
+    "status": "pass"
+  },
+  "usb_replug": {
+    "evidence": "User confirmed physical cable unplug/replug recovers with no issues; Mac log shows 'usb connection failed ... Connection lost - retrying' followed by automatic redial, session v3 re-accept, and capture resume.",
+    "status": "pass"
+  },
+  "usb_rotation": {
+    "evidence": "Initially failed: the Mac ignored mid-session rotation hellos on the CGDisplayStream-EDR backend (guard checked only the SCK stream). Fixed in opendisplay commit 3e21563, then verified live both directions: Mac log 01:17:11 'reconfiguring for 1940x2816' -> 'virtual display created: 970x1408pt' -> 'capture started: 1940x2816', and 01:17:14 back to 2816x1940.",
+    "status": "pass"
+  },
+  "wifi_reconnect": {
+    "evidence": "Ten-plus observed WiFi reconnect cycles (quality switches, app restarts, user disconnects): each performed a fresh TLS-PSK handshake, session v3 rebind with new generation, and stream resume within ~0.3-3.5s, including 'static screen after reconnect - replaying last frame as keyframe'.",
+    "status": "pass"
+  },
+  "wifi_sas": {
+    "evidence": "SAS numeric-comparison pairing performed by the user on this physical pair: device log 03:55:14 'pairing: advertising _photonport._tcp (pair=1)', 03:55:17 'pairing: SAS ready for LTG Mac Studio', 03:55:20 'pairing: user confirmed SAS - storing key'. The resulting TLS-PSK credential authenticated every subsequent WiFi session.",
+    "status": "pass"
+  },
+  "wifi_tls": {
+    "evidence": "User streamed interactively over WiFi (changed quality settings, observed latency): Mac log repeatedly shows 'TCP transport secured with TLS-PSK (paired)' followed by session v3 accept and HEVC-Main10-HLG streaming (generations 4-10); device log 'status: Receiving 1688x1164'. WiFi rotation also verified (portrait/landscape virtual display rebuilds at 01:43-01:44).",
+    "status": "pass"
+  }
+}

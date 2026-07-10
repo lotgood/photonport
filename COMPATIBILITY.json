@@ -1,0 +1,7 @@
+{
+  "protocol": "3.0.0",
+  "pairing": "2.0.0",
+  "mac": {"minimum": "0.1.0"},
+  "ios": {"minimum": "1.0.0"},
+  "mismatch": "fail_closed_with_upgrade_message"
+}

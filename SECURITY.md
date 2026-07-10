@@ -21,7 +21,16 @@ experimental, unsupported project, so no remediation SLA is promised.
 Only the latest commit on `main` and the latest published PhotonPort release are
 considered for security fixes. Upstream OpenDisplay issues should be reported to
 the upstream project unless they also affect PhotonPort-specific code.
+The standalone iOS receiver and protocol repositories are separate MIT-licensed
+projects: [photonport-ios](https://github.com/lotgood/photonport-ios) and
+[photonport-protocol](https://github.com/lotgood/photonport-protocol). This
+repository remains GPL-3.0-only for the Mac sender and retained history; the
+split does not relicense historical iOS code here.
 
+The compatibility manifest is protocol 3.0.0, pairing 2.0.0, Mac minimum 0.1.0,
+and iOS minimum 1.0.0, with mismatches failing closed. The only supported
+pair is an M4 Max Mac on macOS 27 over USB with an iPad Pro 11-inch M4 on
+iPadOS 27. Other OS versions are unverified.
 ## Current security boundaries
 
 - WiFi requires human-confirmed SAS pairing, then uses TLS-PSK plus receiver-first

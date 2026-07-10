@@ -32,6 +32,7 @@
 import Foundation
 import Network
 import CryptoKit
+import LocalAuthentication
 
 // MARK: - Wire messages
 
@@ -238,7 +239,7 @@ enum PairingCrypto {
 
     /// Client-side TLS-PSK options. TLS 1.2 PSK ciphersuite — the
     /// combination Network.framework's PSK API actually negotiates
-    /// (verified against a live listener on macOS 26).
+    /// (verified against live listeners on macOS 26 and 27).
     static func clientTLSOptions(identity: String, psk: Data) -> NWProtocolTLS.Options {
         let opts = NWProtocolTLS.Options()
         addPSK(opts, identity: identity, psk: psk)
@@ -421,6 +422,14 @@ enum PairingStore {
     static func psk(for deviceID: String) -> Data? {
         var query = baseQuery(deviceID)
         query[kSecReturnData as String] = true
+        // Never let a keychain ACL prompt block this read: it runs during
+        // menu-bar popover rendering, and the prompt stealing key focus
+        // dismisses the popover. A foreign item (e.g. written by a build with
+        // a different code signature) reads as "not paired"; re-pairing
+        // overwrites it below.
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
             return nil
@@ -441,17 +450,19 @@ enum PairingStore {
         ]
         let updateStatus = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
         if updateStatus == errSecSuccess { return true }
-        if updateStatus == errSecItemNotFound {
-            var add = base
-            add.merge(attrs) { _, new in new }
-            let addStatus = SecItemAdd(add as CFDictionary, nil)
-            if addStatus != errSecSuccess {
-                Log.info("pairing: keychain add failed (\(addStatus))")
-            }
-            return addStatus == errSecSuccess
+        if updateStatus != errSecItemNotFound {
+            // A stale item this build can't update (foreign-signature ACL,
+            // corrupt entry) must not brick pairing forever: replace it.
+            Log.info("pairing: keychain update failed (\(updateStatus)) — replacing item")
+            SecItemDelete(base as CFDictionary)
         }
-        Log.info("pairing: keychain update failed (\(updateStatus))")
-        return false
+        var add = base
+        add.merge(attrs) { _, new in new }
+        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        if addStatus != errSecSuccess {
+            Log.info("pairing: keychain add failed (\(addStatus))")
+        }
+        return addStatus == errSecSuccess
     }
 
     static func removePSK(for deviceID: String) {

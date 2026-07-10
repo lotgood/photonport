@@ -1,0 +1,31 @@
+{
+  "blockers": [
+    {
+      "category": "g004",
+      "reason": "G004 automated receipt and both physical macOS/iPadOS 27 USB/Wi-Fi scenarios must pass"
+    },
+    {
+      "category": "export_review",
+      "reason": "independent export review must pass"
+    },
+    {
+      "category": "apple_distribution",
+      "reason": "Apple credentials, signing, TestFlight, and publication evidence must pass"
+    }
+  ],
+  "preservation": {
+    "currentTree": {
+      "source": true,
+      "target": true
+    },
+    "headHistory": {
+      "source": true,
+      "target": true
+    }
+  },
+  "retirementReady": false,
+  "schemaVersion": 1,
+  "standalone": {
+    "present": true
+  }
+}

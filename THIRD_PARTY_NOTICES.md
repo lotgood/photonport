@@ -1,10 +1,15 @@
 # Third-Party Notices
 
-PhotonPort is a GPL-3.0-only fork of
-[OpenDisplay](https://github.com/peetzweg/opendisplay). The repository's root
-`LICENSE` file applies to the combined work and preserves the upstream history.
+This repository remains a **GPL-3.0-only Mac sender and historical source
+repository**. The root `LICENSE` applies to this repository's combined work and
+preserves the OpenDisplay history. The standalone
+[photonport-ios](https://github.com/lotgood/photonport-ios) receiver and
+[photonport-protocol](https://github.com/lotgood/photonport-protocol) contract
+are separate MIT-licensed repositories; those links do not relicense or alter
+the old GPL-licensed iOS history retained here.
 
-The following separately licensed components or source material are included.
+The following separately licensed components or source material are included in
+this repository.
 
 ## CGVirtualDisplay private interface declarations
 

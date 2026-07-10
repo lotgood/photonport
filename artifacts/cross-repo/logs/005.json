@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "python3",
+    "scripts/run-g003-gates.py"
+  ],
+  "cwd": "/Users/ltg/workspace/photonport-ios",
+  "exitCode": 0,
+  "stderr": "",
+  "stdout": ""
+}

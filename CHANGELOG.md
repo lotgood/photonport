@@ -4,6 +4,38 @@ All notable PhotonPort changes will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Retargeted the sole supported physical pair to the currently verified
+  hardware: M4 Max on macOS 27 + iPad Pro 11-inch (M4) on iPadOS 27 over USB.
+- Standalone-repository split: the iOS receiver moved to the MIT
+  `photonport-ios` repository (canonical protocol contract lives in MIT
+  `photonport-protocol`); `scripts/release-ios.sh` is now a fail-closed
+  transition guard. This monorepo keeps the historical GPL iOS source and the
+  Mac sender.
+
+### Fixed
+
+- Rotation on the CGDisplayStream-EDR capture backend: mid-session hellos were
+  silently ignored because the reconfigure guard only checked the
+  ScreenCaptureKit stream. Verified live in both orientations over USB and
+  WiFi.
+- Pairing keychain access: PSK reads are non-interactive (a foreign-signature
+  item can no longer pop a keychain prompt that dismisses the menu-bar
+  popover), and an un-updatable stale item is replaced instead of bricking
+  re-pairing.
+- WiFi video connection now carries the `interactiveVideo` service class;
+  unmarked best-effort traffic previously ate radio contention as p95
+  frame-latency spikes (measured rtt spikes 87–182 ms settled to 8–15 ms).
+
+### Added
+
+- Cross-repository verification tooling and receipts: compatibility manifest
+  checks, automated matrix runner, supported-device evidence capture with
+  literal physical-scenario observations (11/14 recorded pass), iOS transition
+  readiness verifier, provenance audit/scan/baseline tools, and a Mac protocol
+  adversarial harness.
+
 ## [0.1.0] - 2026-07-10
 
 ### Added

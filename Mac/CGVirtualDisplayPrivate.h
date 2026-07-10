@@ -30,9 +30,9 @@ __attribute__((weak_import))
 @property(readonly, nonatomic) CGFloat refreshRate;
 @property(readonly, nonatomic) NSUInteger width;
 @property(readonly, nonatomic) NSUInteger height;
-// 0 = SDR (gamma). 1 = EDR compositing (observed on macOS 26; other values
-// showed no EDR effect). Initializer availability varies by macOS release —
-// ALWAYS check instancesRespondToSelector before using.
+// 0 = SDR (gamma). 1 = EDR compositing (observed on macOS 26, re-verified on
+// macOS 27; other values showed no EDR effect). Initializer availability
+// varies by macOS release — ALWAYS check instancesRespondToSelector first.
 @property(readonly, nonatomic) unsigned int transferFunction;
 
 - (instancetype)initWithWidth:(NSUInteger)arg1 height:(NSUInteger)arg2 refreshRate:(CGFloat)arg3;

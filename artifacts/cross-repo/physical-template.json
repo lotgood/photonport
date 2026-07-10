@@ -1,0 +1,24 @@
+{
+  "schema": "opendisplay.supported-device-evidence.v1",
+  "supported_matrix": {
+    "host": {"model": "Apple M4 Max", "os_major": "27"},
+    "device": {"model": "iPad Pro M4", "os_major": "27", "platform": "iOS"}
+  },
+  "availability": "human_only_required",
+  "scenarios": [
+    {"id": "usb_display", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "usb_hdr", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "usb_120hz", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "usb_audio", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "usb_rotation", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "usb_input", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "usb_disconnect", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "usb_replug", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "wifi_sas", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "wifi_tls", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "wifi_unpaired", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "wifi_wrong_mac", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "wifi_takeover", "status": "not_run", "evidence": "human_only_required"},
+    {"id": "wifi_reconnect", "status": "not_run", "evidence": "human_only_required"}
+  ]
+}

@@ -407,7 +407,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             : displaySerial ^ 0x8000_0000
         let requestedFps = cappedFps(info.refreshRate)
         // Resolve HDR before building the display: an EDR virtual display
-        // (macOS 26 transferFunction hook) makes WindowServer composite HDR
+        // (macOS 26/27 transferFunction hook) makes WindowServer composite HDR
         // content with real headroom, so the capture carries true HDR — not
         // just a 10-bit container around tone-mapped SDR.
         let wantHDR = resolveHDR(info)
@@ -1139,6 +1139,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         } else {
             params = NWParameters(tls: nil, tcp: options)
         }
+        // WMM QoS: the video frames flow Mac -> device on THIS connection, and
+        // packets are marked by their sender — without this the video stream
+        // rides best-effort AC_BE and eats WiFi contention as p95 frame-latency
+        // spikes (the audio dial and the device's listeners already mark
+        // theirs). No effect on USB/loopback.
+        params.serviceClass = .interactiveVideo
         let conn = NWConnection(to: endpoint, using: params)
         connection = conn
         conn.stateUpdateHandler = { [weak self] state in
@@ -1554,7 +1560,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 Task { @MainActor in self.onHello?(info) }
                 if boundStreamSession == nil {
                     beginSessionHandshake(info)
-                } else if mode == .extend, stream != nil, let previous,
+                } else if mode == .extend, stream != nil || cgStream != nil,
+                          let previous,
                           previous.pixelsWide != info.pixelsWide
                           || previous.pixelsHigh != info.pixelsHigh {
                     Task {

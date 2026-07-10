@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "kind": "distribution-readiness-receipt",
+  "result": "human_blocked",
+  "autonomousEvidence": {
+    "macDocsUpdatedForSplitLicenses": true,
+    "standaloneIosDistributionRecordsValidated": true,
+    "preservedMonorepoIosDebugBuild": true,
+    "preservedMonorepoIosReleaseBuild": true,
+    "rollbackReceipt": "artifacts/cross-repo/rollback-build.json",
+    "transitionReceipt": "artifacts/cross-repo/transition-readiness.json",
+    "retirementReady": false
+  },
+  "credentialPresence": {
+    "developmentTeamConfigured": true,
+    "appStoreConnectKeyIdConfigured": true,
+    "appStoreConnectIssuerIdConfigured": false,
+    "appStoreConnectKeyPathConfigured": true,
+    "validCodeSigningIdentityCount": 2
+  },
+  "repositoryPublication": {
+    "macRepositoryPublic": true,
+    "standaloneIosRepositoryPublic": false,
+    "protocolRepositoryPublic": false,
+    "checkedUrls": [
+      "https://github.com/lotgood/photonport",
+      "https://github.com/lotgood/photonport-ios",
+      "https://github.com/lotgood/photonport-protocol"
+    ]
+  },
+  "humanOnlyBlockers": [
+    "Exact macOS 26 and iOS 26 physical USB/WiFi scenario observations are missing; current M4 Max and iPad Pro M4 run OS27.",
+    "Independent Mac export classification is not recorded for an exact distribution commit.",
+    "Independent standalone iOS export classification is pending external review.",
+    "App Store Connect issuer ID and exact standalone iOS App Store record are not evidenced.",
+    "Standalone iOS and protocol repositories are not publicly available at their declared URLs.",
+    "Signed Mac archive/notarization/Gatekeeper/Sparkle/AC#9 receipts do not exist for an exact candidate.",
+    "Signed standalone iOS archive/IPA/TestFlight processing/real-device demo/publication receipts do not exist.",
+    "The monorepo iOS target cannot be retired until every blocker above is resolved."
+  ],
+  "resolvedSinceInitialReceipt": [
+    "G006 independent provenance dispositions are complete: see photonport-ios artifacts/provenance/g006-closure.json (snapshot 8c508a3404c0e538c0c3340505e527ed86360fedd9ad3b0f6ba32f196665f735, 1,267/1,267 candidates independently approved, audit and exact scans zero)."
+  ]
+}

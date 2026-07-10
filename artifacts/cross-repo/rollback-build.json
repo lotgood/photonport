@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "rollback-build-receipt",
+  "result": "passed",
+  "target": "preserved monorepo GPL iOS target",
+  "commands": [
+    {
+      "configuration": "Debug",
+      "argv": ["xcodebuild", "-quiet", "-project", "OpenSidecar.xcodeproj", "-scheme", "OpenSidecariOS", "-configuration", "Debug", "-destination", "generic/platform=iOS", "-derivedDataPath", "/tmp/photonport-rollback-ios-debug", "CODE_SIGNING_ALLOWED=NO", "build"],
+      "exitCode": 0,
+      "productInfoPlistSha256": "d24585791979a204c405af857455b035e4d9820dd8ef492953ac689911d5d990"
+    },
+    {
+      "configuration": "Release",
+      "argv": ["xcodebuild", "-quiet", "-project", "OpenSidecar.xcodeproj", "-scheme", "OpenSidecariOS", "-configuration", "Release", "-destination", "generic/platform=iOS", "-derivedDataPath", "/tmp/photonport-rollback-ios-release", "CODE_SIGNING_ALLOWED=NO", "build"],
+      "exitCode": 0,
+      "productInfoPlistSha256": "d24585791979a204c405af857455b035e4d9820dd8ef492953ac689911d5d990"
+    }
+  ],
+  "retirementAuthorized": false,
+  "evidence": "The preserved GPL iOS target still builds unsigned in Debug and Release. This proves rollback build viability only; it does not authorize retirement, distribution, or relicensing."
+}
