@@ -25,6 +25,8 @@ import VideoToolbox
 import Network
 import CoreMedia
 import AppKit
+import CryptoKit
+
 
 enum CaptureMode: String {
     case mirror   // main display (Milestone 1)
@@ -84,6 +86,9 @@ struct PhoneInfo: Decodable {
     let maxFps: Int?      // panel refresh cap (older receivers omit it → 60)
     let hdr: Bool?        // panel has EDR headroom + receiver can decode
                           // 10-bit HEVC (older receivers omit it → false)
+    let sessionVersion: Int?
+    let deviceNonce: String?
+    let usbSessionSeed: String?
 
     var kind: String { device ?? "device" }
     /// Refresh rate to drive the pipeline at, clamped to what the wire and
@@ -198,7 +203,20 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private var dropsThisWindow = 0
     private var needsKeyframe = true
     private var connectionReady = false
-    private var stopped = false
+    private let stoppedLock = NSLock()
+    private var stoppedValue = false
+    private var stopped: Bool {
+        get {
+            stoppedLock.lock()
+            defer { stoppedLock.unlock() }
+            return stoppedValue
+        }
+        set {
+            stoppedLock.lock()
+            stoppedValue = newValue
+            stoppedLock.unlock()
+        }
+    }
     // The liveness monitors are self-rescheduling chains guarded only by
     // `stopped`; arm them at most once per instance so a double start() can't
     // stack parallel loops (the failure mode behind #75). Mirrors the
@@ -210,15 +228,32 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     // stays gone past the grace ends the session via onDisconnected.
     private var everConnected = false
     private var disconnectedSince: Date?
-    private let disconnectGraceSeconds: TimeInterval = 10
+    private let disconnectGraceSeconds = SessionTiming.macDisconnectGrace
 
     private var lastHello: PhoneInfo?
     private var helloContinuation: CheckedContinuation<PhoneInfo, Error>?
+    private struct PendingStreamSession {
+        let info: PhoneInfo
+        let macNonce: Data
+        let deviceNonce: Data
+        let primaryKey: SymmetricKey
+    }
+
+    private struct BoundStreamSession {
+        let info: PhoneInfo
+        let sessionID: Data
+        let generation: UInt64
+        let channelSecret: SymmetricKey
+    }
+
+    private var pendingStreamSession: PendingStreamSession?
+    private var boundStreamSession: BoundStreamSession?
     private var inputInjector: InputInjector?
 
     // Liveness: both sides ping every 2s; if nothing arrives for 5s the link
     // is half-open (e.g. usbmuxd accepted but the device is gone) — reconnect.
     private var lastReceived = Date()
+    private var handshakeStartedAt: Date?
     private var dropsTotal = 0
 
     // Local cursor echo: a cursor baked into the video carries the full
@@ -805,6 +840,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     func stop() {
         stopped = true
+        queue.async { [weak self] in
+            self?.stopOnQueue()
+        }
+    }
+
+    private func stopOnQueue() {
         cursorTimer?.cancel()
         cursorTimer = nil
         cursorImageTimer?.cancel()
@@ -813,7 +854,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         stream = nil
         audioStream?.stopCapture { _ in }
         audioStream = nil
-        audioTap?.stop()   // un-mutes the Mac
+        audioTap?.stop()
         audioTap = nil
         cgStream?.stop()
         cgStream = nil
@@ -822,14 +863,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         audioConnection?.cancel()
         audioConnection = nil
         audioConnectionReady = false
+        audioHandshakeInFlight = false
+        pendingStreamSession = nil
+        boundStreamSession = nil
+        handshakeStartedAt = nil
         if let encoder { VTCompressionSessionInvalidate(encoder) }
         encoder = nil
-        virtualDisplay = nil   // releasing it removes the display
-        queue.async { [weak self] in
-            // Unblock a start() that is still waiting for the hello.
-            self?.helloContinuation?.resume(throwing: CancellationError())
-            self?.helloContinuation = nil
-        }
+        virtualDisplay = nil
+        helloContinuation?.resume(throwing: CancellationError())
+        helloContinuation = nil
     }
 
     /// Drop the current connection and dial again — fresh TCP through the
@@ -889,30 +931,40 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         }
     }
 
-    /// Bookkeeping shared by both transports once a connection is live.
+    /// Start reading the receiver-first hello. The stream is not usable until
+    /// the v3 session-accept proof succeeds.
     private func becomeReady(_ conn: NWConnection) {
-        Log.info("connection ready to \(endpointName)")
+        Log.info("transport ready to \(endpointName); waiting for session v3 hello")
         if case .tcp = transport {
-            if wifiPSK != nil {
-                Log.info("TCP transport secured with TLS-PSK (paired)")
-            } else {
-                Log.info("WARNING: TCP transport is UNENCRYPTED and unauthenticated — only safe for loopback tunnels. WiFi requires pairing.")
-            }
+            Log.info(wifiPSK == nil
+                ? "TCP transport uses a loopback session seed"
+                : "TCP transport secured with TLS-PSK (paired)")
         }
+        connectionReady = false
+        pendingStreamSession = nil
+        boundStreamSession = nil
+        lastHello = nil
+        lastReceived = Date()
+        handshakeStartedAt = Date()
+        receiveControl(on: conn)
+        Task { await self.status("Authenticating \(self.endpointName)…") }
+    }
+
+    private func activateBoundSession(_ session: BoundStreamSession) {
+        boundStreamSession = session
         connectionReady = true
+        handshakeStartedAt = nil
         everConnected = true
         disconnectedSince = nil
-        needsKeyframe = true   // new peer needs SPS/PPS + IDR
-        // A reconnect can recreate the phone's video view with no cursor
-        // sprite; the sprite is otherwise only sent on shape change, so the
-        // cursor would stay invisible until the user hovers something that
-        // changes it. Reset the dedup state to re-send sprite + position to
-        // the fresh peer — the cursor analogue of forcing a keyframe.
+        needsKeyframe = true
         lastCursorPNGHash = 0
         lastCursorSent = (-1, -1, false)
-        lastReceived = Date()  // fresh grace period for the watchdog
-        receiveControl(on: conn)
+        lastReceived = Date()
         dialAudioConnection()
+        if let continuation = helloContinuation {
+            helloContinuation = nil
+            continuation.resume(returning: session.info)
+        }
         Task { await self.status("Connected to \(self.endpointName)") }
     }
 
@@ -927,13 +979,16 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private var audioConnection: NWConnection?
     private var audioConnectionReady = false
     private var audioDialInFlight = false
+    private var audioHandshakeInFlight = false
+
 
     /// Called from becomeReady AND retried by the ping loop — a reconnect
     /// racing the first dial cancels it via the generation guard, and
     /// without a retry the session silently falls back to the shared
     /// socket forever (measured as aud50 jumping 30→65ms).
     private func dialAudioConnection() {
-        guard !audioDialInFlight else { return }
+        guard !audioDialInFlight, connectionReady, boundStreamSession != nil else { return }
+
         audioConnection?.cancel()
         audioConnection = nil
         audioConnectionReady = false
@@ -996,36 +1051,80 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     private func adoptAudioConnection(_ conn: NWConnection, tag: Bool) {
         audioConnection = conn
+        audioConnectionReady = false
+        audioHandshakeInFlight = false
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            // Ignore late transitions from an audio socket a reconnect has
-            // already replaced — a stale .failed/.cancelled would otherwise
-            // clear audioConnectionReady for the live audio connection.
             guard conn === self.audioConnection else {
                 if case .ready = state { conn.cancel() }
                 return
             }
             switch state {
             case .ready:
-                // WiFi audio shares the secure listener with video, so it must
-                // announce itself as the audio channel before any PCM — the
-                // receiver routes tagged connections to the audio path instead
-                // of adopting them as the (replacement) video connection.
-                if tag {
-                    let payload = Data("{\"type\":\"audiochannel\"}".utf8)
-                    var header = UInt32(payload.count).bigEndian
-                    var frame = Data(bytes: &header, count: 4)
-                    frame.append(payload)
-                    conn.send(content: frame, completion: .contentProcessed { _ in })
-                }
-                self.audioConnectionReady = true
-                Log.info("audio connection ready (dedicated socket\(tag ? ", tagged" : ""))")
+                guard !self.audioHandshakeInFlight else { return }
+                self.audioHandshakeInFlight = true
+                self.receiveAudioServerHello(on: conn, tagged: tag)
             case .failed, .cancelled:
                 self.audioConnectionReady = false
-            default: break
+                self.audioHandshakeInFlight = false
+            default:
+                break
             }
         }
-        if conn.state == .ready { audioConnectionReady = true }
+        if conn.state == .ready, !audioHandshakeInFlight {
+            audioHandshakeInFlight = true
+            receiveAudioServerHello(on: conn, tagged: tag)
+        }
+    }
+
+    private func receiveAudioServerHello(on conn: NWConnection, tagged: Bool) {
+        conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] header, _, _, error in
+            guard let self, conn === self.audioConnection,
+                  error == nil, let header, header.count == 4 else {
+                conn.cancel(); return
+            }
+            let length = Int(UInt32(bigEndian: header.withUnsafeBytes {
+                $0.loadUnaligned(as: UInt32.self)
+            }))
+            guard length > 0, length < 1 << 20 else { conn.cancel(); return }
+            conn.receive(minimumIncompleteLength: length, maximumLength: length) {
+                [weak self] payload, _, _, error in
+                guard let self, conn === self.audioConnection,
+                      error == nil, let payload, payload.count == length,
+                      let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+                      object["type"] as? String == "server-hello",
+                      let info = try? JSONDecoder().decode(PhoneInfo.self, from: payload),
+                      info.sessionVersion == SessionCrypto.version,
+                      let session = self.boundStreamSession,
+                      info.id == session.info.id,
+                      let nonce = SessionCrypto.randomBytes(count: 32) else {
+                    conn.cancel(); return
+                }
+                let proof = SessionCrypto.channelProof(
+                    key: session.channelSecret, sessionID: session.sessionID,
+                    generation: session.generation, channel: "audio", nonce: nonce)
+                let open = SessionChannelOpen(
+                    v: SessionCrypto.version,
+                    macInstallID: PairingStore.macInstallID,
+                    sessionID: session.sessionID.base64EncodedString(),
+                    generation: session.generation,
+                    channel: "audio",
+                    nonce: nonce.base64EncodedString(),
+                    proof: proof.base64EncodedString())
+                guard let frame = PairingWire.frame(open) else { conn.cancel(); return }
+                conn.send(content: frame, completion: .contentProcessed { [weak self] error in
+                    guard let self, conn === self.audioConnection else { return }
+                    self.audioHandshakeInFlight = false
+                    if let error {
+                        Log.info("audio session open failed: \(error)")
+                        conn.cancel()
+                    } else {
+                        self.audioConnectionReady = true
+                        Log.info("session v3 audio ready (dedicated socket\(tagged ? ", TLS" : ", USB"))")
+                    }
+                })
+            }
+        }
     }
 
     private func connectTCP(_ endpoint: NWEndpoint) {
@@ -1133,7 +1232,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         }
     }
 
-    private func scheduleReconnect() {
+    private func scheduleReconnect(after delay: TimeInterval = 1,
+                                   status reconnectStatus: String? = nil) {
         guard !stopped else { return }
         if everConnected {
             if let since = disconnectedSince {
@@ -1148,15 +1248,23 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             }
         }
         connectionReady = false
+        pendingStreamSession = nil
+        boundStreamSession = nil
+        lastHello = nil
+        handshakeStartedAt = nil
         dialGeneration += 1   // a USB dial still in flight must not adopt
         connection?.cancel()
         connection = nil
         audioConnection?.cancel()
         audioConnection = nil
         audioConnectionReady = false
+        audioHandshakeInFlight = false
         pendingSends = 0
         pendingEncodes = 0
-        queue.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        if let reconnectStatus {
+            Task { await status(reconnectStatus) }
+        }
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.connect()
         }
     }
@@ -1192,10 +1300,17 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func scheduleWatchdog() {
         queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self, !self.stopped else { return }
-            if self.connectionReady, Date().timeIntervalSince(self.lastReceived) > 5 {
+            let idle = Date().timeIntervalSince(self.lastReceived)
+            if self.connection != nil, !self.connectionReady,
+               let started = self.handshakeStartedAt,
+               Date().timeIntervalSince(started) > SessionTiming.handshakeTimeout {
+                Log.info("session v3 authentication timed out — reconnecting")
+                self.scheduleReconnect(
+                    status: "Session authentication timed out — retrying…")
+            } else if self.connectionReady,
+                      idle > SessionTiming.receiverOwnershipTimeout {
                 Log.info("watchdog: nothing from the phone for >5s — reconnecting")
-                Task { await self.status("Connection stale — reconnecting…") }
-                self.scheduleReconnect()
+                self.scheduleReconnect(status: "Connection stale — reconnecting…")
             }
             // A reconnect on a static screen produces no capture frames, so
             // the receiver would stay black — replay the last frame as IDR.
@@ -1298,16 +1413,111 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     private func receiveControl(on conn: NWConnection) {
         conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] data, _, _, error in
-            guard let self, error == nil, let data, data.count == 4 else { return }
+            guard let self, conn === self.connection,
+                  error == nil, let data, data.count == 4 else { return }
             let len = Int(UInt32(bigEndian: data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
             guard len > 0, len < 1 << 20 else { return }
             conn.receive(minimumIncompleteLength: len, maximumLength: len) { [weak self] payload, _, _, error in
-                guard let self, error == nil, let payload, payload.count == len else { return }
+                guard let self, conn === self.connection,
+                      error == nil, let payload, payload.count == len else { return }
                 self.handleControl(payload)
+                guard conn === self.connection else { return }
                 self.receiveControl(on: conn)
             }
         }
     }
+
+    private func beginSessionHandshake(_ info: PhoneInfo) {
+        guard pendingStreamSession == nil, boundStreamSession == nil,
+              info.sessionVersion == SessionCrypto.version,
+              let deviceID = info.id,
+              let deviceNonceString = info.deviceNonce,
+              let deviceNonce = Data(base64Encoded: deviceNonceString), deviceNonce.count == 32,
+              let macNonce = SessionCrypto.randomBytes(count: 32) else {
+            Log.info("session v3 server hello invalid")
+            scheduleReconnect()
+            return
+        }
+        let ikm: Data?
+        if let wifiPSK {
+            ikm = wifiPSK.key
+        } else if let encodedSeed = info.usbSessionSeed,
+                  let seed = Data(base64Encoded: encodedSeed) {
+            ikm = seed
+        } else {
+            ikm = nil
+        }
+        guard let ikm else {
+            Log.info("session v3 has no PSK or loopback seed")
+            scheduleReconnect()
+            return
+        }
+        let macID = PairingStore.macInstallID
+        let primaryKey = SessionCrypto.primaryKey(
+            ikm: ikm, macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce)
+        let proof = SessionCrypto.primaryProof(
+            key: primaryKey, macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce)
+        pendingStreamSession = PendingStreamSession(
+            info: info, macNonce: macNonce, deviceNonce: deviceNonce,
+            primaryKey: primaryKey)
+        let message = SessionOpen(
+            v: SessionCrypto.version,
+            macInstallID: macID,
+            deviceInstallID: deviceID,
+            macNonce: macNonce.base64EncodedString(),
+            primaryProof: proof.base64EncodedString())
+        guard sendSessionMessage(message, on: connection) else { scheduleReconnect(); return }
+        Log.info("session v3 open sent")
+    }
+
+    private func handleSessionAccept(_ payload: Data) {
+        if pendingStreamSession == nil, boundStreamSession != nil {
+            Log.info("duplicate session v3 accept ignored")
+            return
+        }
+        guard let pending = pendingStreamSession,
+              let message = try? JSONDecoder().decode(SessionAccept.self, from: payload),
+              message.v == SessionCrypto.version,
+              let sessionID = Data(base64Encoded: message.sessionID), sessionID.count == 16,
+              let proof = Data(base64Encoded: message.acceptProof),
+              let deviceID = pending.info.id else {
+            Log.info("session v3 accept invalid")
+            scheduleReconnect()
+            return
+        }
+        let secret = SessionCrypto.channelSecret(
+            primaryKey: pending.primaryKey, sessionID: sessionID,
+            generation: message.generation)
+        let expected = SessionCrypto.acceptProof(
+            key: secret, sessionID: sessionID, generation: message.generation,
+            macInstallID: PairingStore.macInstallID,
+            deviceInstallID: deviceID, macNonce: pending.macNonce,
+            deviceNonce: pending.deviceNonce)
+        guard SessionCrypto.constantTimeEqual(proof, expected) else {
+            Log.info("session v3 accept proof mismatch")
+            scheduleReconnect()
+            return
+        }
+        pendingStreamSession = nil
+        let session = BoundStreamSession(
+            info: pending.info, sessionID: sessionID,
+            generation: message.generation, channelSecret: secret)
+        activateBoundSession(session)
+        Log.info("session v3 accepted (generation \(message.generation))")
+    }
+
+    @discardableResult
+    private func sendSessionMessage<T: Encodable>(_ message: T,
+                                                   on conn: NWConnection?) -> Bool {
+        guard let conn, let frame = PairingWire.frame(message) else { return false }
+        conn.send(content: frame, completion: .contentProcessed { error in
+            if let error { Log.info("session send error: \(error)") }
+        })
+        return true
+    }
+
 
     private func handleControl(_ payload: Data) {
         lastReceived = Date()
@@ -1317,6 +1527,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             return
         }
         switch type {
+        case "hello":
+            Log.info("legacy receiver hello rejected — protocol v3 required")
+            scheduleReconnect(
+                after: SessionTiming.busyRetryDelay,
+                status: "Incompatible receiver — update PhotonPort on both devices")
         case "ping":
             // Echo with our clock so the phone can estimate the offset
             // (NTP-style) and compute true end-to-end frame latency.
@@ -1332,19 +1547,16 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 Log.info("PHONE-STATS \(line) | mac drops=\(dropsThisWindow) pending=\(pendingSends)")
                 dropsThisWindow = 0
             }
-        case "hello":
+        case "server-hello":
             if let info = try? JSONDecoder().decode(PhoneInfo.self, from: payload) {
                 let previous = lastHello
                 lastHello = info
                 Task { @MainActor in self.onHello?(info) }
-                if let continuation = helloContinuation {
-                    helloContinuation = nil
-                    continuation.resume(returning: info)
+                if boundStreamSession == nil {
+                    beginSessionHandshake(info)
                 } else if mode == .extend, stream != nil, let previous,
                           previous.pixelsWide != info.pixelsWide
                           || previous.pixelsHigh != info.pixelsHigh {
-                    // Phone rotated — rebuild after a short debounce so a
-                    // flurry of orientation flips settles into one rebuild.
                     Task {
                         try? await Task.sleep(for: .milliseconds(300))
                         guard let current = self.lastHello,
@@ -1354,6 +1566,21 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     }
                 }
             }
+        case "session-accept":
+            handleSessionAccept(payload)
+        case "session-busy":
+            let reason = (try? JSONDecoder().decode(SessionBusy.self, from: payload))?.reason
+                ?? "busy"
+            guard boundStreamSession == nil else {
+                Log.info("post-bind session busy ignored: \(reason)")
+                break
+            }
+            Log.info("session v3 rejected by receiver: \(reason)")
+            let message = reason == "session_busy"
+                ? "Receiver is in use by another Mac — disconnect it on the device"
+                : "Session rejected (\(reason)) — retrying…"
+            scheduleReconnect(after: SessionTiming.busyRetryDelay, status: message)
+
         case "touch":
             if let phase = obj["phase"] as? String,
                let x = obj["x"] as? Double,
@@ -1382,15 +1609,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     }
 
     private func waitForHello() async throws -> PhoneInfo {
-        if let lastHello { return lastHello }
+        if let session = boundStreamSession { return session.info }
         return try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
                 guard let self else {
                     continuation.resume(throwing: CancellationError())
                     return
                 }
-                if let hello = self.lastHello {
-                    continuation.resume(returning: hello)
+                if let session = self.boundStreamSession {
+                    continuation.resume(returning: session.info)
                 } else {
                     self.helloContinuation = continuation
                 }

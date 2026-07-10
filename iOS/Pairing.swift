@@ -31,6 +31,101 @@ struct PairCommit: Codable {
     let commit: String
 }
 
+// MARK: - Stream session v3 messages
+
+struct SessionOpen: Codable {
+    var type = "session-open"
+    let v: Int
+    let macInstallID: String
+    let deviceInstallID: String
+    let macNonce: String
+    let primaryProof: String
+}
+
+struct SessionAccept: Codable {
+    var type = "session-accept"
+    let v: Int
+    let sessionID: String
+    let generation: UInt64
+    let acceptProof: String
+}
+
+struct SessionBusy: Codable {
+    var type = "session-busy"
+    let v: Int
+    let reason: String
+}
+
+struct SessionChannelOpen: Codable {
+    var type = "channel-open"
+    let v: Int
+    let macInstallID: String
+    let sessionID: String
+    let generation: UInt64
+    let channel: String
+    let nonce: String
+    let proof: String
+}
+
+/// Receiver-wide ownership and replay state for one primary stream session.
+/// Keeping this reducer independent from Network.framework makes the busy,
+/// stale-generation, and channel-replay rules deterministic to test.
+struct SessionOwnershipState {
+    struct Lease: Equatable {
+        let macInstallID: String
+        let generation: UInt64
+    }
+
+    enum Claim: Equatable {
+        case accepted(Lease)
+        case busy(Lease)
+    }
+
+    private(set) var generation: UInt64 = 0
+    private(set) var active: Lease?
+    private var channelNonces: Set<String> = []
+
+    mutating func claim(macInstallID: String) -> Claim {
+        if let active { return .busy(active) }
+        generation &+= 1
+        if generation == 0 { generation = 1 }
+        let lease = Lease(macInstallID: macInstallID, generation: generation)
+        active = lease
+        channelNonces.removeAll(keepingCapacity: true)
+        return .accepted(lease)
+    }
+
+    func authorizes(macInstallID: String, generation: UInt64) -> Bool {
+        active == Lease(macInstallID: macInstallID, generation: generation)
+    }
+
+    mutating func consumeChannelNonce(macInstallID: String, generation: UInt64,
+                                      nonce: Data) -> Bool {
+        guard authorizes(macInstallID: macInstallID, generation: generation) else {
+            return false
+        }
+        return channelNonces.insert(nonce.base64EncodedString()).inserted
+    }
+
+    @discardableResult
+    mutating func release(macInstallID: String, generation: UInt64) -> Bool {
+        guard authorizes(macInstallID: macInstallID, generation: generation) else {
+            return false
+        }
+        active = nil
+        channelNonces.removeAll(keepingCapacity: true)
+        return true
+    }
+}
+
+enum SessionTiming {
+    static let receiverOwnershipTimeout: TimeInterval = 5
+    static let macDisconnectGrace: TimeInterval = 10
+    static let audioBeforePrimaryPending: TimeInterval = 2
+    static let handshakeTimeout: TimeInterval = 5
+    static let busyRetryDelay: TimeInterval = 5
+}
+
 // MARK: - Crypto core (identical on both platforms)
 
 enum PairingCrypto {
@@ -135,6 +230,107 @@ enum PairingCrypto {
     }
 }
 
+// MARK: - Stream session crypto (identical on both platforms)
+
+enum SessionCrypto {
+    static let version = 3
+    private static let primaryInfo = Data("PhotonPort-primary-v3".utf8)
+    private static let channelInfo = Data("PhotonPort-channels-v3".utf8)
+
+    static func randomBytes(count: Int) -> Data? {
+        guard count > 0 else { return Data() }
+        var data = Data(count: count)
+        let status = data.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!)
+        }
+        return status == errSecSuccess ? data : nil
+    }
+
+    static func lengthPrefixed(_ fields: [Data]) -> Data {
+        var result = Data()
+        for field in fields {
+            var count = UInt32(field.count).bigEndian
+            result.append(Data(bytes: &count, count: MemoryLayout<UInt32>.size))
+            result.append(field)
+        }
+        return result
+    }
+
+    static func primaryKey(ikm: Data, macInstallID: String, deviceInstallID: String,
+                           macNonce: Data, deviceNonce: Data) -> SymmetricKey {
+        let saltInput = lengthPrefixed([
+            uint64Data(UInt64(version)), Data(macInstallID.utf8),
+            Data(deviceInstallID.utf8), macNonce, deviceNonce,
+        ])
+        return HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: ikm),
+            salt: Data(SHA256.hash(data: saltInput)),
+            info: primaryInfo,
+            outputByteCount: 32)
+    }
+
+    static func channelSecret(primaryKey: SymmetricKey, sessionID: Data,
+                              generation: UInt64) -> SymmetricKey {
+        let saltInput = lengthPrefixed([sessionID, uint64Data(generation)])
+        return HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: primaryKey,
+            salt: Data(SHA256.hash(data: saltInput)),
+            info: channelInfo,
+            outputByteCount: 32)
+    }
+
+    static func primaryProof(key: SymmetricKey, macInstallID: String,
+                             deviceInstallID: String, macNonce: Data,
+                             deviceNonce: Data) -> Data {
+        authenticate(key: key, fields: [
+            Data("session-open".utf8), uint64Data(UInt64(version)),
+            Data(macInstallID.utf8), Data(deviceInstallID.utf8),
+            macNonce, deviceNonce,
+        ])
+    }
+
+    static func acceptProof(key: SymmetricKey, sessionID: Data, generation: UInt64,
+                            macInstallID: String, deviceInstallID: String,
+                            macNonce: Data, deviceNonce: Data) -> Data {
+        authenticate(key: key, fields: [
+            Data("session-accept".utf8), sessionID, uint64Data(generation),
+            Data(macInstallID.utf8), Data(deviceInstallID.utf8),
+            macNonce, deviceNonce,
+        ])
+    }
+
+    static func channelProof(key: SymmetricKey, sessionID: Data, generation: UInt64,
+                             channel: String, nonce: Data) -> Data {
+        authenticate(key: key, fields: [
+            Data("channel-open".utf8), uint64Data(UInt64(version)), sessionID,
+            uint64Data(generation), Data(channel.utf8), nonce,
+        ])
+    }
+
+    static func constantTimeEqual(_ lhs: Data, _ rhs: Data) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var difference: UInt8 = 0
+        for index in lhs.indices {
+            difference |= lhs[index] ^ rhs[index]
+        }
+        return difference == 0
+    }
+
+    static func data(_ key: SymmetricKey) -> Data {
+        key.withUnsafeBytes { Data($0) }
+    }
+
+    private static func authenticate(key: SymmetricKey, fields: [Data]) -> Data {
+        Data(HMAC<SHA256>.authenticationCode(
+            for: lengthPrefixed(fields), using: key))
+    }
+
+    private static func uint64Data(_ value: UInt64) -> Data {
+        var bigEndian = value.bigEndian
+        return Data(bytes: &bigEndian, count: MemoryLayout<UInt64>.size)
+    }
+}
+
 // MARK: - Framing
 
 enum PairingWire {
@@ -197,7 +393,7 @@ enum PairingStore {
         UserDefaults.standard.set(index, forKey: indexKey)
     }
 
-    private static func psk(for macID: String) -> Data? {
+    static func psk(for macID: String) -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,

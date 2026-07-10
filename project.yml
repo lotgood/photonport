@@ -100,8 +100,9 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         # This asserts an export-compliance exemption, not an absence of
-        # cryptography. PhotonPort uses CryptoKit + TLS-PSK; complete Apple's
-        # encryption questionnaire before distribution (docs/RELEASE.md).
+        # cryptography. PhotonPort uses CryptoKit + TLS-PSK; complete and record
+        # the Mac+iOS export-classification review before either distribution
+        # (docs/RELEASE.md).
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         UIRequiresFullScreen: true

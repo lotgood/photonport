@@ -470,6 +470,13 @@ struct SettingsView: View {
                     LabeledContent("Listening", value: "Port 9000")
                     LabeledContent("Connection",
                                    value: receiver.connected ? "Connected" : "Waiting for Mac")
+                    if receiver.connected {
+                        LabeledContent("Mac", value: receiver.sessionPeer)
+                        LabeledContent("Transport", value: receiver.sessionTransport)
+                        Button("Disconnect", role: .destructive) {
+                            receiver.disconnectActiveSession()
+                        }
+                    }
                     if receiver.videoSize != .zero {
                         LabeledContent("Stream",
                                        value: "\(Int(receiver.videoSize.width))×\(Int(receiver.videoSize.height)) @ \(receiver.fps) fps")
@@ -510,7 +517,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Paired Macs")
                 } footer: {
-                    Text("WiFi streaming is encrypted and only works with paired Macs. USB needs no pairing. Swipe a Mac to remove it.")
+                    Text("WiFi streaming is encrypted and only works with paired Macs. USB needs no pairing. Disconnect the active session before switching Macs; remove and pair again if a WiFi identity is no longer trusted. Swipe a Mac to remove it.")
                 }
 
                 Section {
