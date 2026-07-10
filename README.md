@@ -2,7 +2,7 @@
 
 > ⚠️ **EXPERIMENTAL — UNSUPPORTED — USE AT YOUR OWN RISK.**
 > This is a personal research fork, tested on exactly **one** hardware pair:
-> an Apple-Silicon Mac (M4 Max, macOS 26) and an iPad Pro 11" (M4, iOS 26)
+> an Apple-Silicon Mac (M4 Max, macOS 27) and an iPad Pro 11" (M4, iPadOS 27)
 > over USB. Every number below was measured on that setup and **nowhere
 > else**. Fallback paths for other devices/OS versions exist in code but are
 > unverified. No binaries, no support guarantee, no roadmap promises.
@@ -17,6 +17,32 @@ plumbing (usbmuxd dial, Bonjour discovery, touch injection, receiver
 scaffolding) is upstream's work; this fork adds the pipeline described below.
 General-purpose bug fixes are proposed upstream where they fit; the
 experimental display/audio work stays here.
+
+## Repository split and compatibility
+
+This repository is the **GPL-3.0-only Mac sender and its historical
+OpenDisplay/PhotonPort source history**. The standalone receiver is maintained
+at [lotgood/photonport-ios](https://github.com/lotgood/photonport-ios) under the
+MIT license, and the standalone wire contract is maintained at
+[lotgood/photonport-protocol](https://github.com/lotgood/photonport-protocol)
+under the MIT license. Those links describe separate repositories and do not
+relicense, erase, or retroactively change the license of the iOS code or
+history in this repository.
+
+The compatibility manifest is pinned to protocol **3.0.0** and pairing
+**2.0.0**; the Mac minimum is **0.1.0**, the standalone iOS minimum is
+**1.0.0**, and mismatches fail closed with an upgrade message. The only
+supported runtime pair is an **M4 Max Mac running macOS 27 over USB with an
+iPad Pro 11-inch M4 running iPadOS 27** (the same hardware pair the original
+measurements were made on, since updated from OS26). Other OS versions remain
+**unverified**; no other support claim is made.
+
+The standalone receiver is the intended post-transition build target. The
+monorepo iOS target is intentionally preserved for historical reproducibility
+and rollback and must not be retired until physical G004, provenance G006,
+rollback, export-classification, signing/TestFlight, and public-publication
+gates have complete evidence. Until then, fail closed rather than treating
+the split as a completed release.
 
 ## Security — read this first
 
@@ -117,10 +143,10 @@ experimental display/audio work stays here.
 
 ## Building
 
-Requirements: an Apple-Silicon or Intel Mac supported by Xcode, Xcode 26 or
-newer, and XcodeGen 2.45.4. The macOS target deploys to macOS 14.0+; the iOS
-target deploys to iOS/iPadOS 17.0+. Runtime compatibility outside the tested
-hardware/OS pair remains unverified.
+The Mac sender in this repository requires an Apple-Silicon or Intel Mac
+supported by Xcode, Xcode 26 or newer, and XcodeGen 2.45.4; it deploys to
+macOS 14.0+. Runtime compatibility outside the supported OS27 pair remains
+unverified.
 
 ```
 echo "DEVELOPMENT_TEAM=YOURTEAMID" > .env   # see .env.example
@@ -128,19 +154,30 @@ echo "DEVELOPMENT_TEAM=YOURTEAMID" > .env   # see .env.example
 ./scripts/test-pairing-vectors.sh
 ./scripts/test-session-binding.sh
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecarMac -configuration Debug -derivedDataPath build build
-xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecariOS -configuration Debug -destination 'platform=iOS,id=<device>' -derivedDataPath build -allowProvisioningUpdates build
 ```
+
+After transition, build the iOS receiver from the standalone
+[photonport-ios repository](https://github.com/lotgood/photonport-ios), pinning
+its `COMPATIBILITY.json` to protocol 3.0.0, pairing 2.0.0, Mac minimum 0.1.0,
+and iOS minimum 1.0.0. The monorepo `OpenSidecariOS` target and its historical
+build command remain available for rollback and provenance; they are not the
+steady-state App Store path and must not be retired before the gates above are
+complete.
 
 Internal type/scheme names keep upstream's `OpenSidecar` prefix on purpose —
 smaller diff against upstream, easier future merges.
 
 ## License
 
-GPL-3.0, same as upstream — see [LICENSE](LICENSE). Original work
-© peetzweg and contributors; modifications © 2026 hyupji (fork started
-2026-07-08; per-change notices live in the git history). If you distribute
-binaries built from this tree, GPL-3.0 requires you to provide the exact
-corresponding source.
+The Mac sender and all historical code in this repository remain
+**GPL-3.0-only** — see [LICENSE](LICENSE). Original work © peetzweg and
+contributors; modifications © 2026 hyupji (fork started 2026-07-08; per-change
+notices live in git history). If you distribute binaries built from this tree,
+GPL-3.0 requires you to provide the exact corresponding source. The standalone
+repositories [photonport-ios](https://github.com/lotgood/photonport-ios) and
+[photonport-protocol](https://github.com/lotgood/photonport-protocol) are
+separate MIT-licensed projects; their licenses do not alter this repository's
+old or current GPL-licensed iOS history.
 
 See [Third-Party Notices](THIRD_PARTY_NOTICES.md),
 [asset licensing](ASSETS.md), [Security Policy](SECURITY.md),

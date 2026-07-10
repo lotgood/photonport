@@ -6,7 +6,14 @@ PhotonPort does not provide an account system, analytics service, advertising,
 or developer-operated relay server. Display video, system audio, input events,
 and pairing messages travel directly between the Mac and the user's iPhone or
 iPad over USB/usbmux or the local network.
-
+The Mac sender remains in this GPL-3.0-only repository. The transitioned iOS
+receiver is documented and built separately at
+[lotgood/photonport-ios](https://github.com/lotgood/photonport-ios), and the
+MIT-licensed protocol is at
+[lotgood/photonport-protocol](https://github.com/lotgood/photonport-protocol).
+This policy does not imply that the historical monorepo iOS code was relicensed.
+The only supported device pair is an M4 Max Mac on macOS 27 over USB with
+an iPad Pro 11-inch M4 on iPadOS 27; other OS versions remain unverified.
 ## Data processed
 
 - The Mac app processes screen pixels, system audio, cursor state, and display
