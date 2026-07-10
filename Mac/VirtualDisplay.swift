@@ -60,7 +60,8 @@ final class VirtualDisplay {
         display = CGVirtualDisplay(descriptor: descriptor)
 
         // EDR (transferFunction:1) needs the newer initializer; observed on
-        // macOS 26 as the only value that yields EDR compositing headroom.
+        // macOS 26 and re-verified on macOS 27 as the only value that yields
+        // EDR compositing headroom.
         let tfAvailable = CapabilityProbe.edrVirtualDisplay
         if hdr && !tfAvailable {
             Log.info("EDR virtual display unavailable (no transferFunction initializer on this macOS) — SDR framebuffer")

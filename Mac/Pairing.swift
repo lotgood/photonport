@@ -239,7 +239,7 @@ enum PairingCrypto {
 
     /// Client-side TLS-PSK options. TLS 1.2 PSK ciphersuite — the
     /// combination Network.framework's PSK API actually negotiates
-    /// (verified against a live listener on macOS 26).
+    /// (verified against live listeners on macOS 26 and 27).
     static func clientTLSOptions(identity: String, psk: Data) -> NWProtocolTLS.Options {
         let opts = NWProtocolTLS.Options()
         addPSK(opts, identity: identity, psk: psk)

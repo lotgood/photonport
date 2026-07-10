@@ -407,7 +407,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             : displaySerial ^ 0x8000_0000
         let requestedFps = cappedFps(info.refreshRate)
         // Resolve HDR before building the display: an EDR virtual display
-        // (macOS 26 transferFunction hook) makes WindowServer composite HDR
+        // (macOS 26/27 transferFunction hook) makes WindowServer composite HDR
         // content with real headroom, so the capture carries true HDR — not
         // just a 10-bit container around tone-mapped SDR.
         let wantHDR = resolveHDR(info)
