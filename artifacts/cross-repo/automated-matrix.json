@@ -1,0 +1,207 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "Tests.test_cross_repo_compatibility",
+        "Tests.test_supported_device_evidence",
+        "Tests.test_mac_protocol_contract",
+        "Tests.test_archive_baselines",
+        "Tests.test_provenance_manifest",
+        "Tests.test_scan_forbidden",
+        "Tests.test_build_inventory",
+        "-v"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/000.json",
+      "logSha256": "85dbaf68c7fb25a34381ee7d40edd90e9c4cfc8c7719a7aa88f367111cbf37fa",
+      "stderrSha256": "effc21f6002abd1c027bd219e21dc9fb40678a352ad5f21b19476b566353d743",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "./scripts/test-pairing-vectors.sh"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/001.json",
+      "logSha256": "3f46e8b4084f0162bec3d96b0b0f719328fd0304183a8332d7a9398d3bf84edf",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "8324e1137613d8619ac178fbbac5424a71bc23c145a1f524077e2a30a5a78971"
+    },
+    {
+      "argv": [
+        "./scripts/test-session-binding.sh"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/002.json",
+      "logSha256": "7469d5cc551b070e70e83f0304fe4f715430c63ab3101725be9ad3af85e298bb",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "53902b9877d3c3d3ff1c547941f6c54e898389121efeb16b9e5ca95469262cc0"
+    },
+    {
+      "argv": [
+        "./scripts/test-mac-protocol-adversarial.sh"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/003.json",
+      "logSha256": "3acd0cbdb6f7ab7459eeefbaa5fc77fa216a53164d4f5fde6a8a7812479bdfac",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "b898b059fe6cf9f79cbc507af518869959fd48cca2987b766c3f8712fc0cb3a8"
+    },
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "cwd": "/Users/ltg/workspace/photonport-protocol",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/004.json",
+      "logSha256": "c5565cd03bb0d5d031ee788e90000edf561ec7d1ecaecc4daecfaf39833ee4b5",
+      "stderrSha256": "419340bbafa833985d9ec13b7387413e34ecbb348ff2fc878850618a66345bd6",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "python3",
+        "scripts/run-g003-gates.py"
+      ],
+      "cwd": "/Users/ltg/workspace/photonport-ios",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/005.json",
+      "logSha256": "041effb18b502143e371db62ad648d41084261e1a961b8b577660efd51047179",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "python3",
+        "scripts/verify-g003-evidence.py"
+      ],
+      "cwd": "/Users/ltg/workspace/photonport-ios",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/006.json",
+      "logSha256": "e18e190e50d403bfd490556d02d95686ce176a79839a90597c305a6d479fcb4a",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "3b69fe9e7a20e97d82c52b10723e1e55ee547b76c360be73c9aa89030981398b"
+    },
+    {
+      "argv": [
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "OpenSidecar.xcodeproj",
+        "-scheme",
+        "OpenSidecarMac",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=macOS",
+        "-derivedDataPath",
+        "/tmp/photonport-g004-mac-debug",
+        "CODE_SIGNING_ALLOWED=NO",
+        "build"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/007.json",
+      "logSha256": "4d3d7f6c4d7193b5b950ded5e817c16170aa5a2bf61308cabea4f957b2a33355",
+      "stderrSha256": "cf0646102566aca630945746bb0d75cc4d76e4bb8373fe9d6a3f5da5b8ae704b",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "OpenSidecar.xcodeproj",
+        "-scheme",
+        "OpenSidecarMac",
+        "-configuration",
+        "Release",
+        "-destination",
+        "platform=macOS",
+        "-derivedDataPath",
+        "/tmp/photonport-g004-mac-release",
+        "CODE_SIGNING_ALLOWED=NO",
+        "build"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/008.json",
+      "logSha256": "630e2d13b2e3640f3394dadd4c88b991a64a6fad7f0408afd42d380319b2fbeb",
+      "stderrSha256": "cf0646102566aca630945746bb0d75cc4d76e4bb8373fe9d6a3f5da5b8ae704b",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "python3",
+        "scripts/verify-cross-repo-compatibility.py",
+        "--mac-root",
+        "/Users/ltg/workspace/opendisplay",
+        "--ios-root",
+        "/Users/ltg/workspace/photonport-ios",
+        "--protocol-root",
+        "/Users/ltg/workspace/photonport-protocol",
+        "--output",
+        "artifacts/cross-repo/compatibility-report.json"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/009.json",
+      "logSha256": "7f87e031a672084f8280d39d4f6f10c223ab30f3b776651db3558837b434251b",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "python3",
+        "scripts/capture-supported-device-evidence.py",
+        "--probe-local",
+        "--output",
+        "artifacts/cross-repo/physical-availability.json"
+      ],
+      "cwd": "/Users/ltg/workspace/opendisplay",
+      "exitCode": 0,
+      "logPath": "artifacts/cross-repo/logs/010.json",
+      "logSha256": "694c2e1c9aa01849947d6a11e70e00cfb4ada1f6bcbae6ea9d9dbe483c38cea4",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "compatibilityReceipt": {
+    "path": "artifacts/cross-repo/compatibility-report.json",
+    "sha256": "b3b035aec2c4d4e2eecd3225b7737278bbfe8eeb5a24a136ae977bcb3bcdd4d9"
+  },
+  "kind": "cross-repo-test-report",
+  "physicalAvailabilityReceipt": {
+    "path": "artifacts/cross-repo/physical-availability.json",
+    "sha256": "0e11f9576b9954b0a7899d88858ffadfdefcf05967055010d4dcde7ab3d13101"
+  },
+  "productIdentifiers": [
+    {
+      "configuration": "Debug",
+      "path": "/tmp/photonport-g004-mac-debug/Build/Products/Debug/PhotonPort.app/Contents/Info.plist",
+      "sha256": "f969de5853088e79224c98d511a6e78d36968cc70b26b86a1f3ee7361c20dacb"
+    },
+    {
+      "configuration": "Release",
+      "path": "/tmp/photonport-g004-mac-release/Build/Products/Release/PhotonPort.app/Contents/Info.plist",
+      "sha256": "56ee5c3ab4559d0ee6bafd64bda5a0b83fc295c5f4ac4d12fccdbed0f2fdeb44"
+    }
+  ],
+  "result": "passed",
+  "schemaVersion": 1
+}

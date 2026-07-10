@@ -1,0 +1,101 @@
+{
+  "availability": "available",
+  "device": {
+    "matched": true,
+    "model": "iPad Pro 11-inch (M4)",
+    "os_major": "27",
+    "physical": true,
+    "platform": "iOS",
+    "reason": "matched",
+    "transport": ""
+  },
+  "host": {
+    "matched": true,
+    "model": "Apple M4 Max",
+    "os_major": "27"
+  },
+  "scenarios": [
+    {
+      "evidence": "User confirmed extended display streaming works end-to-end; Mac log: 'capture started: 2816x1940 display 17 mode extend backend=CGDisplayStream-EDR localCursor=true fps=120 hdr=true'; device log: 'status: Receiving 2816x1940 (ProRes)'.",
+      "id": "usb_display",
+      "status": "pass"
+    },
+    {
+      "evidence": "User confirmed HDR pass; Mac log negotiated 'hdr=true' with EDR capture backend and status 'Extending to iPad (2816x1940 @120Hz HDR)'.",
+      "id": "usb_hdr",
+      "status": "pass"
+    },
+    {
+      "evidence": "User confirmed 120fps pass; Mac log 'fps=120' with virtual display created at 120Hz; device announced maxFps=120.",
+      "id": "usb_120hz",
+      "status": "pass"
+    },
+    {
+      "evidence": "User confirmed audio has no issues; device log 'audio playback started (48000Hz stereo)' with Mac system audio tap live at 48000Hz.",
+      "id": "usb_audio",
+      "status": "pass"
+    },
+    {
+      "evidence": "Initially failed: the Mac ignored mid-session rotation hellos on the CGDisplayStream-EDR backend (guard checked only the SCK stream). Fixed in opendisplay commit 3e21563, then verified live both directions: Mac log 01:17:11 'reconfiguring for 1940x2816' -> 'virtual display created: 970x1408pt' -> 'capture started: 1940x2816', and 01:17:14 back to 2816x1940.",
+      "id": "usb_rotation",
+      "status": "pass"
+    },
+    {
+      "evidence": "User confirmed touch input has no issues (touch phases injected on the Mac). Perceived mouse-cursor lag was diagnosed as implicit CALayer animation on the 120Hz local-cursor overlay, fixed in photonport-ios commit f648668, and user confirmed the delay is gone.",
+      "id": "usb_input",
+      "status": "pass"
+    },
+    {
+      "evidence": "User confirmed disconnect/reconnect pass; logs show repeated session teardown ('session v3 ended: peer_closed') and rebinding with fresh generations, stream resuming each time.",
+      "id": "usb_disconnect",
+      "status": "pass"
+    },
+    {
+      "evidence": "User confirmed physical cable unplug/replug recovers with no issues; Mac log shows 'usb connection failed ... Connection lost - retrying' followed by automatic redial, session v3 re-accept, and capture resume.",
+      "id": "usb_replug",
+      "status": "pass"
+    },
+    {
+      "evidence": "SAS numeric-comparison pairing performed by the user on this physical pair: device log 03:55:14 'pairing: advertising _photonport._tcp (pair=1)', 03:55:17 'pairing: SAS ready for LTG Mac Studio', 03:55:20 'pairing: user confirmed SAS - storing key'. The resulting TLS-PSK credential authenticated every subsequent WiFi session.",
+      "id": "wifi_sas",
+      "status": "pass"
+    },
+    {
+      "evidence": "User streamed interactively over WiFi (changed quality settings, observed latency): Mac log repeatedly shows 'TCP transport secured with TLS-PSK (paired)' followed by session v3 accept and HEVC-Main10-HLG streaming (generations 4-10); device log 'status: Receiving 1688x1164'. WiFi rotation also verified (portrait/landscape virtual display rebuilds at 01:43-01:44).",
+      "id": "wifi_tls",
+      "status": "pass"
+    },
+    {
+      "evidence": "human_only_required",
+      "id": "wifi_unpaired",
+      "status": "not_run"
+    },
+    {
+      "evidence": "human_only_required",
+      "id": "wifi_wrong_mac",
+      "status": "not_run"
+    },
+    {
+      "evidence": "human_only_required",
+      "id": "wifi_takeover",
+      "status": "not_run"
+    },
+    {
+      "evidence": "Ten-plus observed WiFi reconnect cycles (quality switches, app restarts, user disconnects): each performed a fresh TLS-PSK handshake, session v3 rebind with new generation, and stream resume within ~0.3-3.5s, including 'static screen after reconnect - replaying last frame as keyframe'.",
+      "id": "wifi_reconnect",
+      "status": "pass"
+    }
+  ],
+  "schema": "opendisplay.supported-device-evidence.v1",
+  "supported_matrix": {
+    "device": {
+      "model": "iPad Pro M4",
+      "os_major": "27",
+      "platform": "iOS"
+    },
+    "host": {
+      "model": "Apple M4 Max",
+      "os_major": "27"
+    }
+  }
+}

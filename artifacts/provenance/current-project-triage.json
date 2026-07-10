@@ -1,0 +1,885 @@
+{
+  "approval_status": "TRIAGE_ONLY_REQUIRES_INDEPENDENT_REVIEW",
+  "entries": [
+    {
+      "binary": false,
+      "output_blob_sha256": "1ec7fc8d8f9a557147ffbf5b98ed7bc56c845eca898213c0629ce7973f82f93b",
+      "path": "project.yml",
+      "regions": [
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            1,
+            3
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            1,
+            3
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            4,
+            10
+          ],
+          "source_blob": "93dd22129cf111679b7daa4510ba3de59c8b95d4",
+          "source_commit": "42415f802485136b7bf4261705aae47863430787",
+          "source_lines": [
+            4,
+            10
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "31810171+lotgood@users.noreply.github.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            11,
+            14
+          ],
+          "source_blob": "c41bad795e04adea021a4deb4b766e532586edc0",
+          "source_commit": "632e5d5f656201e59a15e8386ed73884d91d9f38",
+          "source_lines": [
+            11,
+            14
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            15,
+            23
+          ],
+          "source_blob": "0b5499c953435e46e8e282175a29dd259be5eafe",
+          "source_commit": "9262883fb656062054887479fa9fee7496dec1cd",
+          "source_lines": [
+            4,
+            12
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            24,
+            25
+          ],
+          "source_blob": "b0fb71afb35f7484d4fb150c7b1d3f64a481eba1",
+          "source_commit": "377b5d3621b8cf826cc7f74ff3fdc23607577d08",
+          "source_lines": [
+            4,
+            5
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            26,
+            27
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            4,
+            5
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            28,
+            28
+          ],
+          "source_blob": "b0fb71afb35f7484d4fb150c7b1d3f64a481eba1",
+          "source_commit": "377b5d3621b8cf826cc7f74ff3fdc23607577d08",
+          "source_lines": [
+            8,
+            8
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            29,
+            30
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            7,
+            8
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "31810171+lotgood@users.noreply.github.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            31,
+            35
+          ],
+          "source_blob": "c41bad795e04adea021a4deb4b766e532586edc0",
+          "source_commit": "632e5d5f656201e59a15e8386ed73884d91d9f38",
+          "source_lines": [
+            31,
+            35
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            36,
+            36
+          ],
+          "source_blob": "b10004d20722ac9e1be512a748510479dc72ff8c",
+          "source_commit": "924b464f43d1170808b77e48448b6e2ecdd61ab4",
+          "source_lines": [
+            24,
+            24
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            37,
+            43
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            9,
+            15
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            44,
+            45
+          ],
+          "source_blob": "93dd22129cf111679b7daa4510ba3de59c8b95d4",
+          "source_commit": "42415f802485136b7bf4261705aae47863430787",
+          "source_lines": [
+            42,
+            43
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            46,
+            49
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            16,
+            19
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            50,
+            50
+          ],
+          "source_blob": "3b30449a94fa0c91970296a702665b1dd4501d01",
+          "source_commit": "5fabe38d2633946aa47872310ea294343a56e0fe",
+          "source_lines": [
+            22,
+            22
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            51,
+            52
+          ],
+          "source_blob": "b10004d20722ac9e1be512a748510479dc72ff8c",
+          "source_commit": "924b464f43d1170808b77e48448b6e2ecdd61ab4",
+          "source_lines": [
+            37,
+            38
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            53,
+            53
+          ],
+          "source_blob": "257d7b37969dec45d635bc754180011529174779",
+          "source_commit": "d826668f189078287682148744eeb341a50e32c0",
+          "source_lines": [
+            22,
+            22
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            54,
+            54
+          ],
+          "source_blob": "55694117c8e6262b6e32741f5601b933c53921f7",
+          "source_commit": "319665ba4906a4958657b84bf7ff18744086c2b5",
+          "source_lines": [
+            52,
+            52
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            55,
+            58
+          ],
+          "source_blob": "f48669d48e363cdf8d75be39d8204df708860dda",
+          "source_commit": "a72dc81f70f95c231c669c4bf4687a58580ac396",
+          "source_lines": [
+            53,
+            56
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            59,
+            59
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            22,
+            22
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            60,
+            60
+          ],
+          "source_blob": "55694117c8e6262b6e32741f5601b933c53921f7",
+          "source_commit": "319665ba4906a4958657b84bf7ff18744086c2b5",
+          "source_lines": [
+            62,
+            62
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "31810171+lotgood@users.noreply.github.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            61,
+            69
+          ],
+          "source_blob": "c41bad795e04adea021a4deb4b766e532586edc0",
+          "source_commit": "632e5d5f656201e59a15e8386ed73884d91d9f38",
+          "source_lines": [
+            61,
+            69
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            70,
+            71
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            23,
+            24
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            72,
+            74
+          ],
+          "source_blob": "55694117c8e6262b6e32741f5601b933c53921f7",
+          "source_commit": "319665ba4906a4958657b84bf7ff18744086c2b5",
+          "source_lines": [
+            66,
+            68
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            75,
+            75
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            27,
+            27
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            76,
+            77
+          ],
+          "source_blob": "7210df632738a7d707c8219c9f563ba0904f2099",
+          "source_commit": "d940685d9a515a0f11fe248c1f85e95e67a8d39d",
+          "source_lines": [
+            33,
+            34
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            78,
+            78
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            29,
+            29
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            79,
+            86
+          ],
+          "source_blob": "3b30449a94fa0c91970296a702665b1dd4501d01",
+          "source_commit": "5fabe38d2633946aa47872310ea294343a56e0fe",
+          "source_lines": [
+            35,
+            42
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            87,
+            88
+          ],
+          "source_blob": "55694117c8e6262b6e32741f5601b933c53921f7",
+          "source_commit": "319665ba4906a4958657b84bf7ff18744086c2b5",
+          "source_lines": [
+            81,
+            82
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            89,
+            89
+          ],
+          "source_blob": "e2f3ac70508180ce8008f989f8b1e53c27235280",
+          "source_commit": "5b99719cb5a630b3bfc103aca5844d4e82513456",
+          "source_lines": [
+            33,
+            33
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            90,
+            93
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            31,
+            34
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            94,
+            94
+          ],
+          "source_blob": "e2f3ac70508180ce8008f989f8b1e53c27235280",
+          "source_commit": "5b99719cb5a630b3bfc103aca5844d4e82513456",
+          "source_lines": [
+            38,
+            38
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            95,
+            95
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            36,
+            36
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            96,
+            96
+          ],
+          "source_blob": "e2f3ac70508180ce8008f989f8b1e53c27235280",
+          "source_commit": "5b99719cb5a630b3bfc103aca5844d4e82513456",
+          "source_lines": [
+            40,
+            40
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            97,
+            97
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            38,
+            38
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            98,
+            98
+          ],
+          "source_blob": "55694117c8e6262b6e32741f5601b933c53921f7",
+          "source_commit": "319665ba4906a4958657b84bf7ff18744086c2b5",
+          "source_lines": [
+            92,
+            92
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            99,
+            99
+          ],
+          "source_blob": "ad02795023e307601064b44eed82ed9b4a0e258c",
+          "source_commit": "9b606c1646626cac1d48bd6b73344281cbb7e63f",
+          "source_lines": [
+            65,
+            65
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "UPSTREAM_GPL",
+          "output_lines": [
+            100,
+            101
+          ],
+          "source_blob": "b10004d20722ac9e1be512a748510479dc72ff8c",
+          "source_commit": "924b464f43d1170808b77e48448b6e2ecdd61ab4",
+          "source_lines": [
+            73,
+            74
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "31810171+lotgood@users.noreply.github.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            102,
+            102
+          ],
+          "source_blob": "c41bad795e04adea021a4deb4b766e532586edc0",
+          "source_commit": "632e5d5f656201e59a15e8386ed73884d91d9f38",
+          "source_lines": [
+            102,
+            102
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "31810171+lotgood@users.noreply.github.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            103,
+            105
+          ],
+          "source_blob": "5d7b92359e02020defbb84f10a62b5677ed5c774",
+          "source_commit": "25bb24ea3ff1292802fa5c7df7e76ff499fd9722",
+          "source_lines": [
+            103,
+            105
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "31810171+lotgood@users.noreply.github.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            106,
+            106
+          ],
+          "source_blob": "c41bad795e04adea021a4deb4b766e532586edc0",
+          "source_commit": "632e5d5f656201e59a15e8386ed73884d91d9f38",
+          "source_lines": [
+            105,
+            105
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            107,
+            108
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            40,
+            41
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            109,
+            113
+          ],
+          "source_blob": "9bdd91a6be4276d56f9acf3d13a4a7be209eb3c9",
+          "source_commit": "6a4100acd09873b893d586f08a7f9b696d9eda81",
+          "source_lines": [
+            98,
+            102
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            114,
+            114
+          ],
+          "source_blob": "55694117c8e6262b6e32741f5601b933c53921f7",
+          "source_commit": "319665ba4906a4958657b84bf7ff18744086c2b5",
+          "source_lines": [
+            103,
+            103
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            115,
+            115
+          ],
+          "source_blob": "f48669d48e363cdf8d75be39d8204df708860dda",
+          "source_commit": "a72dc81f70f95c231c669c4bf4687a58580ac396",
+          "source_lines": [
+            107,
+            107
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            116,
+            122
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            44,
+            50
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "lotgood@outlook.com",
+            "name": "lotgood"
+          },
+          "classification": "PHOTONPORT_OWNED",
+          "output_lines": [
+            123,
+            123
+          ],
+          "source_blob": "55694117c8e6262b6e32741f5601b933c53921f7",
+          "source_commit": "319665ba4906a4958657b84bf7ff18744086c2b5",
+          "source_lines": [
+            112,
+            112
+          ],
+          "source_path": "project.yml"
+        },
+        {
+          "author_evidence": {
+            "email": "phil.czek@gmail.com",
+            "name": "peetzweg"
+          },
+          "classification": "MIT_EXACT",
+          "output_lines": [
+            124,
+            125
+          ],
+          "source_blob": "8989d9d9198dcd0505f97236ef3a33a3de8d7e41",
+          "source_commit": "2ac6c4aa11dc4b06320890a2a13b4bb981e90da7",
+          "source_lines": [
+            52,
+            53
+          ],
+          "source_path": "project.yml"
+        }
+      ],
+      "whole_file": false
+    }
+  ],
+  "root": "project.yml",
+  "schema_version": 1,
+  "summary": {
+    "binary_files": 0,
+    "binary_files_by_classification": {
+      "AMBIGUOUS": 0,
+      "MIT_EXACT": 0,
+      "PHOTONPORT_OWNED": 0,
+      "UPSTREAM_GPL": 0
+    },
+    "classifications": {
+      "AMBIGUOUS": 0,
+      "MIT_EXACT": 56,
+      "PHOTONPORT_OWNED": 43,
+      "UPSTREAM_GPL": 26
+    },
+    "files": 1,
+    "region_counts": {
+      "AMBIGUOUS": 0,
+      "MIT_EXACT": 23,
+      "PHOTONPORT_OWNED": 16,
+      "UPSTREAM_GPL": 8
+    },
+    "regions": 47,
+    "text_files": 1
+  }
+}

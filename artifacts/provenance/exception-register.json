@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "steady_state": "NO_PERMISSION_DEPENDENCY",
+  "private_permission_receipts": [],
+  "approved_import_exceptions": [],
+  "policy": "No post-MIT upstream expression may enter the MIT iOS repository without a separately reviewed, scope-bound private permission receipt. The selected reconstruction path does not depend on the upstream email exception."
+}

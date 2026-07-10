@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "product_commit": "bb3777e02ba9f858dc7dd0a35833ad874c22512d",
+  "rollback_tag": "photonport-v0.1.0",
+  "rollback_tag_commit": "bb3777e02ba9f858dc7dd0a35833ad874c22512d",
+  "mit_anchor": "658bbd34d3f5407657cc162e87d3f6df4e8e822c",
+  "mit_through": "bc6b869a321a964656d9c30c249c558c1afe8d99",
+  "gpl_transition": "22607a760afe0589f1f2485743b0a972b5f71804",
+  "forbidden_range": "22607a760afe0589f1f2485743b0a972b5f71804..upstream/main",
+  "baseline_report": "artifacts/provenance/baselines.json",
+  "current_ios_triage": "artifacts/provenance/current-ios-triage.json",
+  "current_project_triage": "artifacts/provenance/current-project-triage.json",
+  "current_ios_forbidden_exact": "artifacts/provenance/current-ios-forbidden-exact.json",
+  "current_ios_similarity_review": "artifacts/provenance/current-ios-similarity-review.json",
+  "golden_behavior_receipts": [
+    {
+      "command": "./scripts/test-pairing-vectors.sh",
+      "exit_code": 0,
+      "stdout_sha256": "8324e1137613d8619ac178fbbac5424a71bc23c145a1f524077e2a30a5a78971"
+    },
+    {
+      "command": "./scripts/test-session-binding.sh",
+      "exit_code": 0,
+      "stdout_sha256": "53902b9877d3c3d3ff1c547941f6c54e898389121efeb16b9e5ca95469262cc0"
+    }
+  ],
+  "support_claim": {
+    "status": "experimental",
+    "verified_combination": "M4 Max/macOS 26 with iPad Pro M4/iOS 26 over USB",
+    "wider_compatibility": "unverified"
+  }
+}

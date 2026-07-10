@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "./scripts/test-mac-protocol-adversarial.sh"
+  ],
+  "cwd": "/Users/ltg/workspace/opendisplay",
+  "exitCode": 0,
+  "stderr": "",
+  "stdout": "mac protocol adversarial harness passed\nmac protocol adversarial harness passed\n"
+}
