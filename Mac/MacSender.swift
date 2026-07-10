@@ -1554,7 +1554,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 Task { @MainActor in self.onHello?(info) }
                 if boundStreamSession == nil {
                     beginSessionHandshake(info)
-                } else if mode == .extend, stream != nil, let previous,
+                } else if mode == .extend, stream != nil || cgStream != nil,
+                          let previous,
                           previous.pixelsWide != info.pixelsWide
                           || previous.pixelsHigh != info.pixelsHigh {
                     Task {
