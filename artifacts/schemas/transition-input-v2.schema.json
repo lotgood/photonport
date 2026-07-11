@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/transition-input-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "gateId",
+    "status"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "photonport.gate.g004-automated.v2",
+        "photonport.gate.g004-physical.v2",
+        "photonport.gate.g006-provenance.v2",
+        "photonport.gate.export-review.v2",
+        "photonport.gate.apple-distribution.v2",
+        "photonport.gate.rollback-build.v2",
+        "photonport.transition-input.v2"
+      ]
+    },
+    "gateId": {
+      "type": "string",
+      "enum": [
+        "g004.automated",
+        "g004.physical",
+        "g006.provenance",
+        "export.review",
+        "apple.distribution",
+        "rollback.build"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "blocked",
+        "not_run"
+      ]
+    },
+    "receiptRef": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

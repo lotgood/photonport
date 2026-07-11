@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 2,
+  "kind": "photonport.trust-policy.v2",
+  "testRoot": {
+    "keys": {
+      "test-ci-hmac-v1": {
+        "alg": "HMAC-SHA256-TEST",
+        "trustDomain": "test",
+        "roles": [
+          "test"
+        ],
+        "keyHex": "746573742d63692d686d61632d7631"
+      },
+      "test-agent-hmac-v1": {
+        "alg": "HMAC-SHA256-TEST",
+        "trustDomain": "test",
+        "roles": [
+          "test"
+        ],
+        "keyHex": "746573742d6167656e742d686d61632d7631"
+      }
+    }
+  },
+  "productionRoot": {
+    "publicKeyVerifier": "deferred",
+    "keys": {
+      "prod-ci-ed25519-v1": {
+        "alg": "ED25519-DSSE",
+        "trustDomain": "opendisplay-ci",
+        "roles": [
+          "automated-ci"
+        ],
+        "publicKeyRef": "deferred:opendisplay-ci/prod-ci-ed25519-v1"
+      },
+      "prod-human-ed25519-v1": {
+        "alg": "ED25519-DSSE",
+        "trustDomain": "human-approval",
+        "roles": [
+          "release-engineer",
+          "export-reviewer"
+        ],
+        "publicKeyRef": "deferred:human-approval/prod-human-ed25519-v1"
+      },
+      "prod-provider-ed25519-v1": {
+        "alg": "ED25519-DSSE",
+        "trustDomain": "external-provider",
+        "roles": [
+          "apple-provider"
+        ],
+        "publicKeyRef": "deferred:external-provider/prod-provider-ed25519-v1"
+      }
+    }
+  }
+}

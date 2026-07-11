@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/gate-apple-distribution-v2.schema.json",
+  "allOf": [
+    {
+      "$ref": "receipt-payload-v2.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "photonport.gate.apple-distribution.v2"
+        },
+        "gateId": {
+          "type": "string",
+          "const": "apple.distribution"
+        },
+        "issuer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "identity",
+            "role",
+            "trustDomain"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "provider"
+            },
+            "identity": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "const": "apple-provider"
+            },
+            "trustDomain": {
+              "type": "string",
+              "const": "external-provider"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

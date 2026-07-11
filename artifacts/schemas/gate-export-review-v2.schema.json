@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/gate-export-review-v2.schema.json",
+  "allOf": [
+    {
+      "$ref": "receipt-payload-v2.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "photonport.gate.export-review.v2"
+        },
+        "gateId": {
+          "type": "string",
+          "const": "export.review"
+        },
+        "issuer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "identity",
+            "role",
+            "trustDomain"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "human"
+            },
+            "identity": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "const": "export-reviewer"
+            },
+            "trustDomain": {
+              "type": "string",
+              "const": "human-approval"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

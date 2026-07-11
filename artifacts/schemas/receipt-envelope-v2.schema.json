@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/receipt-envelope-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "payloadType",
+    "payload",
+    "signatures"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "kind": {
+      "type": "string",
+      "const": "photonport.receipt-envelope.v2"
+    },
+    "payloadType": {
+      "type": "string",
+      "const": "application/vnd.photonport.receipt.payload.v2+json"
+    },
+    "payload": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "keyid",
+          "sig",
+          "alg"
+        ],
+        "properties": {
+          "keyid": {
+            "type": "string",
+            "enum": [
+              "test-ci-hmac-v1",
+              "test-agent-hmac-v1",
+              "prod-ci-ed25519-v1",
+              "prod-human-ed25519-v1",
+              "prod-provider-ed25519-v1"
+            ]
+          },
+          "alg": {
+            "type": "string",
+            "enum": [
+              "HMAC-SHA256-TEST",
+              "ED25519-DSSE"
+            ]
+          },
+          "sig": {
+            "type": "string",
+            "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+          }
+        }
+      }
+    }
+  }
+}
