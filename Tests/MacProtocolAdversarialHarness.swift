@@ -77,6 +77,9 @@ struct MacProtocolAdversarialHarness {
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"began\",\"x\":1.5,\"y\":0}"), transport: .wifi)) == nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"invalid\",\"x\":0.5,\"y\":0}"), transport: .wifi)) == nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":-1.0,\"dy\":2.0}"), transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":1000000,\"dy\":-1000000}"), transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":1000000.1,\"dy\":0}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":0,\"dy\":-1000000.1}"), transport: .wifi)) == nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"kf\"}"), transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"hello\"}"), transport: .wifi)) == nil)
     }

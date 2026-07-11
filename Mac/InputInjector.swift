@@ -60,11 +60,18 @@ final class InputInjector {
     /// Scroll events take points, so convert via the display's pixel scale.
     func handleScroll(dx: Double, dy: Double) {
         let bounds = CGDisplayBounds(displayID)
-        let scale = bounds.width > 0 ? Double(CGDisplayPixelsWide(displayID)) / bounds.width : 2
+        let measuredScale = bounds.width > 0 ? Double(CGDisplayPixelsWide(displayID)) / bounds.width : 2
+        let scale = measuredScale.isFinite && measuredScale > 0 ? measuredScale : 2
+        func wheelDelta(_ value: Double) -> Int32 {
+            let scaled = (value / scale).rounded()
+            guard scaled.isFinite else { return 0 }
+            return Int32(clamping: Int64(
+                min(max(scaled, Double(Int32.min)), Double(Int32.max))))
+        }
         guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel,
                                   wheelCount: 2,
-                                  wheel1: Int32((dy / scale).rounded()),
-                                  wheel2: Int32((dx / scale).rounded()),
+                                  wheel1: wheelDelta(dy),
+                                  wheel2: wheelDelta(dx),
                                   wheel3: 0) else { return }
         event.post(tap: .cghidEventTap)
     }
