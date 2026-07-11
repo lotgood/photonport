@@ -13,6 +13,9 @@ final class InputInjector {
     // open but their tracking session breaks, leaving zombie menu windows
     // composited on the display (visible in the stream, unclickable).
     private let source = CGEventSource(stateID: .hidSystemState)
+    private lazy var scrollCoalescer = ScrollEventCoalescer { [weak self] pending in
+        self?.injectScroll(pending)
+    }
 
     init(displayID: CGDirectDisplayID) {
         self.displayID = displayID
@@ -59,19 +62,23 @@ final class InputInjector {
     /// dx/dy in display pixels, natural-scrolling sign from the phone.
     /// Scroll events take points, so convert via the display's pixel scale.
     func handleScroll(dx: Double, dy: Double) {
+        _ = scrollCoalescer.enqueue(dx: dx, dy: dy)
+    }
+
+    private func injectScroll(_ pending: ScrollDelta) {
         let bounds = CGDisplayBounds(displayID)
-        let measuredScale = bounds.width > 0 ? Double(CGDisplayPixelsWide(displayID)) / bounds.width : 2
-        let scale = measuredScale.isFinite && measuredScale > 0 ? measuredScale : 2
-        func wheelDelta(_ value: Double) -> Int32 {
-            let scaled = (value / scale).rounded()
-            guard scaled.isFinite else { return 0 }
-            return Int32(clamping: Int64(
-                min(max(scaled, Double(Int32.min)), Double(Int32.max))))
-        }
+        guard bounds.width > 0 else { return }
+        let displayScale = Double(CGDisplayPixelsWide(displayID)) / bounds.width
+        guard let wheel = ScrollWheelConversion.nativeWheelDelta(
+            dx: pending.dx,
+            dy: pending.dy,
+            displayScale: displayScale
+        ) else { return }
+
         guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel,
                                   wheelCount: 2,
-                                  wheel1: wheelDelta(dy),
-                                  wheel2: wheelDelta(dx),
+                                  wheel1: wheel.dy,
+                                  wheel2: wheel.dx,
                                   wheel3: 0) else { return }
         event.post(tap: .cghidEventTap)
     }

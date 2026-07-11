@@ -10,6 +10,9 @@ PBXPROJ = (ROOT / "OpenSidecar.xcodeproj" / "project.pbxproj").read_text(encodin
 TARGETS_YML = PROJECT_YML.split("\ntargets:\n", 1)[1]
 PAIRING = (ROOT / "Mac" / "Pairing.swift").read_text(encoding="utf-8")
 SENDER = (ROOT / "Mac" / "MacSender.swift").read_text(encoding="utf-8")
+INPUT_INJECTOR = (ROOT / "Mac" / "InputInjector.swift").read_text(encoding="utf-8")
+SCROLL_COALESCER_PATH = ROOT / "Mac" / "ScrollEventCoalescer.swift"
+SCROLL_COALESCER = SCROLL_COALESCER_PATH.read_text(encoding="utf-8") if SCROLL_COALESCER_PATH.exists() else ""
 HARNESS = (ROOT / "Tests" / "MacProtocolAdversarialHarness.swift").read_text(encoding="utf-8")
 HARNESS_SCRIPT = (ROOT / "scripts" / "test-mac-protocol-adversarial.sh").read_text(encoding="utf-8")
 PIN_PATH = ROOT / "Mac" / "ProtocolBuildPin.json"
@@ -97,6 +100,21 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertNotRegex(SENDER, r"guard\s+\w+\s*>\s*0\s*,\s*\w+\s*<\s*1\s*<<\s*20\s+else")
         self.assertNotRegex(SENDER, r"receive\([^\n]*(?:control|audio)[^\n]*1\s*<<\s*20")
 
+    def test_scroll_input_has_conservative_bounds_and_backpressure(self):
+        self.assertRegex(PARSER, r"scrollDeltaCap\s*=\s*120\.0\b")
+        self.assertIn("Mac/ScrollEventCoalescer.swift", swiftc_inputs(HARNESS_SCRIPT))
+        self.assertIn("messageDeltaLimit = 120.0", SCROLL_COALESCER)
+        self.assertIn("injectedDeltaLimit = 120.0", SCROLL_COALESCER)
+        self.assertIn("pendingWorkCount", SCROLL_COALESCER)
+        self.assertIn("ScrollWheelConversion", SCROLL_COALESCER)
+        self.assertIn("ScrollEventCoalescer {", INPUT_INJECTOR)
+        self.assertIn("callback: @escaping Callback", SCROLL_COALESCER)
+        self.assertNotIn("callback: Callback? = nil", SCROLL_COALESCER)
+        self.assertIn("init()", SCROLL_COALESCER)
+        self.assertIn("init(callback: @escaping Callback", SCROLL_COALESCER)
+        self.assertIn("scrollCoalescer.enqueue", INPUT_INJECTOR)
+        self.assertIn("nativeWheelDelta", INPUT_INJECTOR)
+        self.assertNotIn("scrollQueue.async", INPUT_INJECTOR)
     def test_pairing_and_sender_use_strict_production_parser(self):
         self.assertRegex(PARSER, r"guard\s+\(1\.\.\.cap\(for:\s*kind\)\)\.contains\(length\)\s+else")
         self.assertRegex(PARSER, r"guard\s+payload\.count\s*==\s*expectedLength\s*,\s*\(1\.\.\.cap\(for:\s*kind\)\)\.contains\(payload\.count\)\s+else")

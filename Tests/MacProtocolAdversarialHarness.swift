@@ -16,9 +16,6 @@ private func expectRejects(_ label: String, _ body: () throws -> Void) {
 
 private func quoted(_ value: String) -> String { "\"\(value)\"" }
 
-private func object(_ fields: [(String, String)]) -> Data {
-    json("{\(fields.map { "\"\($0.0)\":\($0.1)" }.joined(separator: ","))}")
-}
 
 private func replacing(_ data: Data, _ old: String, _ new: String) -> Data {
     json(String(data: data, encoding: .utf8)!.replacingOccurrences(of: old, with: new))
@@ -84,11 +81,6 @@ private func withFieldValue(_ data: Data, _ key: String, _ value: String) -> Dat
     return json(text)
 }
 
-private func duplicatedField(_ data: Data, key: String, firstValue: String, lastValue: String) -> Data {
-    let text = String(data: data, encoding: .utf8)!
-    let current = "\"\(key)\":\(firstValue)"
-    return json(text.replacingOccurrences(of: current, with: "\"\(key)\":\(lastValue),\(current)"))
-}
 
 fileprivate struct ParserCase {
     let name: String
@@ -113,6 +105,8 @@ struct MacProtocolAdversarialHarness {
         base64BoundaryMutations()
         inboundAndParserOnlyCapBoundaries()
         strictControls()
+        scrollAdmissionAndBackpressure()
+        scrollTimerAndConversionBehavior()
         sessionProofsAndOwnership()
         generationSnapshots()
         proofMutations()
@@ -279,12 +273,175 @@ struct MacProtocolAdversarialHarness {
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"began\",\"x\":0.5,\"y\":1.0,\"t\":0}"), transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"began\",\"x\":1.5,\"y\":0}"), transport: .wifi)) == nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"invalid\",\"x\":0.5,\"y\":0}"), transport: .wifi)) == nil)
-        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":-1.0,\"dy\":2.0}"), transport: .wifi)) != nil)
-        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":1000000,\"dy\":-1000000}"), transport: .wifi)) != nil)
-        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":1000000.1,\"dy\":0}"), transport: .wifi)) == nil)
-        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":0,\"dy\":-1000000.1}"), transport: .wifi)) == nil)
+        let cap = 120.0
+        for value in [cap - 1, cap] {
+            precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":\(value),\"dy\":\(-value)}"), transport: .wifi)) != nil)
+        }
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":\(cap + 1),\"dy\":0}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":0,\"dy\":\(-(cap + 1))}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":1e999,\"dy\":0}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":0,\"dy\":-1e999}"), transport: .wifi)) == nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"kf\"}"), transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"hello\"}"), transport: .wifi)) == nil)
+    }
+
+    static func scrollAdmissionAndBackpressure() {
+        let cap = ScrollInputPolicy.messageDeltaLimit
+        precondition(cap == 120)
+        precondition(ScrollInputPolicy.injectedDeltaLimit == 120)
+
+        for value in [-(cap + 1), -cap, -(cap - 1), cap - 1, cap, cap + 1] {
+            let accepted = abs(value) <= cap
+            let parsedX = (try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":\(value),\"dy\":0}"), transport: .wifi)) != nil
+            let parsedY = (try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":0,\"dy\":\(value)}"), transport: .wifi)) != nil
+            precondition(parsedX == accepted)
+            precondition(parsedY == accepted)
+        }
+
+        let single = ScrollEventCoalescer()
+        precondition(single.pendingWorkCount == 0)
+        precondition(single.enqueue(dx: cap, dy: -cap))
+        precondition(single.pendingWorkCount == 1)
+        precondition(single.takePending() == ScrollDelta(dx: cap, dy: -cap))
+        precondition(single.pendingWorkCount == 0)
+        precondition(single.takePending() == nil)
+
+        let pendingPreserved = ScrollEventCoalescer()
+        precondition(pendingPreserved.enqueue(dx: cap - 1, dy: -(cap - 1)))
+        precondition(!pendingPreserved.enqueue(dx: cap + 1, dy: 0))
+        precondition(!pendingPreserved.enqueue(dx: 0, dy: -(cap + 1)))
+        precondition(!pendingPreserved.enqueue(dx: .infinity, dy: 0))
+        precondition(!pendingPreserved.enqueue(dx: 0, dy: .nan))
+        precondition(pendingPreserved.pendingWorkCount == 1)
+        precondition(pendingPreserved.takePending() == ScrollDelta(dx: cap - 1, dy: -(cap - 1)))
+
+        let burst = ScrollEventCoalescer()
+        for _ in 0..<10_000 {
+            precondition(burst.enqueue(dx: cap, dy: -cap))
+        }
+        precondition(burst.pendingWorkCount == 1)
+        precondition(burst.takePending() == ScrollDelta(dx: cap, dy: -cap))
+        precondition(burst.pendingWorkCount == 0)
+
+        let cancelled = ScrollEventCoalescer()
+        for index in 0..<10_000 {
+            let sign = index.isMultiple(of: 2) ? 1.0 : -1.0
+            precondition(cancelled.enqueue(dx: sign * cap, dy: -sign * cap))
+        }
+        precondition(cancelled.pendingWorkCount == 1)
+        precondition(cancelled.takePending() == ScrollDelta(dx: 0, dy: 0))
+
+        let saturated = ScrollEventCoalescer()
+        precondition(saturated.enqueue(dx: cap, dy: cap))
+        precondition(saturated.enqueue(dx: cap, dy: cap))
+        precondition(saturated.takePending() == ScrollDelta(dx: cap, dy: cap))
+        precondition(saturated.pendingWorkCount == 0)
+    }
+
+    static func scrollTimerAndConversionBehavior() {
+        let cap = ScrollInputPolicy.injectedDeltaLimit
+        var callbacks: [ScrollDelta] = []
+        let lock = NSLock()
+        let callbackSignal = DispatchSemaphore(value: 0)
+        let coalescer = ScrollEventCoalescer { delta in
+            lock.lock()
+            callbacks.append(delta)
+            lock.unlock()
+            callbackSignal.signal()
+        }
+
+        precondition(coalescer.enqueue(dx: 1, dy: 1))
+        precondition(callbackSignal.wait(timeout: .now() + 1) == .success)
+        lock.lock()
+        let firstCallbacks = callbacks
+        callbacks.removeAll()
+        lock.unlock()
+        precondition(firstCallbacks.count == 1)
+        precondition(firstCallbacks[0] == ScrollDelta(dx: 1, dy: 1))
+        precondition(coalescer.pendingWorkCount == 0)
+
+        precondition(coalescer.enqueue(dx: cap, dy: cap))
+        precondition(coalescer.enqueue(dx: cap, dy: cap))
+        precondition(callbackSignal.wait(timeout: .now() + 1) == .success)
+        lock.lock()
+        let saturatedCallbacks = callbacks
+        callbacks.removeAll()
+        lock.unlock()
+        precondition(saturatedCallbacks.count == 1)
+        precondition(abs(saturatedCallbacks[0].dx) <= cap && abs(saturatedCallbacks[0].dy) <= cap)
+
+        Thread.sleep(forTimeInterval: ScrollInputPolicy.injectionInterval * 2)
+        lock.lock()
+        let idleCount = callbacks.count
+        lock.unlock()
+        precondition(idleCount == 0)
+
+        lock.lock()
+        callbacks.removeAll()
+        lock.unlock()
+        let rateStart = Date()
+        while Date().timeIntervalSince(rateStart) < 0.06 {
+            precondition(coalescer.enqueue(dx: cap, dy: 0))
+            Thread.sleep(forTimeInterval: ScrollInputPolicy.injectionInterval / 10)
+        }
+        Thread.sleep(forTimeInterval: ScrollInputPolicy.injectionInterval * 2)
+        let observed = Date().timeIntervalSince(rateStart)
+        lock.lock()
+        let rateCallbacks = callbacks
+        callbacks.removeAll()
+        lock.unlock()
+        let permittedCallbacks = Int((observed / ScrollInputPolicy.injectionInterval).rounded(.up)) + 1
+        precondition(rateCallbacks.count <= permittedCallbacks)
+        precondition(!rateCallbacks.isEmpty)
+        for delta in rateCallbacks {
+            precondition(abs(delta.dx) <= cap && abs(delta.dy) <= cap)
+        }
+
+        let stress = ScrollEventCoalescer()
+        let group = DispatchGroup()
+        for worker in 0..<8 {
+            group.enter()
+            DispatchQueue.global().async {
+                for index in 0..<1_250 {
+                    let sign = (worker + index).isMultiple(of: 2) ? 1.0 : -1.0
+                    precondition(stress.enqueue(dx: sign, dy: -sign))
+                    _ = stress.takePending()
+                    precondition(stress.enqueue(dx: sign, dy: sign))
+                }
+                group.leave()
+            }
+        }
+        precondition(group.wait(timeout: .now() + 5) == .success)
+        precondition(stress.pendingWorkCount == 0 || stress.pendingWorkCount == 1)
+        if let pending = stress.takePending() {
+            precondition(abs(pending.dx) <= cap && abs(pending.dy) <= cap)
+        }
+
+        for badScale in [0.0, -1.0, Double.nan, Double.infinity, -Double.infinity] {
+            precondition(ScrollWheelConversion.nativeWheelDelta(dx: 1, dy: 1, displayScale: badScale) == nil)
+        }
+        precondition(ScrollWheelConversion.nativeWheelDelta(dx: .nan, dy: 1, displayScale: 2) == nil)
+        precondition(ScrollWheelConversion.nativeWheelDelta(dx: 1, dy: .infinity, displayScale: 2) == nil)
+        precondition(ScrollWheelConversion.nativeWheelDelta(dx: 1, dy: -1, displayScale: 0.01) == NativeScrollWheelDelta(dx: 100, dy: -100))
+        precondition(ScrollWheelConversion.nativeWheelDelta(dx: 2.5, dy: -2.5, displayScale: 2) == NativeScrollWheelDelta(dx: 1, dy: -1))
+        precondition(ScrollWheelConversion.nativeWheelDelta(dx: 3.0, dy: -3.0, displayScale: 2) == NativeScrollWheelDelta(dx: 2, dy: -2))
+        precondition(ScrollWheelConversion.nativeWheelDelta(dx: 10_000, dy: -10_000, displayScale: 0.001) == NativeScrollWheelDelta(dx: 120, dy: -120))
+
+        var teardownCallbacks = 0
+        let teardownLock = NSLock()
+        do {
+            let owner = ScrollEventCoalescer { _ in
+                teardownLock.lock()
+                teardownCallbacks += 1
+                teardownLock.unlock()
+            }
+            precondition(owner.enqueue(dx: 1, dy: 1))
+        }
+        Thread.sleep(forTimeInterval: ScrollInputPolicy.injectionInterval * 2)
+        teardownLock.lock()
+        let callbacksAfterTeardown = teardownCallbacks
+        teardownLock.unlock()
+        precondition(callbacksAfterTeardown == 0)
     }
 
     static func proofMutations() {
