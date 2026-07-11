@@ -7,7 +7,7 @@ cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
 
 COMMON=(-parse-as-library -module-cache-path "$TMP/module-cache")
-xcrun swiftc "${COMMON[@]}" Mac/Pairing.swift Mac/Log.swift \
+xcrun swiftc "${COMMON[@]}" Mac/ProtocolParser.swift Mac/Pairing.swift Mac/Log.swift \
   Tests/PairingVectors.swift -o "$TMP/pairing-mac"
 xcrun swiftc "${COMMON[@]}" iOS/Pairing.swift iOS/Log.swift \
   Tests/PairingVectors.swift -o "$TMP/pairing-ios"

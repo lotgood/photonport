@@ -41,7 +41,7 @@ import LocalAuthentication
 // and checked against the peer's earlier commit. No low-entropy secret (PIN)
 // is ever transmitted — authentication is the human comparing the derived SAS
 // on both screens, which the commitment phase makes ungrindable.
-struct PairHello: Codable {
+struct PairHello: Codable, Sendable {
     var type = "pair-hello"
     let v: Int              // protocol version (2)
     let role: String        // "mac" | "device"
@@ -52,7 +52,7 @@ struct PairHello: Codable {
 }
 
 // Hash commitment to an opening, exchanged before the opening is revealed.
-struct PairCommit: Codable {
+struct PairCommit: Codable, Sendable {
     var type = "pair-commit"
     let v: Int
     let commit: String      // base64 of the 32-byte SHA-256 commitment
@@ -60,7 +60,7 @@ struct PairCommit: Codable {
 
 // MARK: - Stream session v3 messages
 
-struct SessionOpen: Codable {
+struct SessionOpen: Codable, Sendable {
     var type = "session-open"
     let v: Int
     let macInstallID: String
@@ -69,7 +69,7 @@ struct SessionOpen: Codable {
     let primaryProof: String
 }
 
-struct SessionAccept: Codable {
+struct SessionAccept: Codable, Sendable {
     var type = "session-accept"
     let v: Int
     let sessionID: String
@@ -77,13 +77,13 @@ struct SessionAccept: Codable {
     let acceptProof: String
 }
 
-struct SessionBusy: Codable {
+struct SessionBusy: Codable, Sendable {
     var type = "session-busy"
     let v: Int
     let reason: String
 }
 
-struct SessionChannelOpen: Codable {
+struct SessionChannelOpen: Codable, Sendable {
     var type = "channel-open"
     let v: Int
     let macInstallID: String
@@ -97,29 +97,76 @@ struct SessionChannelOpen: Codable {
 /// Receiver-wide ownership and replay state for one primary stream session.
 /// Keeping this reducer independent from Network.framework makes the busy,
 /// stale-generation, and channel-replay rules deterministic to test.
-struct SessionOwnershipState {
-    struct Lease: Equatable {
+struct SessionOwnershipState: Sendable {
+    struct Lease: Equatable, Sendable {
         let macInstallID: String
         let generation: UInt64
     }
 
-    enum Claim: Equatable {
+    enum Claim: Equatable, Sendable {
         case accepted(Lease)
         case busy(Lease)
+        case exhausted
     }
 
-    private(set) var generation: UInt64 = 0
+    private(set) var generation: UInt64
+    private(set) var exhausted: Bool
     private(set) var active: Lease?
     private var channelNonces: Set<String> = []
 
+    init() {
+        self.generation = 0
+        self.exhausted = false
+        self.active = nil
+    }
+
+    private init(generation: UInt64, exhausted: Bool, active: Lease?) {
+        self.generation = generation
+        self.exhausted = exhausted
+        self.active = active
+    }
+
     mutating func claim(macInstallID: String) -> Claim {
         if let active { return .busy(active) }
-        generation &+= 1
-        if generation == 0 { generation = 1 }
+        guard !exhausted, generation < UInt64.max else {
+            exhausted = true
+            return .exhausted
+        }
+        generation += 1
+        if generation == UInt64.max { exhausted = true }
         let lease = Lease(macInstallID: macInstallID, generation: generation)
         active = lease
         channelNonces.removeAll(keepingCapacity: true)
         return .accepted(lease)
+    }
+
+    struct Snapshot: Codable, Equatable, Sendable {
+        let generation: UInt64
+        let generationExhausted: Bool
+    }
+
+    static func fresh() -> SessionOwnershipState { SessionOwnershipState() }
+
+    func snapshot() -> Snapshot {
+        Snapshot(generation: generation, generationExhausted: exhausted)
+    }
+
+    func encodeSnapshot() throws -> Data {
+        try JSONEncoder().encode(snapshot())
+    }
+
+    static func restore(snapshot data: Data) throws -> SessionOwnershipState {
+        try restore(snapshot: ProtocolParser.parseGenerationSnapshot(data))
+    }
+
+    static func restore(snapshot: Snapshot) throws -> SessionOwnershipState {
+        guard snapshot.generation > 0 else { throw ProtocolParser.ParseError.value }
+        if snapshot.generation == UInt64.max {
+            guard snapshot.generationExhausted else { throw ProtocolParser.ParseError.value }
+            return SessionOwnershipState(generation: UInt64.max, exhausted: true, active: nil)
+        }
+        guard !snapshot.generationExhausted else { throw ProtocolParser.ParseError.value }
+        return SessionOwnershipState(generation: snapshot.generation, exhausted: false, active: nil)
     }
 
     func authorizes(macInstallID: String, generation: UInt64) -> Bool {
@@ -373,17 +420,33 @@ enum PairingWire {
     }
 
     /// Reads exactly one framed JSON message.
-    static func receive<T: Decodable>(_ type: T.Type, on conn: NWConnection,
+    static func receive<T: Decodable & Sendable>(_ type: T.Type, on conn: NWConnection,
                                       completion: @escaping (T?) -> Void) {
         conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { data, _, _, err in
             guard let data, data.count == 4, err == nil else { return completion(nil) }
-            let len = Int(UInt32(bigEndian: data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
-            guard len > 0, len < 64 * 1024 else { return completion(nil) }
-            conn.receive(minimumIncompleteLength: len, maximumLength: len) { payload, _, _, err in
-                guard let payload, payload.count == len, err == nil else { return completion(nil) }
-                completion(try? JSONDecoder().decode(T.self, from: payload))
+            do {
+                let len = try ProtocolParser.framedPayloadLength(from: data, kind: .pairing)
+                conn.receive(minimumIncompleteLength: len, maximumLength: len) { payload, _, _, err in
+                    guard let payload, err == nil,
+                          (try? ProtocolParser.validatePayload(payload, expectedLength: len, kind: .pairing)) != nil,
+                          let decoded = try? PairingWire.decode(type, from: payload) else {
+                        return completion(nil)
+                    }
+                    completion(decoded)
+                }
+            } catch {
+                completion(nil)
             }
         }
+    }
+
+    static func decode<T: Decodable & Sendable>(_ type: T.Type, from payload: Data) throws -> T {
+        if type == PairCommit.self { return try ProtocolParser.parsePairCommit(payload) as! T }
+        if type == PairHello.self { return try ProtocolParser.parsePairHello(payload) as! T }
+        if type == SessionAccept.self { return try ProtocolParser.parseSessionAccept(payload) as! T }
+        if type == SessionBusy.self { return try ProtocolParser.parseSessionBusy(payload) as! T }
+        if type == SessionChannelOpen.self { return try ProtocolParser.parseChannelOpen(payload) as! T }
+        throw ProtocolParser.ParseError.type
     }
 }
 

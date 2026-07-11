@@ -90,6 +90,19 @@ struct PhoneInfo: Decodable {
     let deviceNonce: String?
     let usbSessionSeed: String?
 
+
+    init(_ hello: ProtocolParser.ServerHello) {
+        self.pixelsWide = hello.pixelsWide
+        self.pixelsHigh = hello.pixelsHigh
+        self.scale = hello.scale
+        self.device = hello.device
+        self.id = hello.id
+        self.maxFps = hello.maxFps
+        self.hdr = hello.hdr
+        self.sessionVersion = SessionCrypto.version
+        self.deviceNonce = hello.deviceNonce.base64EncodedString()
+        self.usbSessionSeed = hello.usbSessionSeed?.base64EncodedString()
+    }
     var kind: String { device ?? "device" }
     /// Refresh rate to drive the pipeline at, clamped to what the wire and
     /// the virtual display can plausibly do.
@@ -264,9 +277,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private let localCursor = UserDefaults.standard.object(forKey: "localCursor") == nil
         || UserDefaults.standard.bool(forKey: "localCursor")
     private var cursorTimer: DispatchSourceTimer?
-    private var cursorImageTimer: DispatchSourceTimer?
     private var lastCursorSent: (x: Double, y: Double, visible: Bool) = (-1, -1, false)
-    private var lastCursorPNGHash = 0
     private var captureDisplayID: CGDirectDisplayID = 0
 
     // Input latency: touches arrive stamped in our clock (the phone applies
@@ -568,7 +579,6 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             self.stream = stream
         }
         captureDisplayID = display.displayID
-        lastCursorPNGHash = 0      // rotation rebuilds: re-send the sprite
         lastCursorSent = (-1, -1, false)
         startCursorEcho()
         if audioEnabled {
@@ -848,8 +858,6 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func stopOnQueue() {
         cursorTimer?.cancel()
         cursorTimer = nil
-        cursorImageTimer?.cancel()
-        cursorImageTimer = nil
         stream?.stopCapture { _ in }
         stream = nil
         audioStream?.stopCapture { _ in }
@@ -957,7 +965,6 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         everConnected = true
         disconnectedSince = nil
         needsKeyframe = true
-        lastCursorPNGHash = 0
         lastCursorSent = (-1, -1, false)
         lastReceived = Date()
         dialAudioConnection()
@@ -1083,21 +1090,17 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                   error == nil, let header, header.count == 4 else {
                 conn.cancel(); return
             }
-            let length = Int(UInt32(bigEndian: header.withUnsafeBytes {
-                $0.loadUnaligned(as: UInt32.self)
-            }))
-            guard length > 0, length < 1 << 20 else { conn.cancel(); return }
-            conn.receive(minimumIncompleteLength: length, maximumLength: length) {
-                [weak self] payload, _, _, error in
-                guard let self, conn === self.audioConnection,
-                      error == nil, let payload, payload.count == length,
-                      let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-                      object["type"] as? String == "server-hello",
-                      let info = try? JSONDecoder().decode(PhoneInfo.self, from: payload),
-                      info.sessionVersion == SessionCrypto.version,
-                      let session = self.boundStreamSession,
-                      info.id == session.info.id,
-                      let nonce = SessionCrypto.randomBytes(count: 32) else {
+            do {
+                let length = try ProtocolParser.framedPayloadLength(from: header, kind: .audioControl)
+                conn.receive(minimumIncompleteLength: length, maximumLength: length) {
+                    [weak self] payload, _, _, error in
+                    guard let self, conn === self.audioConnection,
+                          error == nil, let payload,
+                          (try? ProtocolParser.validatePayload(payload, expectedLength: length, kind: .audioControl)) != nil,
+                          let parsed = try? ProtocolParser.parseServerHello(payload, transport: tagged ? .wifi : .usb),
+                          let session = self.boundStreamSession,
+                          parsed.id == session.info.id,
+                          let nonce = SessionCrypto.randomBytes(count: 32) else {
                     conn.cancel(); return
                 }
                 let proof = SessionCrypto.channelProof(
@@ -1123,6 +1126,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                         Log.info("session v3 audio ready (dedicated socket\(tagged ? ", TLS" : ", USB"))")
                     }
                 })
+            }
+            } catch {
+                conn.cancel()
             }
         }
     }
@@ -1286,10 +1292,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 let capFps = elapsed > 0 ? Int(Double(self.capFrames) / elapsed) : 0
                 self.capFrames = 0
                 self.capWindowStart = Date()
-                let sorted = self.inputLatencies.sorted()
-                let inp50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2].rounded()
-                let inp95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))].rounded()
-                self.sendJSONFrame("{\"type\":\"ping\",\"drops\":\(self.dropsTotal),\"pending\":\(self.pendingSends),\"inp50\":\(inp50),\"inp95\":\(inp95),\"capFps\":\(capFps)}")
+                let pingTime = Date().timeIntervalSince1970 * 1000
+                let pingID = UInt64(pingTime)
+                self.sendJSONFrame("{\"type\":\"ping\",\"id\":\(pingID),\"t\":\(pingTime)}")
                 // The dedicated audio socket is best-effort — keep retrying
                 // while the main connection is healthy but audio isn't.
                 if !self.audioConnectionReady { self.dialAudioConnection() }
@@ -1340,29 +1345,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         timer.setEventHandler { [weak self] in self?.pollCursorPosition() }
         timer.resume()
         cursorTimer = timer
-        scheduleCursorImagePoll()
     }
 
-    /// Sprite changes (arrow ↔ I-beam ↔ resize…) must land fast or the wrong
-    /// cursor shows over hot areas — poll at 30Hz on the main thread (NSCursor
-    /// is AppKit), hash the raw bitmap, and only PNG-encode + send on change.
-    ///
-    /// A dedicated timer (cancelled+replaced here, like cursorTimer above) — not
-    /// a self-rescheduling asyncAfter chain. Every rebuild re-enters
-    /// startCursorEcho, and sleep/wake rebuilds happen often; a recursive chain
-    /// guarded only by `stopped` would stack one extra 30Hz main-thread
-    /// TIFF-encode loop per rebuild, creeping CPU to ~50% until a restart (#75).
-    private func scheduleCursorImagePoll() {
-        cursorImageTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 0.033, repeating: .milliseconds(33))
-        timer.setEventHandler { [weak self] in
-            guard let self, !self.stopped, self.localCursor else { return }
-            self.pollCursorImage()
-        }
-        timer.resume()
-        cursorImageTimer = timer
-    }
 
     private func pollCursorPosition() {
         guard connectionReady, captureDisplayID != 0,
@@ -1375,57 +1359,33 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             if !lastCursorSent.visible
                 || abs(x - lastCursorSent.x) > 0.0004 || abs(y - lastCursorSent.y) > 0.0004 {
                 lastCursorSent = (x, y, true)
-                sendJSONFrame(String(format: "{\"type\":\"cursor\",\"x\":%.4f,\"y\":%.4f,\"v\":1}", x, y))
+                sendJSONFrame(String(format: "{\"type\":\"cursor\",\"x\":%.4f,\"y\":%.4f,\"visible\":true}", x, y))
             }
         } else if lastCursorSent.visible {
             lastCursorSent.visible = false
-            sendJSONFrame("{\"type\":\"cursor\",\"v\":0}")
+            sendJSONFrame(String(format:
+                "{\"type\":\"cursor\",\"x\":%.4f,\"y\":%.4f,\"visible\":false}",
+                lastCursorSent.x, lastCursorSent.y))
         }
-    }
-
-    private func pollCursorImage() {
-        // Display size read LIVE, not snapshotted at capture start: the
-        // HiDPI mode settles (and macOS re-flips it) asynchronously, and a
-        // sprite normalized against the 1x size renders at half size on the
-        // device. Mixing the size into the dedup hash re-sends the sprite
-        // whenever the mode flips, so the proportion always heals.
-        guard connectionReady, captureDisplayID != 0,
-              let cursor = NSCursor.currentSystem else { return }
-        let displaySize = CGDisplayBounds(captureDisplayID).size   // points, current mode
-        guard displaySize.width > 0, displaySize.height > 0 else { return }
-        let image = cursor.image
-        guard let tiff = image.tiffRepresentation else { return }
-        let hash = tiff.hashValue ^ Int(displaySize.width) &* 31
-        guard hash != lastCursorPNGHash else { return }
-        guard let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:]),
-              png.count < 24_000 else { return }
-        lastCursorPNGHash = hash
-        let size = image.size            // Mac points
-        let hot = cursor.hotSpot
-        // Normalized against the display so the phone can size/anchor the
-        // sprite without knowing capture scale or HiDPI factor.
-        let msg = String(format:
-            "{\"type\":\"cursorImg\",\"nw\":%.5f,\"nh\":%.5f,\"ax\":%.3f,\"ay\":%.3f,\"png\":\"%@\"}",
-            size.width / displaySize.width,
-            size.height / displaySize.height,
-            size.width > 0 ? hot.x / size.width : 0,
-            size.height > 0 ? hot.y / size.height : 0,
-            png.base64EncodedString())
-        queue.async { self.sendJSONFrame(msg) }
     }
 
     // MARK: - Control messages (phone -> Mac)
 
     private func receiveControl(on conn: NWConnection) {
         conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] data, _, _, error in
-            guard let self, conn === self.connection,
-                  error == nil, let data, data.count == 4 else { return }
-            let len = Int(UInt32(bigEndian: data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
-            guard len > 0, len < 1 << 20 else { return }
+            guard let self, conn === self.connection else { return }
+            guard error == nil, let data, data.count == 4,
+                  let len = try? ProtocolParser.framedPayloadLength(from: data, kind: .session) else {
+                conn.cancel()
+                return
+            }
             conn.receive(minimumIncompleteLength: len, maximumLength: len) { [weak self] payload, _, _, error in
-                guard let self, conn === self.connection,
-                      error == nil, let payload, payload.count == len else { return }
+                guard let self, conn === self.connection else { return }
+                guard error == nil, let payload,
+                      (try? ProtocolParser.validatePayload(payload, expectedLength: len, kind: .session)) != nil else {
+                    conn.cancel()
+                    return
+                }
                 self.handleControl(payload)
                 guard conn === self.connection else { return }
                 self.receiveControl(on: conn)
@@ -1484,34 +1444,24 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             return
         }
         guard let pending = pendingStreamSession,
-              let message = try? JSONDecoder().decode(SessionAccept.self, from: payload),
-              message.v == SessionCrypto.version,
-              let sessionID = Data(base64Encoded: message.sessionID), sessionID.count == 16,
-              let proof = Data(base64Encoded: message.acceptProof),
-              let deviceID = pending.info.id else {
+              let deviceID = pending.info.id,
+              let verified = try? ProtocolParser.parseVerifiedSessionAccept(
+                payload,
+                primaryKey: pending.primaryKey,
+                macInstallID: PairingStore.macInstallID,
+                deviceInstallID: deviceID,
+                macNonce: pending.macNonce,
+                deviceNonce: pending.deviceNonce) else {
             Log.info("session v3 accept invalid")
-            scheduleReconnect()
-            return
-        }
-        let secret = SessionCrypto.channelSecret(
-            primaryKey: pending.primaryKey, sessionID: sessionID,
-            generation: message.generation)
-        let expected = SessionCrypto.acceptProof(
-            key: secret, sessionID: sessionID, generation: message.generation,
-            macInstallID: PairingStore.macInstallID,
-            deviceInstallID: deviceID, macNonce: pending.macNonce,
-            deviceNonce: pending.deviceNonce)
-        guard SessionCrypto.constantTimeEqual(proof, expected) else {
-            Log.info("session v3 accept proof mismatch")
             scheduleReconnect()
             return
         }
         pendingStreamSession = nil
         let session = BoundStreamSession(
-            info: pending.info, sessionID: sessionID,
-            generation: message.generation, channelSecret: secret)
+            info: pending.info, sessionID: verified.sessionID,
+            generation: verified.message.generation, channelSecret: verified.channelSecret)
         activateBoundSession(session)
-        Log.info("session v3 accepted (generation \(message.generation))")
+        Log.info("session v3 accepted (generation \(verified.message.generation))")
     }
 
     @discardableResult
@@ -1526,58 +1476,54 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
 
     private func handleControl(_ payload: Data) {
-        lastReceived = Date()
-        guard let obj = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-              let type = obj["type"] as? String else {
-            Log.info("unparseable control message (\(payload.count) bytes)")
+        guard let control = try? ProtocolParser.parseControl(payload, transport: wifiPSK == nil ? .usb : .wifi) else {
+            Log.info("invalid control message (\(payload.count) bytes)")
+            scheduleReconnect()
             return
         }
-        switch type {
-        case "hello":
-            Log.info("legacy receiver hello rejected — protocol v3 required")
-            scheduleReconnect(
-                after: SessionTiming.busyRetryDelay,
-                status: "Incompatible receiver — update PhotonPort on both devices")
-        case "ping":
-            // Echo with our clock so the phone can estimate the offset
-            // (NTP-style) and compute true end-to-end frame latency.
-            if let t = obj["t"] as? Double {
-                let mt = Date().timeIntervalSince1970 * 1000
-                sendJSONFrame("{\"type\":\"pong\",\"t\":\(t),\"mt\":\(mt)}")
+        switch control {
+        case .serverHello(_), .sessionAccept(_), .sessionBusy(_):
+            break
+        default:
+            guard connectionReady, boundStreamSession != nil else {
+                Log.info("pre-auth application control rejected")
+                scheduleReconnect()
+                return
             }
-        case "stats":
+        }
+        lastReceived = Date()
+        switch control {
+        case .ping(let id, let t):
+            // Echo the authority-defined correlation id and finite timestamp.
+            sendJSONFrame("{\"type\":\"pong\",\"id\":\(id),\"t\":\(t)}")
+        case .stats(_, _, _, let raw):
             // Aggregated pipeline health measured on the phone — logged here
             // so one file holds both ends of the story.
-            if let json = try? JSONSerialization.data(withJSONObject: obj),
-               let line = String(data: json, encoding: .utf8) {
-                Log.info("PHONE-STATS \(line) | mac drops=\(dropsThisWindow) pending=\(pendingSends)")
-                dropsThisWindow = 0
-            }
-        case "server-hello":
-            if let info = try? JSONDecoder().decode(PhoneInfo.self, from: payload) {
-                let previous = lastHello
-                lastHello = info
-                Task { @MainActor in self.onHello?(info) }
-                if boundStreamSession == nil {
-                    beginSessionHandshake(info)
-                } else if mode == .extend, stream != nil || cgStream != nil,
-                          let previous,
-                          previous.pixelsWide != info.pixelsWide
-                          || previous.pixelsHigh != info.pixelsHigh {
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(300))
-                        guard let current = self.lastHello,
-                              current.pixelsWide == info.pixelsWide,
-                              current.pixelsHigh == info.pixelsHigh else { return }
-                        await self.reconfigure(info)
-                    }
+            Log.info("PHONE-STATS \(raw) | mac drops=\(dropsThisWindow) pending=\(pendingSends)")
+            dropsThisWindow = 0
+        case .serverHello(let parsed):
+            let info = PhoneInfo(parsed)
+            let previous = lastHello
+            lastHello = info
+            Task { @MainActor in self.onHello?(info) }
+            if boundStreamSession == nil {
+                beginSessionHandshake(info)
+            } else if mode == .extend, stream != nil || cgStream != nil,
+                      let previous,
+                      previous.pixelsWide != info.pixelsWide
+                      || previous.pixelsHigh != info.pixelsHigh {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard let current = self.lastHello,
+                          current.pixelsWide == info.pixelsWide,
+                          current.pixelsHigh == info.pixelsHigh else { return }
+                    await self.reconfigure(info)
                 }
             }
-        case "session-accept":
+        case .sessionAccept:
             handleSessionAccept(payload)
-        case "session-busy":
-            let reason = (try? JSONDecoder().decode(SessionBusy.self, from: payload))?.reason
-                ?? "busy"
+        case .sessionBusy(let busy):
+            let reason = busy.reason
             guard boundStreamSession == nil else {
                 Log.info("post-bind session busy ignored: \(reason)")
                 break
@@ -1588,30 +1534,22 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 : "Session rejected (\(reason)) — retrying…"
             scheduleReconnect(after: SessionTiming.busyRetryDelay, status: message)
 
-        case "touch":
-            if let phase = obj["phase"] as? String,
-               let x = obj["x"] as? Double,
-               let y = obj["y"] as? Double {
-                inputInjector?.handleTouch(phase: phase, x: x, y: y)
-                if let t = obj["t"] as? Double {
-                    let delta = Date().timeIntervalSince1970 * 1000 - t
-                    if delta > -50, delta < 1000 {
-                        inputLatencies.append(max(delta, 0))
-                        if inputLatencies.count > 240 { inputLatencies.removeFirst(120) }
-                    }
+        case .touch(let phase, let x, let y, let t):
+            inputInjector?.handleTouch(phase: phase, x: x, y: y)
+            if let t {
+                let delta = Date().timeIntervalSince1970 * 1000 - t
+                if delta > -50, delta < 1000 {
+                    inputLatencies.append(max(delta, 0))
+                    if inputLatencies.count > 240 { inputLatencies.removeFirst(120) }
                 }
             }
-        case "scroll":
-            if let dx = obj["dx"] as? Double, let dy = obj["dy"] as? Double {
-                inputInjector?.handleScroll(dx: dx, dy: dy)
-            }
-        case "kf":
+        case .scroll(let dx, let dy):
+            inputInjector?.handleScroll(dx: dx, dy: dy)
+        case .keyframe:
             // The phone's decoder lost sync (e.g. it attached mid-GOP and
             // periodic keyframes are off) — force an IDR on the next frame.
             Log.info("phone requested keyframe")
             needsKeyframe = true
-        default:
-            Log.info("unknown control message type: \(type)")
         }
     }
 

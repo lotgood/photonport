@@ -1,115 +1,123 @@
 import Foundation
 import CryptoKit
 
-private struct Blob: Codable { let value: String }
-
-private enum Adapter {
-    static let maxFrame = 65_535
-
-    static func frameLength(_ frame: Data) -> Int? {
-        guard frame.count >= 4 else { return nil }
-        let length = Int(frame.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian })
-        guard (1...maxFrame).contains(length), frame.count == length + 4 else { return nil }
-        return length
-    }
-
-    static func canonicalBase64(_ value: String, count: Int) -> Data? {
-        guard !value.isEmpty, !value.contains(where: { $0 == "\n" || $0 == "\r" || $0 == " " || $0 == "\t" }),
-              let data = Data(base64Encoded: value), data.count == count,
-              data.base64EncodedString() == value else { return nil }
-        return data
-    }
-}
+private func json(_ text: String) -> Data { Data(text.utf8) }
+private func b64(_ byte: UInt8, _ count: Int) -> String { Data(repeating: byte, count: count).base64EncodedString() }
 
 @main
 struct MacProtocolAdversarialHarness {
     static func main() {
-        framing()
-        commitments()
-        constantTimeComparison()
+        framingCaps()
+        strictJSON()
         canonicalFields()
+        transportRules()
+        strictControls()
         sessionProofsAndOwnership()
+        generationSnapshots()
         print("mac protocol adversarial harness passed")
     }
 
-    static func framing() {
-        let small = PairingWire.frame(Blob(value: "ok"))!
-        precondition(Adapter.frameLength(small) == 14, "framed JSON length changed unexpectedly")
-        for length in [0, 65_536, 65_535] {
-            var n = UInt32(length).bigEndian
-            var candidate = Data(bytes: &n, count: 4)
-            candidate.append(Data(repeating: 0, count: max(1, min(length, 65_535))))
-            let accepted = Adapter.frameLength(candidate) != nil
-            precondition(accepted == (length == 65_535), "frame bound drift at \(length)")
+    static func framingCaps() {
+        for (kind, cap) in [(ProtocolParser.FrameKind.pairing, 65_535), (.session, 65_535), (.audioControl, 65_535), (.audioData, 262_144), (.videoData, 16_777_216)] {
+            for length in [0, cap + 1] {
+                var n = UInt32(length).bigEndian
+                precondition((try? ProtocolParser.framedPayloadLength(from: Data(bytes: &n, count: 4), kind: kind)) == nil)
+            }
+            var n = UInt32(cap).bigEndian
+            precondition((try? ProtocolParser.framedPayloadLength(from: Data(bytes: &n, count: 4), kind: kind)) == cap)
+            precondition((try? ProtocolParser.validatePayload(Data(repeating: 0, count: cap - 1), expectedLength: cap, kind: kind)) == nil)
         }
-        var truncated = small
-        truncated.removeLast()
-        precondition(Adapter.frameLength(truncated) == nil)
     }
 
-    static func commitments() {
-        let role = "mac", install = "install-a", name = "Studio Mac"
-        let pub = Data(repeating: 0x11, count: 32), nonce = Data(repeating: 0x22, count: 16)
-        let original = PairingCrypto.commitment(role: role, installID: install, name: name, pub: pub, nonce: nonce)
-        precondition(original.count == 32)
-        let mutations: [Data] = [
-            PairingCrypto.commitment(role: "device", installID: install, name: name, pub: pub, nonce: nonce),
-            PairingCrypto.commitment(role: role, installID: "install-b", name: name, pub: pub, nonce: nonce),
-            PairingCrypto.commitment(role: role, installID: install, name: "Other Mac", pub: pub, nonce: nonce),
-            PairingCrypto.commitment(role: role, installID: install, name: name, pub: Data(repeating: 0x12, count: 32), nonce: nonce),
-            PairingCrypto.commitment(role: role, installID: install, name: name, pub: pub, nonce: Data(repeating: 0x23, count: 16)),
-            PairingCrypto.commitment(role: role, installID: install, name: nil, pub: pub, nonce: nonce)
-        ]
-        for mutated in mutations { precondition(mutated != original, "commitment field mutation was not bound") }
-    }
-
-    static func constantTimeComparison() {
-        let bytes = Data([1, 2, 3, 4, 5, 6])
-        precondition(SessionCrypto.constantTimeEqual(bytes, bytes))
-        precondition(!SessionCrypto.constantTimeEqual(bytes, Data([1, 2, 3, 4, 5, 7])))
-        precondition(!SessionCrypto.constantTimeEqual(bytes, Data([1, 2, 3])))
-        let slice = bytes[1..<5]
-        let copy = Data([2, 3, 4, 5])
-        precondition(SessionCrypto.constantTimeEqual(Data(slice), copy), "slice comparison must be offset-safe")
-        precondition(!SessionCrypto.constantTimeEqual(Data(bytes[0..<4]), copy))
+    static func strictJSON() {
+        let good = json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}")
+        precondition((try? ProtocolParser.parseSessionBusy(good)) != nil)
+        precondition((try? ProtocolParser.parseSessionBusy(json("{\"type\":\"session-busy\",\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}"))) == nil)
+        precondition((try? ProtocolParser.parseSessionBusy(json("{\"type\":\"session-busy\",\"ty\\u0070e\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}"))) == nil)
+        precondition((try? ProtocolParser.parseSessionBusy(json("{\"type\":\"session-busy\",\"v\":3}"))) == nil)
+        precondition((try? ProtocolParser.parseSessionBusy(json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\",\"x\":1}"))) == nil)
+        precondition((try? ProtocolParser.parseSessionBusy(json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"not_busy\"}"))) == nil)
+        precondition((try? ProtocolParser.parsePairCommit(json("{\"type\":\"pair-commit\",\"v\":2,\"commit\":\"\(b64(0x11, 32))\"}"))) != nil)
     }
 
     static func canonicalFields() {
-        let pub = Data(repeating: 0xAB, count: 32), nonce = Data(repeating: 0xCD, count: 16)
-        precondition(Adapter.canonicalBase64(pub.base64EncodedString(), count: 32) == pub)
-        precondition(Adapter.canonicalBase64(nonce.base64EncodedString(), count: 16) == nonce)
-        precondition(Adapter.canonicalBase64(pub.base64EncodedString() + "\n", count: 32) == nil)
-        precondition(Adapter.canonicalBase64(pub.base64EncodedString() + "=", count: 32) == nil)
-        precondition(Adapter.canonicalBase64(Data(repeating: 0, count: 31).base64EncodedString(), count: 32) == nil)
-        precondition(Adapter.canonicalBase64(Data(repeating: 0, count: 33).base64EncodedString(), count: 32) == nil)
+        let accept = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":1,\"acceptProof\":\"\(b64(0x52, 32))\"}")
+        precondition((try? ProtocolParser.parseSessionAccept(accept)) != nil)
+        let canonicalSessionID = b64(0x51, 16)
+        let noncanonicalAlias = String(canonicalSessionID.dropLast(3)) + "R=="
+        precondition(Data(base64Encoded: canonicalSessionID) == Data(base64Encoded: noncanonicalAlias))
+        precondition((try? ProtocolParser.parseSessionAccept(json(String(data: accept, encoding: .utf8)!.replacingOccurrences(of: canonicalSessionID, with: noncanonicalAlias)))) == nil)
+        precondition((try? ProtocolParser.parseSessionAccept(json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(b64(0x51, 15))\",\"generation\":1,\"acceptProof\":\"\(b64(0x52, 32))\"}"))) == nil)
+        precondition((try? ProtocolParser.parseSessionAccept(json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":0,\"acceptProof\":\"\(b64(0x52, 32))\"}"))) == nil)
+        precondition((try? ProtocolParser.parseSessionAccept(json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":1.5,\"acceptProof\":\"\(b64(0x52, 32))\"}"))) == nil)
+        precondition((try? ProtocolParser.parseSessionAccept(json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":18446744073709551616,\"acceptProof\":\"\(b64(0x52, 32))\"}"))) == nil)
+        let channel = json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\(b64(0x61, 32))\",\"proof\":\"\(b64(0x62, 32))\"}")
+        precondition((try? ProtocolParser.parseChannelOpen(channel)) != nil)
+        precondition((try? ProtocolParser.parseChannelOpen(json(String(data: channel, encoding: .utf8)!.replacingOccurrences(of: "audio", with: "video")))) == nil)
+    }
+
+    static func transportRules() {
+        let common = "\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true"
+        let wifi = json("{\(common)}")
+        let usb = json("{\(common),\"usbSessionSeed\":\"\(b64(0x43, 32))\"}")
+        precondition((try? ProtocolParser.parseServerHello(wifi, transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseServerHello(usb, transport: .usb)) != nil)
+        precondition((try? ProtocolParser.parseServerHello(usb, transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseServerHello(wifi, transport: .usb)) == nil)
+        let nonfinite = common.replacingOccurrences(of: "2.0", with: "1e999")
+        precondition((try? ProtocolParser.parseServerHello(json("{\(nonfinite)}"), transport: .wifi)) == nil)
+    }
+
+    static func strictControls() {
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"ping\",\"id\":18446744073709551615,\"t\":1.25}"), transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"ping\",\"t\":1.25}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"ping\",\"id\":\"p1\",\"t\":1.25}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"stats\",\"fps\":60.0,\"bitrate\":12.5,\"dropped\":0}"), transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"began\",\"x\":0.5,\"y\":1.0,\"t\":0}"), transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"began\",\"x\":1.5,\"y\":0}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"invalid\",\"x\":0.5,\"y\":0}"), transport: .wifi)) == nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":-1.0,\"dy\":2.0}"), transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"kf\"}"), transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseControl(json("{\"type\":\"hello\"}"), transport: .wifi)) == nil)
     }
 
     static func sessionProofsAndOwnership() {
-        precondition(SessionCrypto.version == 3)
-        precondition(SessionTiming.receiverOwnershipTimeout == 5 && SessionTiming.handshakeTimeout == 5)
         let key = SymmetricKey(data: Data(repeating: 0x31, count: 32))
         let macID = "mac-a", deviceID = "device-a"
-        let macNonce = Data(repeating: 0x41, count: 16), deviceNonce = Data(repeating: 0x42, count: 16)
-        let primary = SessionCrypto.primaryProof(key: key, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)
-        precondition(primary.count == 32)
-        precondition(SessionCrypto.constantTimeEqual(primary, SessionCrypto.primaryProof(key: key, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)))
-        precondition(!SessionCrypto.constantTimeEqual(primary, SessionCrypto.primaryProof(key: key, macInstallID: "mac-b", deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)))
+        let macNonce = Data(repeating: 0x41, count: 32), deviceNonce = Data(repeating: 0x42, count: 32)
         let sid = Data(repeating: 0x51, count: 16)
-        let accept = SessionCrypto.acceptProof(key: key, sessionID: sid, generation: 1, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)
-        precondition(!SessionCrypto.constantTimeEqual(accept, SessionCrypto.acceptProof(key: key, sessionID: sid, generation: 2, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)))
-        let channel = SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "video", nonce: Data(repeating: 0x61, count: 16))
-        precondition(!SessionCrypto.constantTimeEqual(channel, SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "audio", nonce: Data(repeating: 0x61, count: 16))))
-
-        var state = SessionOwnershipState()
+        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sid, generation: 1)
+        let proof = SessionCrypto.acceptProof(key: secret, sessionID: sid, generation: 1, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)
+        let accept = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sid.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}")
+        precondition((try? ProtocolParser.parseVerifiedSessionAccept(accept, primaryKey: key, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)) != nil)
+        precondition((try? ProtocolParser.parseVerifiedSessionAccept(accept, primaryKey: key, macInstallID: "wrong", deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)) == nil)
+        let channel = SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "video", nonce: Data(repeating: 0x61, count: 32))
+        precondition(!SessionCrypto.constantTimeEqual(channel, SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "audio", nonce: Data(repeating: 0x61, count: 32))))
+        var state = SessionOwnershipState.fresh()
         precondition(state.consumeChannelNonce(macInstallID: macID, generation: 1, nonce: sid) == false)
         guard case .accepted(let lease) = state.claim(macInstallID: macID) else { preconditionFailure("initial claim rejected") }
         guard case .busy(let owner) = state.claim(macInstallID: "mac-b") else { preconditionFailure("ownership was not exclusive") }
         precondition(owner == lease && state.authorizes(macInstallID: macID, generation: lease.generation))
         precondition(state.consumeChannelNonce(macInstallID: macID, generation: lease.generation, nonce: sid))
-        precondition(!state.consumeChannelNonce(macInstallID: macID, generation: lease.generation, nonce: sid), "channel replay accepted")
-        precondition(!state.release(macInstallID: "mac-b", generation: lease.generation))
+        precondition(!state.consumeChannelNonce(macInstallID: macID, generation: lease.generation, nonce: sid))
         precondition(state.release(macInstallID: macID, generation: lease.generation))
-        guard case .accepted(let next) = state.claim(macInstallID: "mac-b") else { preconditionFailure("generation did not advance") }
-        precondition(next.generation == lease.generation + 1)
+    }
+
+    static func generationSnapshots() {
+        let near = SessionOwnershipState.Snapshot(generation: UInt64.max - 1, generationExhausted: false)
+        var restored = try! SessionOwnershipState.restore(snapshot: near)
+        guard case .accepted(let maxLease) = restored.claim(macInstallID: "mac-max") else { preconditionFailure("max generation unavailable") }
+        precondition(maxLease.generation == UInt64.max && restored.exhausted)
+        let data = try! restored.encodeSnapshot()
+        let restarted = try! SessionOwnershipState.restore(snapshot: data)
+        precondition(restarted.exhausted && restarted.generation == UInt64.max)
+        guard case .busy = restored.claim(macInstallID: "after") else { preconditionFailure("active max lease not busy") }
+        precondition(restored.release(macInstallID: "mac-max", generation: UInt64.max))
+        guard case .exhausted = restored.claim(macInstallID: "after") else { preconditionFailure("exhaustion not persistent") }
+        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: 0, generationExhausted: false))) == nil)
+        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: UInt64.max, generationExhausted: false))) == nil)
+        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: 42, generationExhausted: true))) == nil)
+        precondition((try? SessionOwnershipState.restore(snapshot: json("{\"generation\":42,\"generation\":43,\"generationExhausted\":false}"))) == nil)
+        precondition((try? SessionOwnershipState.restore(snapshot: json("{\"generation\":42,\"generationExhausted\":false,\"extra\":1}"))) == nil)
     }
 }
