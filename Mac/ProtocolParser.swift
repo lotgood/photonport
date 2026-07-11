@@ -11,7 +11,7 @@ enum ProtocolParser {
     static let smallControlCap = 65_535
     static let audioDataCap = 262_144
     static let videoDataCap = 16_777_216
-    static let scrollDeltaCap = 1_000_000.0
+    static let scrollDeltaCap = 120.0
 
     struct ServerHello {
         let pixelsWide: Int
