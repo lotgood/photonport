@@ -1,4 +1,6 @@
+import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -7,46 +9,322 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "verify-cross-repo-compatibility.py"
-MANIFEST = {"protocol": "3.0.0", "pairing": "2.0.0", "mac": {"minimum": "0.1.0"}, "ios": {"minimum": "1.0.0"}, "mismatch": "fail_closed_with_upgrade_message"}
+MATRIX_SCRIPT = ROOT / "scripts" / "run-cross-repo-matrix.py"
+MATRIX_SPEC = importlib.util.spec_from_file_location("cross_repo_matrix", MATRIX_SCRIPT)
+MATRIX = importlib.util.module_from_spec(MATRIX_SPEC)
+MATRIX_SPEC.loader.exec_module(MATRIX)
+
 
 class CrossRepoCompatibilityTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name)
-        self.roots = [base / n for n in ("mac", "ios", "protocol")]
-        for root in self.roots:
-            root.mkdir(); (root / "COMPATIBILITY.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
-        (self.roots[0] / "project.yml").write_text('MARKETING_VERSION: "0.1.0"\n', encoding="utf-8")
-        (self.roots[0] / "Main.swift").write_text('static let version = 3 static let version = 2 PhotonPort-primary-v3 PhotonPort-pair-v2\n', encoding="utf-8")
-        (self.roots[1] / "project.yml").write_text('MARKETING_VERSION: "1.0.0"\n', encoding="utf-8")
-        (self.roots[1] / "Main.swift").write_text('static let version = 3 static let version = 2 PhotonPort-primary-v3 PhotonPort-pair-v2\n', encoding="utf-8")
-        (self.roots[2] / "spec").mkdir(); (self.roots[2] / "vectors").mkdir(); (self.roots[2] / "schemas").mkdir()
-        (self.roots[2] / "spec" / "session.md").write_text("session v3", encoding="utf-8")
-        (self.roots[2] / "vectors" / "pairing-v2.json").write_text(json.dumps({"version": "2.0.0"}), encoding="utf-8")
-        (self.roots[2] / "vectors" / "session-v3.json").write_text(json.dumps({"version": "3.0.0"}), encoding="utf-8")
-        (self.roots[2] / "schemas" / "wire.json").write_text("{}", encoding="utf-8")
+        self.mac = base / "mac"
+        self.ios = base / "ios"
+        self.protocol = base / "protocol"
+        for root in (self.mac, self.ios, self.protocol):
+            root.mkdir()
+            self.git(root, "init")
+            self.git(root, "config", "user.email", "test@example.invalid")
+            self.git(root, "config", "user.name", "Test")
+        (self.protocol / "COMPATIBILITY.json").write_text('{"protocol":"3.0.0"}\n', encoding="utf-8")
+        (self.protocol / "NORMATIVE_MANIFEST.json").write_text('{"normative":true}\n', encoding="utf-8")
+        (self.protocol / "schemas").mkdir()
+        (self.protocol / "schemas" / "build-pin.schema.json").write_text(
+            '{"schemaVersion":1}\n', encoding="utf-8"
+        )
+        self.compat_digest = self.sha(self.protocol / "COMPATIBILITY.json")
+        self.normative_digest = self.sha(self.protocol / "NORMATIVE_MANIFEST.json")
+        self.protocol_commit = self.commit_all(self.protocol)
+        self.pin = {
+            "schemaVersion": 1,
+            "protocolCommit": self.protocol_commit,
+            "compatibilityDigest": self.compat_digest,
+            "normativeManifestDigest": self.normative_digest,
+        }
+        (self.mac / "ProtocolBuildPin.json").write_text(json.dumps(self.pin, sort_keys=True) + "\n", encoding="utf-8")
+        (self.ios / "ProtocolBuildPin.json").write_text(json.dumps(self.pin, sort_keys=True) + "\n", encoding="utf-8")
+        self.mac_commit = self.commit_all(self.mac)
+        self.ios_commit = self.commit_all(self.ios)
 
-    def tearDown(self): self.tmp.cleanup()
+    def tearDown(self):
+        self.tmp.cleanup()
 
-    def run_verifier(self):
-        output = Path(self.tmp.name) / "artifacts" / "receipt.json"
-        return subprocess.run([sys.executable, str(SCRIPT), "--mac-root", str(self.roots[0]), "--ios-root", str(self.roots[1]), "--protocol-root", str(self.roots[2]), "--output", str(output)], capture_output=True, text=True), output
+    def git(self, root, *args, check=True):
+        return subprocess.run(["git", "-C", str(root), *args], check=check, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    def test_success_and_stable_output(self):
-        first, output = self.run_verifier(); self.assertEqual(first.returncode, 0)
-        first_bytes = output.read_bytes()
-        second, _ = self.run_verifier(); self.assertEqual(second.returncode, 0)
-        self.assertEqual(first_bytes, output.read_bytes())
-        self.assertEqual(json.loads(output.read_text())["result"], "compatible")
+    def commit_all(self, root):
+        self.git(root, "add", ".")
+        env = {
+            "GIT_AUTHOR_NAME": "Test",
+            "GIT_AUTHOR_EMAIL": "test@example.invalid",
+            "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+0000",
+            "GIT_COMMITTER_NAME": "Test",
+            "GIT_COMMITTER_EMAIL": "test@example.invalid",
+            "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+0000",
+        }
+        subprocess.run(
+            ["git", "-C", str(root), "commit", "-m", "fixture"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        return self.git(root, "rev-parse", "HEAD").stdout.strip()
 
-    def test_manifest_drift_missing_and_malformed_fail_closed(self):
-        for value in ({**MANIFEST, "protocol": "9.0.0"}, {k: v for k, v in MANIFEST.items() if k != "pairing"}, "{"):
-            (self.roots[1] / "COMPATIBILITY.json").write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
-            result, _ = self.run_verifier(); self.assertNotEqual(result.returncode, 0); self.assertIn("FAIL_CLOSED", result.stderr)
-            (self.roots[1] / "COMPATIBILITY.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
+    def sha(self, path):
+        import hashlib
 
-    def test_source_constant_mismatch_fail_closed(self):
-        (self.roots[0] / "Main.swift").write_text("protocol v3 required", encoding="utf-8")
-        result, _ = self.run_verifier(); self.assertNotEqual(result.returncode, 0); self.assertIn("FAIL_CLOSED", result.stderr)
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
-if __name__ == "__main__": unittest.main()
+    def run_verifier(self, output=None, extra=None, mac=None, ios=None, protocol=None):
+        output = output or Path(self.tmp.name) / "artifacts" / "receipt.json"
+        command = [
+            sys.executable,
+            str(SCRIPT),
+            "--mac-root",
+            str(mac or self.mac),
+            "--ios-root",
+            str(ios or self.ios),
+            "--protocol-root",
+            str(protocol or self.protocol),
+            "--output",
+            str(output),
+            "--expected-mac-commit",
+            self.mac_commit,
+            "--expected-ios-commit",
+            self.ios_commit,
+            "--expected-protocol-commit",
+            self.protocol_commit,
+            "--expected-compatibility-digest",
+            self.compat_digest,
+            "--expected-normative-manifest-digest",
+            self.normative_digest,
+        ]
+        if extra:
+            command.extend(extra)
+        return subprocess.run(command, capture_output=True, text=True), output
+
+    def assert_fail_closed(self, result, needle=None):
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAIL_CLOSED", result.stderr)
+        if needle:
+            self.assertIn(needle, result.stderr)
+
+    def test_success_receipt_exposes_tuple_and_pins(self):
+        result, output = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["result"], "compatible")
+        self.assertEqual(receipt["sourceTuple"]["protocolCommit"], self.protocol_commit)
+        self.assertEqual(receipt["sourceTuple"]["compatibilityDigest"], self.compat_digest)
+        self.assertEqual(receipt["verifiedConsumerPins"]["mac"]["value"], self.pin)
+        self.assertEqual(receipt["verifiedConsumerPins"]["ios"]["path"], "ProtocolBuildPin.json")
+        self.assertEqual(
+            receipt["protocolContract"]["paths"],
+            [
+                "COMPATIBILITY.json",
+                "NORMATIVE_MANIFEST.json",
+                "schemas/build-pin.schema.json",
+            ],
+        )
+
+    def test_pin_shape_is_strict(self):
+        cases = [
+            {**self.pin, "extra": True},
+            {k: v for k, v in self.pin.items() if k != "schemaVersion"},
+            {**self.pin, "protocolCommit": self.protocol_commit.upper()},
+            {**self.pin, "protocolCommit": self.protocol_commit[:12]},
+            [],
+        ]
+        valid_head = self.mac_commit
+        for value in cases:
+            (self.mac / "ProtocolBuildPin.json").write_text(json.dumps(value), encoding="utf-8")
+            self.git(self.mac, "add", "ProtocolBuildPin.json")
+            self.git(self.mac, "commit", "-m", "invalid pin shape")
+            self.mac_commit = self.git(self.mac, "rev-parse", "HEAD").stdout.strip()
+            result, _ = self.run_verifier()
+            self.assert_fail_closed(result)
+            self.git(self.mac, "reset", "--hard", valid_head)
+            self.mac_commit = valid_head
+
+    def test_malformed_stale_and_changed_pin_fail_closed(self):
+        valid_head = self.mac_commit
+        (self.mac / "ProtocolBuildPin.json").write_text("{", encoding="utf-8")
+        self.git(self.mac, "add", "ProtocolBuildPin.json")
+        self.git(self.mac, "commit", "-m", "malformed pin")
+        self.mac_commit = self.git(self.mac, "rev-parse", "HEAD").stdout.strip()
+        result, _ = self.run_verifier()
+        self.assert_fail_closed(result, "malformed")
+        self.git(self.mac, "reset", "--hard", valid_head)
+        self.mac_commit = valid_head
+
+        stale = {**self.pin, "compatibilityDigest": "0" * 64}
+        (self.mac / "ProtocolBuildPin.json").write_text(json.dumps(stale), encoding="utf-8")
+        self.git(self.mac, "add", "ProtocolBuildPin.json")
+        self.git(self.mac, "commit", "-m", "stale")
+        self.mac_commit = self.git(self.mac, "rev-parse", "HEAD").stdout.strip()
+        result, _ = self.run_verifier()
+        self.assert_fail_closed(result, "compatibilityDigest mismatch")
+        self.git(self.mac, "reset", "--hard", valid_head)
+        self.mac_commit = valid_head
+
+        self.git(self.mac, "reset", "--hard", self.mac_commit)
+        (self.mac / "ProtocolBuildPin.json").write_text(json.dumps(stale), encoding="utf-8")
+        result, _ = self.run_verifier()
+        self.assert_fail_closed(result, "unstaged tracked changes")
+
+    def test_protocol_contract_files_must_be_tracked_and_clean(self):
+        schema = self.protocol / "schemas" / "build-pin.schema.json"
+        schema.write_text('{"schemaVersion":2}\n', encoding="utf-8")
+        result, _ = self.run_verifier()
+        self.assert_fail_closed(result, "protocol contract has unstaged tracked changes")
+
+        self.git(self.protocol, "checkout", "--", "schemas/build-pin.schema.json")
+        self.git(self.protocol, "rm", "--cached", "schemas/build-pin.schema.json")
+        result, _ = self.run_verifier()
+        self.assert_fail_closed(result, "git ls-files")
+
+    def test_expected_tuple_mismatch_fails_closed(self):
+        result, _ = self.run_verifier(extra=["--expected-protocol-commit", "d" * 40])
+        self.assert_fail_closed(result, "protocol HEAD mismatch")
+        result, _ = self.run_verifier(extra=["--expected-compatibility-digest", "e" * 64])
+        self.assert_fail_closed(result, "COMPATIBILITY.json digest mismatch")
+
+    def test_protocol_tag_requires_authorization_local_tag_and_exact_commit(self):
+        tagged = {**self.pin, "protocolTag": "protocol/v3"}
+        for root in (self.mac, self.ios):
+            (root / "ProtocolBuildPin.json").write_text(json.dumps(tagged, sort_keys=True) + "\n", encoding="utf-8")
+            self.git(root, "add", "ProtocolBuildPin.json")
+            self.git(root, "commit", "-m", "tagged pin")
+        self.mac_commit = self.git(self.mac, "rev-parse", "HEAD").stdout.strip()
+        self.ios_commit = self.git(self.ios, "rev-parse", "HEAD").stdout.strip()
+        result, _ = self.run_verifier()
+        self.assert_fail_closed(result, "not explicitly authorized")
+        result, _ = self.run_verifier(extra=["--authorize-protocol-tag", "refs/tags/protocol/v3"])
+        self.assert_fail_closed(result, "not locally available")
+        self.git(self.protocol, "update-ref", "refs/tags/protocol/v3", self.protocol_commit)
+        result, _ = self.run_verifier(extra=["--authorize-protocol-tag", "refs/tags/protocol/v3"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((Path(self.tmp.name) / "artifacts" / "receipt.json").read_text())
+        self.assertEqual(receipt["authorizedProtocolTag"], "protocol/v3")
+        self.assertEqual(receipt["authorizedProtocolTagRef"], "refs/tags/protocol/v3")
+        self.git(self.protocol, "update-ref", "refs/tags/protocol/wrong", self.protocol_commit)
+        result, _ = self.run_verifier(extra=["--authorize-protocol-tag", "refs/tags/protocol/wrong"])
+        self.assert_fail_closed(result, "not explicitly authorized")
+
+    def test_fresh_path_receipt_is_semantically_equal(self):
+        first, first_output = self.run_verifier()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        clone_base = Path(self.tmp.name) / "fresh"
+        shutil.copytree(self.mac, clone_base / "mac", ignore=shutil.ignore_patterns(".git"))
+        shutil.copytree(self.ios, clone_base / "ios", ignore=shutil.ignore_patterns(".git"))
+        shutil.copytree(self.protocol, clone_base / "protocol", ignore=shutil.ignore_patterns(".git"))
+        for root in (clone_base / "mac", clone_base / "ios", clone_base / "protocol"):
+            self.git(root, "init")
+            self.git(root, "config", "user.email", "test@example.invalid")
+            self.git(root, "config", "user.name", "Test")
+        self.assertEqual(self.commit_all(clone_base / "mac"), self.mac_commit)
+        self.assertEqual(self.commit_all(clone_base / "ios"), self.ios_commit)
+        self.assertEqual(self.commit_all(clone_base / "protocol"), self.protocol_commit)
+        second, second_output = self.run_verifier(
+            output=clone_base / "receipt.json",
+            mac=clone_base / "mac",
+            ios=clone_base / "ios",
+            protocol=clone_base / "protocol",
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(json.loads(first_output.read_text()), json.loads(second_output.read_text()))
+
+
+class CrossRepoMatrixInputTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        vectors = self.root / "vectors"
+        vectors.mkdir()
+        (vectors / "negative.json").write_text(
+            json.dumps({
+                "protocol": "negative-vectors",
+                "version": "3.0.0",
+                "cases": [
+                    {"id": "bad-frame", "outcome": "reject_and_fail_closed"},
+                ],
+            }),
+            encoding="utf-8",
+        )
+        (vectors / "session-v3.json").write_text(
+            json.dumps({
+                "protocol": "session-v3",
+                "version": "3.0.0",
+                "cases": [{"name": "wifi-psk"}],
+                "frames": {"serverHelloWifi": {}},
+            }),
+            encoding="utf-8",
+        )
+        (vectors / "pairing-v2.json").write_text(
+            json.dumps({
+                "protocol": "pairing-v2",
+                "version": "2.0.0",
+                "outputs": {"sas": "000000"},
+            }),
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_matrix_vector_inventory_is_strict_and_complete(self):
+        self.assertEqual(MATRIX.load_negative_case_ids(self.root), ["bad-frame"])
+        self.assertEqual(
+            MATRIX.load_positive_case_ids(self.root),
+            [
+                "pairing-v2:canonical",
+                "session-v3:wifi-psk",
+                "session-v3-frame:serverHelloWifi",
+            ],
+        )
+
+        (self.root / "vectors" / "negative.json").write_text(
+            '{"protocol":"negative-vectors","protocol":"negative-vectors","version":"3.0.0","cases":[]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(SystemExit, "FAIL_CLOSED.*duplicate key"):
+            MATRIX.load_negative_case_ids(self.root)
+
+    def test_matrix_rejects_duplicate_ids_non_fail_closed_outcomes_and_malformed_pins(self):
+        negative_path = self.root / "vectors" / "negative.json"
+        negative_path.write_text(
+            json.dumps({
+                "protocol": "negative-vectors",
+                "version": "3.0.0",
+                "cases": [
+                    {"id": "same", "outcome": "reject_and_fail_closed"},
+                    {"id": "same", "outcome": "reject_and_fail_closed"},
+                ],
+            }),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(SystemExit, "duplicate negative vector"):
+            MATRIX.load_negative_case_ids(self.root)
+
+        negative_path.write_text(
+            json.dumps({
+                "protocol": "negative-vectors",
+                "version": "3.0.0",
+                "cases": [{"id": "unsafe", "outcome": "accept"}],
+            }),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(SystemExit, "outcome is not fail closed"):
+            MATRIX.load_negative_case_ids(self.root)
+
+        pin = self.root / "ProtocolBuildPin.json"
+        pin.write_text('{"schemaVersion":1,"schemaVersion":1}', encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "FAIL_CLOSED.*duplicate key"):
+            MATRIX.read_pin(pin)
+
+
+if __name__ == "__main__":
+    unittest.main()
