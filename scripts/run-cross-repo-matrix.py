@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run and freeze the deterministic G004 automated matrix."""
+"""Run and freeze the deterministic M3 cross-repo production interop matrix."""
+import argparse
 import hashlib
 import json
 import os
@@ -8,26 +9,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-MAC = Path(__file__).resolve().parents[1]
-IOS = Path("/Users/ltg/workspace/photonport-ios")
-PROTOCOL = Path("/Users/ltg/workspace/photonport-protocol")
-ARTIFACTS = MAC / "artifacts/cross-repo"
-LOGS = ARTIFACTS / "logs"
-REPORT = ARTIFACTS / "automated-matrix.json"
-
-COMMANDS = [
-    (MAC, ["python3", "-m", "unittest", "Tests.test_cross_repo_compatibility", "Tests.test_supported_device_evidence", "Tests.test_mac_protocol_contract", "Tests.test_archive_baselines", "Tests.test_provenance_manifest", "Tests.test_scan_forbidden", "Tests.test_build_inventory", "-v"]),
-    (MAC, ["./scripts/test-pairing-vectors.sh"]),
-    (MAC, ["./scripts/test-session-binding.sh"]),
-    (MAC, ["./scripts/test-mac-protocol-adversarial.sh"]),
-    (PROTOCOL, ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"]),
-    (IOS, ["python3", "scripts/run-g003-gates.py"]),
-    (IOS, ["python3", "scripts/verify-g003-evidence.py"]),
-    (MAC, ["xcodebuild", "-quiet", "-project", "OpenSidecar.xcodeproj", "-scheme", "OpenSidecarMac", "-configuration", "Debug", "-destination", "platform=macOS", "-derivedDataPath", "/tmp/photonport-g004-mac-debug", "CODE_SIGNING_ALLOWED=NO", "build"]),
-    (MAC, ["xcodebuild", "-quiet", "-project", "OpenSidecar.xcodeproj", "-scheme", "OpenSidecarMac", "-configuration", "Release", "-destination", "platform=macOS", "-derivedDataPath", "/tmp/photonport-g004-mac-release", "CODE_SIGNING_ALLOWED=NO", "build"]),
-    (MAC, ["python3", "scripts/verify-cross-repo-compatibility.py", "--mac-root", str(MAC), "--ios-root", str(IOS), "--protocol-root", str(PROTOCOL), "--output", "artifacts/cross-repo/compatibility-report.json"]),
-    (MAC, ["python3", "scripts/capture-supported-device-evidence.py", "--probe-local", "--output", "artifacts/cross-repo/physical-availability.json"]),
-]
+VERIFIER = Path(__file__).resolve().with_name("verify-cross-repo-compatibility.py")
+EXPECTED_PIN_KEYS = {"schemaVersion", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"}
+SWIFT_EXECUTABLE_CASE_IDS = {"duplicate-json-key", "invalid-utf8-json", "bad-length-prefix", "oversize-frame"}
+NEGATIVE_FRAME = b"\x00\x00\x00\x00"
 
 
 def digest(data):
@@ -49,67 +34,540 @@ def atomic_json(path, value):
             os.unlink(temporary)
 
 
-def product_identifiers():
-    identifiers = []
-    for configuration, root in (
-        ("Debug", Path("/tmp/photonport-g004-mac-debug")),
-        ("Release", Path("/tmp/photonport-g004-mac-release")),
+def require_dir(path, label):
+    resolved = Path(path).resolve()
+    if not resolved.is_dir():
+        raise SystemExit(label + " root is not a directory: " + str(path))
+    return resolved
+
+
+def require_full_hex(value, label, length):
+    if len(value) != length or any(c not in "0123456789abcdef" for c in value):
+        raise SystemExit(label + " must be " + str(length) + " lowercase hex characters")
+    return value
+
+
+def run(argv, cwd, log_dir, label, *, stdin=None):
+    completed = subprocess.run(argv, cwd=cwd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    log_path = log_dir / (label + ".json")
+    payload = {
+        "label": label,
+        "argv": [str(part) for part in argv],
+        "exitCode": completed.returncode,
+        "stderr": completed.stderr.decode("utf-8", "replace"),
+        "stdoutSha256": digest(completed.stdout),
+        "stdoutBytes": len(completed.stdout),
+    }
+    atomic_json(log_path, payload)
+    return completed, {
+        "label": label,
+        "exitCode": completed.returncode,
+        "logPath": "logs/" + log_path.name,
+    }
+
+
+def read_pin(path):
+    def pairs_hook(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate key " + key)
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs_hook)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit(f"FAIL_CLOSED: malformed build pin {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit("FAIL_CLOSED: build pin must be a JSON object: " + str(path))
+    allowed = set(EXPECTED_PIN_KEYS)
+    if "protocolTag" in value:
+        allowed.add("protocolTag")
+        if not isinstance(value["protocolTag"], str):
+            raise SystemExit("FAIL_CLOSED: protocolTag must be a string: " + str(path))
+    if set(value) != allowed or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1:
+        raise SystemExit("FAIL_CLOSED: build pin fields are not exact: " + str(path))
+    for field, length in (
+        ("protocolCommit", 40),
+        ("compatibilityDigest", 64),
+        ("normativeManifestDigest", 64),
     ):
-        candidates = sorted((root / "Build/Products").glob(configuration + "/*.app/Contents/Info.plist"))
-        if candidates:
-            identifiers.append({
-                "configuration": configuration,
-                "path": str(candidates[0]),
-                "sha256": digest(candidates[0].read_bytes()),
-            })
+        item = value.get(field)
+        if not isinstance(item, str) or len(item) != length or any(c not in "0123456789abcdef" for c in item):
+            raise SystemExit(f"FAIL_CLOSED: build pin {field} is not lowercase full hex: {path}")
+    return value
+
+
+
+def compile_launchers(mac, ios, build, logs, receipts):
+    mac_bin = build / "mac-interop"
+    ios_bin = build / "ios-interop"
+    commands = [
+        (
+            mac,
+            [
+                "swiftc", "-O",
+                str(mac / "Tests/MacInteropLauncher.swift"),
+                str(mac / "Mac/ProtocolParser.swift"),
+                str(mac / "Mac/Pairing.swift"),
+                str(mac / "Mac/Log.swift"),
+                "-o", str(mac_bin),
+            ],
+            "compile-mac-launcher",
+        ),
+        (
+            mac,
+            [
+                "swiftc", "-O",
+                str(mac / "Tests/IOSInteropLauncher.swift"),
+                str(ios / "Sources/StrictJSON.swift"),
+                str(ios / "Sources/ReceiverContracts.swift"),
+                str(ios / "Sources/Pairing.swift"),
+                str(ios / "Sources/Log.swift"),
+                "-o", str(ios_bin),
+            ],
+            "compile-ios-launcher-host",
+        ),
+    ]
+    for cwd, argv, label in commands:
+        completed, receipt = run(argv, cwd, logs, label)
+        receipts.append(receipt)
+        if completed.returncode:
+            return None, None
+    return mac_bin, ios_bin
+
+
+def single_built_pin(products_root, label):
+    candidates = sorted(path for path in products_root.rglob("ProtocolBuildPin.json") if ".app" in path.as_posix())
+    if len(candidates) != 1:
+        raise RuntimeError(f"{label} build produced {len(candidates)} ProtocolBuildPin.json resources")
+    return read_pin(candidates[0])
+
+
+def build_product_pins(mac, ios, ios_commit, build, logs, receipts):
+    mac_derived = build / "mac-product"
+    ios_source = build / "ios-source"
+    ios_derived = build / "ios-product"
+    commands = [
+        (
+            mac,
+            [
+                "xcodebuild", "-quiet", "-project", "OpenSidecar.xcodeproj",
+                "-scheme", "OpenSidecarMac", "-configuration", "Debug",
+                "-destination", "platform=macOS", "-derivedDataPath", str(mac_derived),
+                "CODE_SIGNING_ALLOWED=NO", "build",
+            ],
+            "build-mac-product",
+        ),
+    ]
+    for cwd, argv, label in commands:
+        completed, receipt = run(argv, cwd, logs, label)
+        receipts.append(receipt)
+        if completed.returncode:
+            raise RuntimeError(label + " failed")
+
+    if not git_clone_checkout(ios, ios_source, ios_commit, mac, logs, "build-ios-source", receipts):
+        raise RuntimeError("iOS product source clone/checkout failed")
+    for cwd, argv, label in (
+        (ios_source, ["./generate.sh"], "generate-ios-product-project"),
+        (
+            ios_source,
+            [
+                "xcodebuild", "-quiet", "-project", "PhotonPortReceiver.xcodeproj",
+                "-scheme", "PhotonPortReceiver", "-configuration", "Debug",
+                "-sdk", "iphonesimulator", "-destination", "generic/platform=iOS Simulator",
+                "-derivedDataPath", str(ios_derived), "CODE_SIGNING_ALLOWED=NO", "build",
+            ],
+            "build-ios-product",
+        ),
+    ):
+        completed, receipt = run(argv, cwd, logs, label)
+        receipts.append(receipt)
+        if completed.returncode:
+            raise RuntimeError(label + " failed")
+
+    return (
+        single_built_pin(mac_derived / "Build/Products", "Mac"),
+        single_built_pin(ios_derived / "Build/Products", "iOS"),
+    )
+
+
+def exchange_once(encoder, vector, decoder, logs, name, receipts):
+    encoded, encode_receipt = run([str(encoder), "encode", vector], encoder.parent, logs, name + "-encode")
+    receipts.append(encode_receipt)
+    if encoded.returncode:
+        return False
+    decoded, decode_receipt = run([str(decoder), "decode"], decoder.parent, logs, name + "-decode", stdin=encoded.stdout)
+    receipts.append(decode_receipt)
+    return decoded.returncode == 0
+
+
+def negative_decode(decoder, logs, name, receipts):
+    decoded, receipt = run([str(decoder), "decode"], decoder.parent, logs, name, stdin=NEGATIVE_FRAME)
+    receipts.append(receipt)
+    return decoded.returncode != 0
+
+
+def strict_vector_object(path, label):
+    def pairs_hook(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate key " + key)
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs_hook)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit(f"FAIL_CLOSED: malformed {label}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"FAIL_CLOSED: {label} must be a JSON object")
+    return value
+
+
+def load_negative_case_ids(protocol_root):
+    value = strict_vector_object(protocol_root / "vectors/negative.json", "negative vectors")
+    cases = value.get("cases")
+    if value.get("protocol") != "negative-vectors" or value.get("version") != "3.0.0" or not isinstance(cases, list) or not cases:
+        raise SystemExit("FAIL_CLOSED: negative vector header/cases are invalid")
+    identifiers = []
+    for case in cases:
+        if not isinstance(case, dict) or not isinstance(case.get("id"), str) or not case["id"]:
+            raise SystemExit("FAIL_CLOSED: negative vector case id is invalid")
+        if case.get("outcome") != "reject_and_fail_closed":
+            raise SystemExit("FAIL_CLOSED: negative vector outcome is not fail closed: " + case["id"])
+        identifiers.append(case["id"])
+    if len(identifiers) != len(set(identifiers)):
+        raise SystemExit("FAIL_CLOSED: duplicate negative vector case id")
     return identifiers
 
 
+def load_positive_case_ids(protocol_root):
+    session = strict_vector_object(protocol_root / "vectors/session-v3.json", "session vectors")
+    pairing = strict_vector_object(protocol_root / "vectors/pairing-v2.json", "pairing vectors")
+    cases = session.get("cases")
+    frames = session.get("frames")
+    if session.get("protocol") != "session-v3" or session.get("version") != "3.0.0" or not isinstance(cases, list) or not isinstance(frames, dict):
+        raise SystemExit("FAIL_CLOSED: session vector header/cases/frames are invalid")
+    names = [case.get("name") for case in cases if isinstance(case, dict)]
+    if len(names) != len(cases) or not names or not all(isinstance(name, str) and name for name in names) or len(names) != len(set(names)):
+        raise SystemExit("FAIL_CLOSED: session vector case names are invalid or duplicated")
+    if pairing.get("protocol") != "pairing-v2" or pairing.get("version") != "2.0.0" or not isinstance(pairing.get("outputs"), dict):
+        raise SystemExit("FAIL_CLOSED: pairing vector header/outputs are invalid")
+    identifiers = ["pairing-v2:canonical"]
+    identifiers.extend("session-v3:" + name for name in names)
+    identifiers.extend("session-v3-frame:" + key for key in sorted(frames) if isinstance(key, str))
+    return identifiers
+
+
+
+
+def run_adversarial_cases(binary, case_ids, logs, prefix, receipts):
+    covered = []
+    failed = []
+    for case_id in case_ids:
+        if case_id not in SWIFT_EXECUTABLE_CASE_IDS:
+            continue
+        completed, receipt = run([str(binary), "case", case_id], binary.parent, logs, prefix + "-" + case_id)
+        receipts.append(receipt)
+        if completed.returncode == 0:
+            covered.append(case_id)
+        else:
+            failed.append(case_id)
+    return covered, failed
+
+
+def run_production_suites(mac, ios, protocol, logs, receipts):
+    commands = [
+        (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial"),
+        (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors"),
+        (ios, ["./scripts/test-receiver-adversarial.sh"], "suite-ios-adversarial"),
+        (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors"),
+        (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors"),
+        (
+            protocol,
+            [
+                sys.executable, "-m", "unittest",
+                "tests.test_protocol.ProtocolTests.test_pairing_vector_recomputes_every_output",
+                "tests.test_protocol.ProtocolTests.test_session_vectors_recompute_every_output",
+                "-v",
+            ],
+            "suite-protocol-positive-vectors",
+        ),
+        (
+            protocol,
+            [
+                sys.executable, "-m", "unittest",
+                "tests.test_protocol.ProtocolTests.test_every_negative_vector_is_exercised",
+                "-v",
+            ],
+            "suite-protocol-negative-vectors",
+        ),
+        (
+            protocol,
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+            "suite-protocol-conformance",
+        ),
+    ]
+    results = {}
+    for cwd, argv, label in commands:
+        completed, receipt = run(argv, cwd, logs, label)
+        receipts.append(receipt)
+        results[label] = completed.returncode == 0
+    return results
+
+
+def git_clone_checkout(src, dst, commit, mac, logs, label, receipts):
+    completed, receipt = run(["git", "clone", "--no-local", str(src), str(dst)], mac, logs, label + "-clone")
+    receipts.append(receipt)
+    if completed.returncode:
+        return False
+    completed, receipt = run(["git", "-C", str(dst), "checkout", "--detach", commit], mac, logs, label + "-checkout")
+    receipts.append(receipt)
+    return completed.returncode == 0
+
+
+def verifier_command(mac, ios, protocol, output, args):
+    command = [
+        sys.executable, str(VERIFIER),
+        "--mac-root", str(mac),
+        "--ios-root", str(ios),
+        "--protocol-root", str(protocol),
+        "--mac-pin", "Mac/ProtocolBuildPin.json",
+        "--ios-pin", "Resources/ProtocolBuildPin.json",
+        "--expected-mac-commit", args.expected_mac_commit,
+        "--expected-ios-commit", args.expected_ios_commit,
+        "--expected-protocol-commit", args.expected_protocol_commit,
+        "--expected-compatibility-digest", args.expected_compatibility_digest,
+        "--expected-normative-manifest-digest", args.expected_normative_manifest_digest,
+        "--output", str(output),
+    ]
+    if args.authorize_protocol_tag:
+        command.extend(["--authorize-protocol-tag", args.authorize_protocol_tag])
+    return command
+
+
+def semantic_receipt(path):
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value.pop("snapshots", None)
+    return value
+
+
 def main():
-    LOGS.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mac-root", required=True)
+    parser.add_argument("--ios-root", required=True)
+    parser.add_argument("--protocol-root", required=True)
+    parser.add_argument("--expected-mac-commit", required=True)
+    parser.add_argument("--expected-ios-commit", required=True)
+    parser.add_argument("--expected-protocol-commit", required=True)
+    parser.add_argument("--expected-compatibility-digest", required=True)
+    parser.add_argument("--expected-normative-manifest-digest", required=True)
+    parser.add_argument("--authorize-protocol-tag")
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    mac = require_dir(args.mac_root, "mac")
+    ios = require_dir(args.ios_root, "ios")
+    protocol = require_dir(args.protocol_root, "protocol")
+    require_full_hex(args.expected_mac_commit, "expected mac commit", 40)
+    require_full_hex(args.expected_ios_commit, "expected ios commit", 40)
+    require_full_hex(args.expected_protocol_commit, "expected protocol commit", 40)
+    require_full_hex(args.expected_compatibility_digest, "expected compatibility digest", 64)
+    require_full_hex(args.expected_normative_manifest_digest, "expected normative manifest digest", 64)
+    authorized_tag_value = None
+    if args.authorize_protocol_tag:
+        prefix = "refs/tags/"
+        if not args.authorize_protocol_tag.startswith(prefix) or len(args.authorize_protocol_tag) == len(prefix):
+            raise SystemExit("authorized protocol tag must be a fully qualified refs/tags/... name")
+        authorized_tag_value = args.authorize_protocol_tag.removeprefix(prefix)
+
+    report_path = Path(args.output).resolve()
+    artifacts = report_path.parent
+    logs = artifacts / "logs"
+    compatibility_path = artifacts / "compatibility-report.json"
+    fresh_path = artifacts / "compatibility-report-fresh.json"
+    logs.mkdir(parents=True, exist_ok=True)
+
     receipts = []
+    failures = []
+    executed_positive = []
+    executed_adversarial = {"mac": [], "ios": []}
+    suite_results = {}
+    suite_covered = []
+    positive_suite_covered = []
+    source_pins = {}
+    built_pins = {}
+    unexecutable = []
     result = "passed"
-    for index, (cwd, argv) in enumerate(COMMANDS):
-        completed = subprocess.run(argv, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        payload = {
-            "argv": argv,
-            "cwd": str(cwd),
-            "exitCode": completed.returncode,
-            "stderr": completed.stderr,
-            "stdout": completed.stdout,
+
+    negative_ids = load_negative_case_ids(protocol)
+    positive_ids = load_positive_case_ids(protocol)
+    suite_results = run_production_suites(mac, ios, protocol, logs, receipts)
+    for label, passed in suite_results.items():
+        if not passed:
+            failures.append(label + " failed")
+    negative_suite_labels = (
+        "suite-mac-adversarial",
+        "suite-ios-adversarial",
+        "suite-protocol-negative-vectors",
+    )
+    positive_suite_labels = (
+        "suite-mac-session-vectors",
+        "suite-ios-session-vectors",
+        "suite-ios-pairing-vectors",
+        "suite-protocol-positive-vectors",
+    )
+    if all(suite_results.get(label) for label in negative_suite_labels):
+        suite_covered = list(negative_ids)
+    if all(suite_results.get(label) for label in positive_suite_labels):
+        positive_suite_covered = list(positive_ids)
+    with tempfile.TemporaryDirectory(prefix="photonport-m3-matrix-") as tmp:
+        build = Path(tmp) / "build"
+        build.mkdir()
+        expected_pin = {"schemaVersion": 1, "protocolCommit": args.expected_protocol_commit, "compatibilityDigest": args.expected_compatibility_digest, "normativeManifestDigest": args.expected_normative_manifest_digest}
+        if authorized_tag_value:
+            expected_pin["protocolTag"] = authorized_tag_value
+        source_pins = {
+            "mac": read_pin(mac / "Mac/ProtocolBuildPin.json"),
+            "ios": read_pin(ios / "Resources/ProtocolBuildPin.json"),
         }
-        log = LOGS / ("%03d.json" % index)
-        atomic_json(log, payload)
-        receipts.append({
-            "argv": argv,
-            "cwd": str(cwd),
-            "exitCode": completed.returncode,
-            "logPath": str(log.relative_to(MAC)),
-            "logSha256": digest(log.read_bytes()),
-            "stdoutSha256": digest(completed.stdout.encode()),
-            "stderrSha256": digest(completed.stderr.encode()),
-        })
+        try:
+            built_mac_pin, built_ios_pin = build_product_pins(
+                mac, ios, args.expected_ios_commit, build, logs, receipts
+            )
+            built_pins = {"mac": built_mac_pin, "ios": built_ios_pin}
+            if source_pins != {"mac": expected_pin, "ios": expected_pin} or built_pins != source_pins:
+                failures.append("built product pins do not match tracked source pins and expected tuple")
+        except RuntimeError as exc:
+            failures.append(str(exc))
+
+        mac_bin, ios_bin = compile_launchers(mac, ios, build, logs, receipts)
+        if not mac_bin or not ios_bin:
+            failures.append("launcher compilation failed")
+        else:
+
+            vectors = [
+                (mac_bin, "ping", ios_bin, "mac-to-ios-ping"),
+                (mac_bin, "touch", ios_bin, "mac-to-ios-touch"),
+                (mac_bin, "scroll", ios_bin, "mac-to-ios-scroll"),
+                (mac_bin, "keyframe", ios_bin, "mac-to-ios-keyframe"),
+                (mac_bin, "session-open", ios_bin, "mac-to-ios-session-open-v3"),
+                (ios_bin, "pong", mac_bin, "ios-to-mac-pong"),
+                (ios_bin, "stats", mac_bin, "ios-to-mac-stats"),
+                (ios_bin, "keyframe", mac_bin, "ios-to-mac-keyframe"),
+                (ios_bin, "session-accept", mac_bin, "ios-to-mac-session-accept-v3"),
+            ]
+            for encoder, vector, decoder, name in vectors:
+                if exchange_once(encoder, vector, decoder, logs, name, receipts):
+                    executed_positive.append(name)
+                else:
+                    failures.append(name + " failed")
+                    break
+            if not negative_decode(mac_bin, logs, "negative-to-mac-zero-length", receipts):
+                failures.append("mac decoder accepted invalid zero-length frame")
+            if not negative_decode(ios_bin, logs, "negative-to-ios-zero-length", receipts):
+                failures.append("ios decoder accepted invalid zero-length frame")
+            mac_covered, mac_failed = run_adversarial_cases(mac_bin, negative_ids, logs, "mac-adversarial", receipts)
+            ios_covered, ios_failed = run_adversarial_cases(ios_bin, negative_ids, logs, "ios-adversarial", receipts)
+            executed_adversarial["mac"] = mac_covered
+            executed_adversarial["ios"] = ios_covered
+            for case_id in mac_failed:
+                failures.append("mac adversarial case failed: " + case_id)
+            for case_id in ios_failed:
+                failures.append("ios adversarial case failed: " + case_id)
+            directly_covered = set(executed_adversarial["mac"]) & set(executed_adversarial["ios"])
+            covered = directly_covered | set(suite_covered)
+            unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
+            if len(executed_positive) != len(vectors) or len(positive_suite_covered) != len(positive_ids):
+                failures.append("protocol positive vector IDs lack executable production-suite coverage")
+            if unexecutable:
+                failures.append("protocol negative vector IDs lack executable production-suite coverage")
+
+        verifier = verifier_command(mac, ios, protocol, compatibility_path, args)
+        completed, receipt = run(verifier, mac, logs, "verifier-primary")
+        receipts.append(receipt)
         if completed.returncode:
-            result = "failed"
-            break
-    compatibility_path = ARTIFACTS / "compatibility-report.json"
-    physical_path = ARTIFACTS / "physical-availability.json"
+            failures.append("primary verifier failed")
+
+        changed_root = Path(tmp) / "changed-pin-mac"
+        if git_clone_checkout(mac, changed_root, args.expected_mac_commit, mac, logs, "changed-pin-mac", receipts):
+            changed_pin = changed_root / "Mac/ProtocolBuildPin.json"
+            changed_value = read_pin(changed_pin)
+            changed_value["compatibilityDigest"] = "0" * 64
+            changed_pin.write_text(json.dumps(changed_value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            changed_verifier = verifier_command(changed_root, ios, protocol, Path(tmp) / "changed-pin.json", args)
+            completed, receipt = run(changed_verifier, changed_root, logs, "verifier-changed-pin-failure")
+            receipts.append(receipt)
+            stderr = completed.stderr.decode("utf-8", "replace")
+            if completed.returncode == 0 or "FAIL_CLOSED" not in stderr or not ("pin" in stderr.lower() and ("tracked" in stderr.lower() or "mismatch" in stderr.lower())):
+                failures.append("changed tracked pin did not fail closed for a pin tracked-change/mismatch reason")
+        else:
+            failures.append("changed-pin git clone/checkout failed")
+
+        fresh_mac = Path(tmp) / "fresh-mac"
+        fresh_ios = Path(tmp) / "fresh-ios"
+        fresh_protocol = Path(tmp) / "fresh-protocol"
+        fresh_ready = all([
+            git_clone_checkout(mac, fresh_mac, args.expected_mac_commit, mac, logs, "fresh-mac", receipts),
+            git_clone_checkout(ios, fresh_ios, args.expected_ios_commit, mac, logs, "fresh-ios", receipts),
+            git_clone_checkout(protocol, fresh_protocol, args.expected_protocol_commit, mac, logs, "fresh-protocol", receipts),
+        ])
+        if fresh_ready:
+            fresh_verifier = verifier_command(fresh_mac, fresh_ios, fresh_protocol, fresh_path, args)
+            completed, receipt = run(fresh_verifier, fresh_mac, logs, "verifier-fresh-path")
+            receipts.append(receipt)
+            semantic_equal = completed.returncode == 0 and compatibility_path.is_file() and fresh_path.is_file() and semantic_receipt(compatibility_path) == semantic_receipt(fresh_path)
+            if not semantic_equal:
+                failures.append("fresh clone semantic equality failed")
+        else:
+            failures.append("fresh git clone/checkout failed")
+
+    if failures:
+        result = "failed"
     report = {
-        "schemaVersion": 1,
-        "kind": "cross-repo-test-report",
+        "schemaVersion": 2,
+        "kind": "cross-repo-production-interop-report",
         "result": result,
+        "sourceTuple": {
+            "macCommit": args.expected_mac_commit,
+            "iosCommit": args.expected_ios_commit,
+            "protocolCommit": args.expected_protocol_commit,
+            "compatibilityDigest": args.expected_compatibility_digest,
+            "normativeManifestDigest": args.expected_normative_manifest_digest,
+        },
+        "coverageContract": {
+            "positiveRawFrameCases": executed_positive,
+            "productionDerivedAdversarialCases": executed_adversarial,
+            "enumeratedProtocolPositiveVectorIDs": positive_ids,
+            "enumeratedProtocolNegativeVectorIDs": negative_ids,
+            "productionSuiteResults": suite_results,
+            "productionSuiteCoveredPositiveVectorIDs": positive_suite_covered,
+            "productionSuiteCoveredNegativeVectorIDs": suite_covered,
+            "negativeVectorEvidenceLabels": list(negative_suite_labels),
+            "positiveVectorEvidenceLabels": list(positive_suite_labels),
+            "unexecutableNegativeVectorIDs": unexecutable,
+            "unexecutablePolicy": "matrix fails rather than claiming vector coverage without passing production suites",
+        },
+        "processProtocol": {
+            "topology": "separate production-derived Swift executables",
+            "framing": "4-byte big-endian length followed by raw payload bytes over stdout/stdin",
+            "directions": ["mac-encoder-to-ios-decoder", "ios-encoder-to-mac-decoder"],
+            "negativeCases": ["zero-length frame exits nonzero", "production-derived adversarial case mode exits nonzero on unexpected acceptance"],
+        },
+        "builtPinEvidence": {
+            "trackedConsumerPins": source_pins,
+            "builtProductPins": built_pins,
+        },
         "commands": receipts,
-        "productIdentifiers": product_identifiers(),
-        "compatibilityReceipt": {
-            "path": str(compatibility_path.relative_to(MAC)),
-            "sha256": digest(compatibility_path.read_bytes()) if compatibility_path.is_file() else None,
-        },
-        "physicalAvailabilityReceipt": {
-            "path": str(physical_path.relative_to(MAC)),
-            "sha256": digest(physical_path.read_bytes()) if physical_path.is_file() else None,
-        },
+        "failures": failures,
+        "compatibilityReceipt": {"path": str(compatibility_path.relative_to(artifacts)), "sha256": digest(compatibility_path.read_bytes()) if compatibility_path.is_file() else None},
+        "freshCompatibilityReceipt": {"path": str(fresh_path.relative_to(artifacts)), "sha256": digest(fresh_path.read_bytes()) if fresh_path.is_file() else None},
+        "physicalAvailability": "outside automated matrix evidence DAG; S-P1-05 OPEN-WAIVED",
     }
-    atomic_json(REPORT, report)
+    atomic_json(report_path, report)
     return 0 if result == "passed" else 1
 
 
