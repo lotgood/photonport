@@ -11,6 +11,7 @@ enum ProtocolParser {
     static let smallControlCap = 65_535
     static let audioDataCap = 262_144
     static let videoDataCap = 16_777_216
+    static let scrollDeltaCap = 1_000_000.0
 
     struct ServerHello {
         let pixelsWide: Int
@@ -189,7 +190,9 @@ enum ProtocolParser {
             return .touch(phase: phase, x: x, y: y, t: t)
         case "scroll":
             guard Set(object.keys) == ["type", "dx", "dy"] else { throw ParseError.keySet }
-            return .scroll(dx: try finiteDouble(object, "dx"), dy: try finiteDouble(object, "dy"))
+            return .scroll(
+                dx: try finiteDouble(object, "dx", greaterThanOrEqualTo: -scrollDeltaCap, max: scrollDeltaCap),
+                dy: try finiteDouble(object, "dy", greaterThanOrEqualTo: -scrollDeltaCap, max: scrollDeltaCap))
         case "kf":
             guard Set(object.keys) == ["type"] else { throw ParseError.keySet }
             return .keyframe
