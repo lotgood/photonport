@@ -105,6 +105,7 @@ struct MacProtocolAdversarialHarness {
         base64BoundaryMutations()
         inboundAndParserOnlyCapBoundaries()
         strictControls()
+        pongProductionState()
         scrollAdmissionAndBackpressure()
         scrollTimerAndConversionBehavior()
         sessionProofsAndOwnership()
@@ -115,7 +116,7 @@ struct MacProtocolAdversarialHarness {
     }
 
     static func framingCaps() {
-        for (kind, cap) in [(ProtocolParser.FrameKind.pairing, 65_535), (.session, 65_535), (.audioControl, 65_535), (.audioData, 262_144), (.videoData, 16_777_216)] {
+        for (kind, cap) in [(ProtocolParser.FrameKind.pairing, 4_096), (.session, 65_535), (.audioControl, 65_535), (.audioData, 262_144), (.videoData, 16_777_216)] {
             for length in [0, cap + 1] {
                 var n = UInt32(length).bigEndian
                 precondition((try? ProtocolParser.framedPayloadLength(from: Data(bytes: &n, count: 4), kind: kind)) == nil)
@@ -178,6 +179,7 @@ struct MacProtocolAdversarialHarness {
             ("channel-open generation", { json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":\($0),\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseChannelOpen($0) }),
             ("generation snapshot", { json("{\"generation\":\($0),\"generationExhausted\":false}") }, { _ = try ProtocolParser.parseGenerationSnapshot($0) }),
             ("ping id", { json("{\"type\":\"ping\",\"id\":\($0),\"t\":1.0}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) }),
+            ("pong id", { json("{\"type\":\"pong\",\"id\":\($0),\"t\":1.0}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) }),
             ("stats dropped", { json("{\"type\":\"stats\",\"fps\":60,\"bitrate\":12,\"dropped\":\($0)}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) })
         ]
         for raw in ["1.0", "1e0", "\(Double(UInt64.max))", "true", "\"1\"", "-1", "18446744073709551616"] {
@@ -197,6 +199,7 @@ struct MacProtocolAdversarialHarness {
             ParserCase(name: "session-busy", valid: json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}"), requiredKeys: ["type", "v", "reason"], typeKey: "type", typeValue: "session-busy", wrongTypeField: "reason", wrongTypeValue: "1") { _ = try ProtocolParser.parseSessionBusy($0) },
             ParserCase(name: "channel-open", valid: json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}"), requiredKeys: ["type", "v", "macInstallID", "sessionID", "generation", "channel", "nonce", "proof"], typeKey: "type", typeValue: "channel-open", wrongTypeField: "nonce", wrongTypeValue: "1") { _ = try ProtocolParser.parseChannelOpen($0) },
             ParserCase(name: "control-ping", valid: json("{\"type\":\"ping\",\"id\":1,\"t\":1.0}"), requiredKeys: ["type", "id", "t"], typeKey: "type", typeValue: "ping", wrongTypeField: "id", wrongTypeValue: "\"1\"") { _ = try ProtocolParser.parseControl($0, transport: .wifi) },
+            ParserCase(name: "control-pong", valid: json("{\"type\":\"pong\",\"id\":1,\"t\":1.0}"), requiredKeys: ["type", "id", "t"], typeKey: "type", typeValue: "pong", wrongTypeField: "id", wrongTypeValue: "\"1\"") { _ = try ProtocolParser.parseControl($0, transport: .wifi) },
             ParserCase(name: "generation-snapshot", valid: json("{\"generation\":1,\"generationExhausted\":false}"), requiredKeys: ["generation", "generationExhausted"], typeKey: "generationExhausted", typeValue: "false", wrongTypeField: "generationExhausted", wrongTypeValue: "\"false\"") { _ = try ProtocolParser.parseGenerationSnapshot($0) }
         ]
     }
@@ -240,7 +243,7 @@ struct MacProtocolAdversarialHarness {
 
     static func inboundAndParserOnlyCapBoundaries() {
         for (name, kind, cap) in [
-            ("production inbound pairing", ProtocolParser.FrameKind.pairing, 65_535),
+            ("production inbound pairing", ProtocolParser.FrameKind.pairing, 4_096),
             ("production inbound session", .session, 65_535),
             ("production inbound audioControl", .audioControl, 65_535),
             ("parser-only audioData outbound boundary", .audioData, 262_144),
@@ -269,6 +272,15 @@ struct MacProtocolAdversarialHarness {
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"ping\",\"id\":18446744073709551615,\"t\":1.25}"), transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"ping\",\"t\":1.25}"), transport: .wifi)) == nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"ping\",\"id\":\"p1\",\"t\":1.25}"), transport: .wifi)) == nil)
+        for t in ["-1", "1e999", "true", "\"1\""] {
+            precondition((try? ProtocolParser.parseControl(json("{\"type\":\"pong\",\"id\":1,\"t\":\(t)}"), transport: .wifi)) == nil)
+        }
+        guard case .pong(let pongID, let pongTime) = try? ProtocolParser.parseControl(
+            json("{\"type\":\"pong\",\"id\":18446744073709551615,\"t\":0}"),
+            transport: .wifi) else {
+            preconditionFailure("valid pong was not parsed")
+        }
+        precondition(pongID == UInt64.max && pongTime == 0)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"stats\",\"fps\":60.0,\"bitrate\":12.5,\"dropped\":0}"), transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"began\",\"x\":0.5,\"y\":1.0,\"t\":0}"), transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"touch\",\"phase\":\"began\",\"x\":1.5,\"y\":0}"), transport: .wifi)) == nil)
@@ -283,6 +295,32 @@ struct MacProtocolAdversarialHarness {
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"scroll\",\"dx\":0,\"dy\":-1e999}"), transport: .wifi)) == nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"kf\"}"), transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseControl(json("{\"type\":\"hello\"}"), transport: .wifi)) == nil)
+    }
+
+    static func pongProductionState() {
+        let baseline = Date(timeIntervalSince1970: 100)
+        let later = Date(timeIntervalSince1970: 200)
+        var state = ProtocolParser.ControlLivenessState(lastReceived: baseline)
+
+        let pong = try! ProtocolParser.parseControl(
+            json("{\"type\":\"pong\",\"id\":7,\"t\":1.25}"), transport: .wifi)
+        precondition(!state.receive(pong, at: later))
+        precondition(state.lastReceived == baseline)
+
+        let duplicatePong = try! ProtocolParser.parseControl(
+            json("{\"type\":\"pong\",\"id\":7,\"t\":1.25}"), transport: .wifi)
+        precondition(!state.receive(duplicatePong, at: later))
+        precondition(state.lastReceived == baseline)
+
+        let mismatchedPong = try! ProtocolParser.parseControl(
+            json("{\"type\":\"pong\",\"id\":8,\"t\":1.25}"), transport: .wifi)
+        precondition(!state.receive(mismatchedPong, at: later))
+        precondition(state.lastReceived == baseline)
+
+        let ping = try! ProtocolParser.parseControl(
+            json("{\"type\":\"ping\",\"id\":7,\"t\":1.25}"), transport: .wifi)
+        precondition(state.receive(ping, at: later))
+        precondition(state.lastReceived == later)
     }
 
     static func scrollAdmissionAndBackpressure() {

@@ -283,7 +283,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     // Liveness: both sides ping every 2s; if nothing arrives for 5s the link
     // is half-open (e.g. usbmuxd accepted but the device is gone) — reconnect.
-    private var lastReceived = Date()
+    private var controlLiveness = ProtocolParser.ControlLivenessState()
     private var handshakeStartedAt: Date?
     private var dropsTotal = 0
 
@@ -976,7 +976,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         pendingStreamSession = nil
         boundStreamSession = nil
         lastHello = nil
-        lastReceived = Date()
+        controlLiveness.reset()
         handshakeStartedAt = Date()
         receiveControl(on: conn)
         Task { await self.status("Authenticating \(self.endpointName)…") }
@@ -990,7 +990,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         disconnectedSince = nil
         needsKeyframe = true
         lastCursorSent = (-1, -1, false)
-        lastReceived = Date()
+        controlLiveness.reset()
         dialAudioConnection()
         if let continuation = helloContinuation {
             helloContinuation = nil
@@ -1335,7 +1335,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func scheduleWatchdog() {
         queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self, !self.stopped else { return }
-            let idle = Date().timeIntervalSince(self.lastReceived)
+            let idle = Date().timeIntervalSince(self.controlLiveness.lastReceived)
             if self.connection != nil, !self.connectionReady,
                let started = self.handshakeStartedAt,
                Date().timeIntervalSince(started) > SessionTiming.handshakeTimeout {
@@ -1508,6 +1508,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             scheduleReconnect()
             return
         }
+        if case .pong(let id, _) = control {
+            // Mac sends untracked diagnostic pings, so every inbound pong is
+            // unsolicited. Parse it strictly, but do not refresh liveness or
+            // participate in authenticated session ownership.
+            _ = controlLiveness.receive(control)
+            Log.info("unsolicited pong \(id) ignored")
+            return
+        }
         switch control {
         case .serverHello(_), .sessionAccept(_), .sessionBusy(_):
             break
@@ -1518,11 +1526,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 return
             }
         }
-        lastReceived = Date()
+        _ = controlLiveness.receive(control)
         switch control {
         case .ping(let id, let t):
             // Echo the authority-defined correlation id and finite timestamp.
             sendJSONFrame("{\"type\":\"pong\",\"id\":\(id),\"t\":\(t)}")
+        case .pong:
+            preconditionFailure("pong must be handled before application control admission")
         case .stats(_, _, _, let raw):
             // Aggregated pipeline health measured on the phone — logged here
             // so one file holds both ends of the story.

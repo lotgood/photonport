@@ -8,6 +8,7 @@ enum ProtocolParser {
     enum FrameKind { case pairing, session, audioControl, audioData, videoData }
     enum Transport { case wifi, usb }
 
+    static let pairingCap = 4_096
     static let smallControlCap = 65_535
     static let audioDataCap = 262_144
     static let videoDataCap = 16_777_216
@@ -33,6 +34,7 @@ enum ProtocolParser {
 
     enum Control {
         case ping(id: UInt64, t: Double)
+        case pong(id: UInt64, t: Double)
         case stats(fps: Double, bitrate: Double, dropped: UInt64, raw: String)
         case touch(phase: String, x: Double, y: Double, t: Double?)
         case scroll(dx: Double, dy: Double)
@@ -42,11 +44,33 @@ enum ProtocolParser {
         case sessionBusy(SessionBusy)
     }
 
+    struct ControlLivenessState {
+        private(set) var lastReceived: Date
+
+        init(lastReceived: Date = Date()) {
+            self.lastReceived = lastReceived
+        }
+
+        mutating func reset(at now: Date = Date()) {
+            lastReceived = now
+        }
+
+        @discardableResult
+        mutating func receive(_ control: Control, at now: Date = Date()) -> Bool {
+            guard case .pong = control else {
+                lastReceived = now
+                return true
+            }
+            return false
+        }
+    }
+
     enum ParseError: Error { case invalidFrame, invalidJSON, duplicateKey, keySet, type, value }
 
     static func cap(for kind: FrameKind) -> Int {
         switch kind {
-        case .pairing, .session, .audioControl: return smallControlCap
+        case .pairing: return pairingCap
+        case .session, .audioControl: return smallControlCap
         case .audioData: return audioDataCap
         case .videoData: return videoDataCap
         }
@@ -165,10 +189,11 @@ enum ProtocolParser {
     static func parseControl(_ data: Data, transport: Transport) throws -> Control {
         let object = try strictAnyObject(data)
         switch try string(object, "type") {
-        case "ping":
-            guard Set(object.keys) == ["type", "id", "t"] else { throw ParseError.keySet }
-            try validateRawIntegerTokens(data, keys: ["id"])
-            return .ping(id: try uint64(object, "id"), t: try finiteDouble(object, "t", greaterThanOrEqualTo: 0, max: Double.greatestFiniteMagnitude))
+        case "ping", "pong":
+            let message = try parsePingPong(object, data: data)
+            return try string(object, "type") == "ping"
+                ? .ping(id: message.id, t: message.t)
+                : .pong(id: message.id, t: message.t)
         case "stats":
             guard Set(object.keys) == ["type", "fps", "bitrate", "dropped"] else { throw ParseError.keySet }
             let raw = String(data: data, encoding: .utf8) ?? "{}"
@@ -206,6 +231,18 @@ enum ProtocolParser {
         default:
             throw ParseError.value
         }
+    }
+
+    private static func parsePingPong(_ object: [String: Any],
+                                      data: Data) throws -> (id: UInt64, t: Double) {
+        guard Set(object.keys) == ["type", "id", "t"] else { throw ParseError.keySet }
+        try validateRawIntegerTokens(data, keys: ["id"])
+        return (
+            id: try uint64(object, "id"),
+            t: try finiteDouble(
+                object, "t", greaterThanOrEqualTo: 0,
+                max: Double.greatestFiniteMagnitude)
+        )
     }
 
 
@@ -404,9 +441,13 @@ enum ProtocolParser {
         return value
     }
     private static func finiteDouble(_ object: [String: Any], _ key: String) throws -> Double {
-        if let value = object[key] as? Double, value.isFinite { return value }
-        if let value = object[key] as? Int { return Double(value) }
-        throw ParseError.value
+        guard let number = object[key] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            throw ParseError.type
+        }
+        let value = number.doubleValue
+        guard value.isFinite else { throw ParseError.value }
+        return value
     }
     private static func finiteDouble(_ object: [String: Any], _ key: String, greaterThan min: Double, max: Double) throws -> Double {
         let value = try finiteDouble(object, key)
