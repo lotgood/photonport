@@ -87,8 +87,26 @@ struct PhoneInfo: Decodable {
     let hdr: Bool?        // panel has EDR headroom + receiver can decode
                           // 10-bit HEVC (older receivers omit it → false)
     let sessionVersion: Int?
-    let deviceNonce: String?
-    let usbSessionSeed: String?
+    let deviceNonce: Data
+    let usbSessionSeed: Data?
+
+    private enum CodingKeys: String, CodingKey {
+        case pixelsWide, pixelsHigh, scale, device, id, maxFps, hdr, sessionVersion, deviceNonce, usbSessionSeed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pixelsWide = try container.decode(Int.self, forKey: .pixelsWide)
+        pixelsHigh = try container.decode(Int.self, forKey: .pixelsHigh)
+        scale = try container.decode(Double.self, forKey: .scale)
+        device = try container.decodeIfPresent(String.self, forKey: .device)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        maxFps = try container.decodeIfPresent(Int.self, forKey: .maxFps)
+        hdr = try container.decodeIfPresent(Bool.self, forKey: .hdr)
+        sessionVersion = try container.decodeIfPresent(Int.self, forKey: .sessionVersion)
+        deviceNonce = try container.decodeIfPresent(Data.self, forKey: .deviceNonce) ?? Data()
+        usbSessionSeed = try container.decodeIfPresent(Data.self, forKey: .usbSessionSeed)
+    }
 
 
     init(_ hello: ProtocolParser.ServerHello) {
@@ -100,8 +118,8 @@ struct PhoneInfo: Decodable {
         self.maxFps = hello.maxFps
         self.hdr = hello.hdr
         self.sessionVersion = SessionCrypto.version
-        self.deviceNonce = hello.deviceNonce.base64EncodedString()
-        self.usbSessionSeed = hello.usbSessionSeed?.base64EncodedString()
+        self.deviceNonce = hello.deviceNonce
+        self.usbSessionSeed = hello.usbSessionSeed
     }
     var kind: String { device ?? "device" }
     /// Refresh rate to drive the pipeline at, clamped to what the wire and
@@ -789,6 +807,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func sendAudioPCM(_ pcm: Data, sampleRate: Int) {
         let t = Date().timeIntervalSince1970 * 1000
         let payload = Data("{\"type\":\"audio\",\"sr\":\(sampleRate),\"ch\":2,\"t\":\(t),\"d\":\"\(pcm.base64EncodedString())\"}".utf8)
+        do {
+            try ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .audioData)
+        } catch {
+            Log.info("audio payload rejected before send: \(payload.count) bytes")
+            return
+        }
         var header = UInt32(payload.count).bigEndian
         var frame = Data(bytes: &header, count: 4)
         frame.append(payload)
@@ -1114,7 +1138,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     channel: "audio",
                     nonce: nonce.base64EncodedString(),
                     proof: proof.base64EncodedString())
-                guard let frame = PairingWire.frame(open) else { conn.cancel(); return }
+                guard let frame = PairingWire.frame(open, kind: .audioControl) else { conn.cancel(); return }
                 conn.send(content: frame, completion: .contentProcessed { [weak self] error in
                     guard let self, conn === self.audioConnection else { return }
                     self.audioHandshakeInFlight = false
@@ -1397,9 +1421,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         guard pendingStreamSession == nil, boundStreamSession == nil,
               info.sessionVersion == SessionCrypto.version,
               let deviceID = info.id,
-              let deviceNonceString = info.deviceNonce,
-              let deviceNonce = Data(base64Encoded: deviceNonceString), deviceNonce.count == 32,
               let macNonce = SessionCrypto.randomBytes(count: 32) else {
+            Log.info("session v3 server hello invalid")
+            scheduleReconnect()
+            return
+        }
+        let deviceNonce = info.deviceNonce
+        guard deviceNonce.count == 32 else {
             Log.info("session v3 server hello invalid")
             scheduleReconnect()
             return
@@ -1407,8 +1435,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         let ikm: Data?
         if let wifiPSK {
             ikm = wifiPSK.key
-        } else if let encodedSeed = info.usbSessionSeed,
-                  let seed = Data(base64Encoded: encodedSeed) {
+        } else if let seed = info.usbSessionSeed, seed.count == 32 {
             ikm = seed
         } else {
             ikm = nil
@@ -2052,6 +2079,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func sendJSONFrame(_ json: String) {
         guard let connection, connectionReady else { return }
         let payload = Data(json.utf8)
+        do {
+            try ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .session)
+        } catch {
+            Log.info("session payload rejected before send: \(payload.count) bytes")
+            return
+        }
         var header = UInt32(payload.count).bigEndian
         var frame = Data(bytes: &header, count: 4)
         frame.append(payload)
@@ -2060,6 +2093,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     private func sendFramed(_ payload: Data) {
         guard let connection, connectionReady else { return }
+        do {
+            try ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .videoData)
+        } catch {
+            Log.info("video payload rejected before send: \(payload.count) bytes")
+            return
+        }
         var header = UInt32(payload.count).bigEndian
         var frame = Data(bytes: &header, count: 4)
         frame.append(payload)

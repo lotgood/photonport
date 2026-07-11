@@ -6,6 +6,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_YML = (ROOT / "project.yml").read_text(encoding="utf-8")
+PBXPROJ = (ROOT / "OpenSidecar.xcodeproj" / "project.pbxproj").read_text(encoding="utf-8")
 TARGETS_YML = PROJECT_YML.split("\ntargets:\n", 1)[1]
 PAIRING = (ROOT / "Mac" / "Pairing.swift").read_text(encoding="utf-8")
 SENDER = (ROOT / "Mac" / "MacSender.swift").read_text(encoding="utf-8")
@@ -137,6 +138,84 @@ class MacProtocolContractTests(unittest.TestCase):
             },
         )
         self.assertNotIn("protocolTag", pin)
+
+    def test_mac_resource_phase_contains_exact_protocol_build_pin(self):
+        target = re.search(
+            r"A5ECD29965E529F71D22F06C /\* OpenSidecarMac \*/ = \{(?P<body>.*?)\n\t\t\};",
+            PBXPROJ,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(target, "missing OpenSidecarMac native target")
+        resource_phase_ids = re.findall(
+            r"([A-F0-9]{24}) /\* Resources \*/", target.group("body")
+        )
+        self.assertEqual(len(resource_phase_ids), 1)
+
+        resource_phase = re.search(
+            rf"{resource_phase_ids[0]} /\* Resources \*/ = \{{(?P<body>.*?)\n\t\t\}};",
+            PBXPROJ,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(resource_phase, "missing OpenSidecarMac resources phase")
+        self.assertEqual(
+            re.findall(r"ProtocolBuildPin\.json in Resources", resource_phase.group("body")),
+            ["ProtocolBuildPin.json in Resources"],
+        )
+
+    def test_inbound_frames_validate_before_receive_decode_or_dispatch(self):
+        receive_control = swift_private_function(SENDER, "receiveControl")
+        self.assertLess(receive_control.index("ProtocolParser.framedPayloadLength"), receive_control.index("conn.receive(minimumIncompleteLength: len"))
+        self.assertLess(receive_control.index("ProtocolParser.validatePayload"), receive_control.index("self.handleControl(payload)"))
+
+        receive_audio_hello = swift_private_function(SENDER, "receiveAudioServerHello")
+        self.assertLess(receive_audio_hello.index("ProtocolParser.framedPayloadLength"), receive_audio_hello.index("conn.receive(minimumIncompleteLength: length"))
+        self.assertLess(receive_audio_hello.index("ProtocolParser.validatePayload"), receive_audio_hello.index("ProtocolParser.parseServerHello"))
+
+        pairing_receive = swift_function(PAIRING, "receive")
+        pairing_length = pairing_receive.index("ProtocolParser.framedPayloadLength")
+        pairing_payload_receive = pairing_receive.index("conn.receive(minimumIncompleteLength: len")
+        pairing_validate = pairing_receive.index("ProtocolParser.validatePayload")
+        pairing_decode = pairing_receive.index("PairingWire.decode")
+        self.assertLess(pairing_length, pairing_payload_receive)
+        self.assertLess(pairing_payload_receive, pairing_validate)
+        self.assertLess(pairing_validate, pairing_decode)
+
+    def test_no_unsupported_mac_audio_or_video_data_receive_callbacks(self):
+        self.assertNotRegex(SENDER, r"receive(?:Audio|Video)?Data")
+        self.assertNotRegex(SENDER, r"ProtocolParser\.framedPayloadLength\(from:[^\n]+kind:\s*\.(?:audioData|videoData)\)")
+
+    def test_outbound_caps_are_directional_and_exact(self):
+        send_audio = swift_private_function(SENDER, "sendAudioPCM")
+        send_video = swift_private_function(SENDER, "sendFramed")
+        send_json = swift_private_function(SENDER, "sendJSONFrame")
+        send_audio_open = swift_private_function(SENDER, "receiveAudioServerHello")
+
+        self.assertIn("ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .audioData)", send_audio)
+        self.assertNotIn(".audioControl", send_audio)
+        self.assertIn("ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .videoData)", send_video)
+        self.assertNotIn(".session", send_video)
+        self.assertIn("ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .session)", send_json)
+        self.assertNotRegex(send_json, r"\.(?:audioData|videoData)\b")
+        self.assertIn("PairingWire.frame(open, kind: .audioControl)", send_audio_open)
+
+    def test_begin_session_uses_canonical_phoneinfo_data_without_redecode(self):
+        phone_info = SENDER[SENDER.index("struct PhoneInfo: Decodable"):SENDER.index("/// How the sender reaches")]
+        self.assertIn("let deviceNonce: Data", phone_info)
+        self.assertIn("let usbSessionSeed: Data?", phone_info)
+        self.assertIn("self.deviceNonce = hello.deviceNonce", phone_info)
+        self.assertIn("self.usbSessionSeed = hello.usbSessionSeed", phone_info)
+
+        begin = swift_private_function(SENDER, "beginSessionHandshake")
+        self.assertNotIn("Data(base64Encoded:", begin)
+        self.assertIn("let deviceNonce = info.deviceNonce", begin)
+        self.assertIn("let seed = info.usbSessionSeed", begin)
+
+    def test_app_and_harness_compile_the_same_protocol_parser_without_clone(self):
+        mac_target = target_block("OpenSidecarMac")
+        self.assertRegex(mac_target, r"sources:\n\s+- Mac\b")
+        self.assertIn("Mac/ProtocolParser.swift", swiftc_inputs(HARNESS_SCRIPT))
+        self.assertNotRegex(HARNESS_SCRIPT, r"Tests/(?:ProtocolParser|ParserAdapter|.*Protocol.*Clone)\.swift")
+        self.assertNotRegex(HARNESS, r"\b(?:ProtocolParserClone|ParserAdapter|PolicyAdapter|struct\s+ProtocolParser|enum\s+ProtocolParser)\b")
 
 
 if __name__ == "__main__":

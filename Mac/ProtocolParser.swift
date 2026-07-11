@@ -167,6 +167,7 @@ enum ProtocolParser {
         switch try string(object, "type") {
         case "ping":
             guard Set(object.keys) == ["type", "id", "t"] else { throw ParseError.keySet }
+            try validateRawIntegerTokens(data, keys: ["id"])
             return .ping(id: try uint64(object, "id"), t: try finiteDouble(object, "t", greaterThanOrEqualTo: 0, max: Double.greatestFiniteMagnitude))
         case "stats":
             guard Set(object.keys) == ["type", "fps", "bitrate", "dropped"] else { throw ParseError.keySet }
@@ -222,6 +223,7 @@ enum ProtocolParser {
 
     private static func strictAnyObject(_ data: Data) throws -> [String: Any] {
         try rejectDuplicateTopLevelKeys(data)
+        try validateRawIntegerTokens(data, keys: ["v", "sessionVersion", "generation", "dropped", "pixelsWide", "pixelsHigh", "maxFps"])
         let json = try JSONSerialization.jsonObject(with: data)
         guard let object = json as? [String: Any] else { throw ParseError.invalidJSON }
         return object
@@ -284,6 +286,80 @@ enum ProtocolParser {
                 else if c == "}" || c == "]" { if depth == 0 { break }; depth -= 1 }
                 else if c == "," && depth == 0 { break }
                 i = s.index(after: i)
+            }
+            skipWS(); if i < s.endIndex, s[i] == "," { i = s.index(after: i); continue }
+            skipWS(); if i < s.endIndex, s[i] == "}" { return }
+            throw ParseError.invalidJSON
+        }
+    }
+    private static func validateRawIntegerTokens(_ data: Data, keys: Set<String>) throws {
+        guard let s = String(data: data, encoding: .utf8) else { throw ParseError.invalidJSON }
+        var i = s.startIndex
+        func skipWS() { while i < s.endIndex, s[i].isWhitespace { i = s.index(after: i) } }
+        func parseString() throws -> String {
+            guard i < s.endIndex, s[i] == "\"" else { throw ParseError.invalidJSON }
+            i = s.index(after: i); var out = ""
+            while i < s.endIndex {
+                let c = s[i]; i = s.index(after: i)
+                if c == "\"" { return out }
+                if c == "\\" {
+                    guard i < s.endIndex else { throw ParseError.invalidJSON }
+                    let esc = s[i]; i = s.index(after: i)
+                    switch esc {
+                    case "\"", "\\", "/": out.append(esc)
+                    case "b": out.append("\u{08}")
+                    case "f": out.append("\u{0c}")
+                    case "n": out.append("\n")
+                    case "r": out.append("\r")
+                    case "t": out.append("\t")
+                    case "u":
+                        var hex = ""
+                        for _ in 0..<4 {
+                            guard i < s.endIndex else { throw ParseError.invalidJSON }
+                            hex.append(s[i]); i = s.index(after: i)
+                        }
+                        guard let scalar = UInt32(hex, radix: 16),
+                              let unicode = UnicodeScalar(scalar) else { throw ParseError.invalidJSON }
+                        out.unicodeScalars.append(unicode)
+                    default:
+                        throw ParseError.invalidJSON
+                    }
+                } else { out.append(c) }
+            }
+            throw ParseError.invalidJSON
+        }
+        func skipValue() throws -> Substring {
+            skipWS()
+            let start = i
+            var depth = 0; var inString = false; var escape = false
+            while i < s.endIndex {
+                let c = s[i]
+                if inString {
+                    if escape { escape = false }
+                    else if c == "\\" { escape = true }
+                    else if c == "\"" { inString = false }
+                } else if c == "\"" { inString = true }
+                else if c == "{" || c == "[" { depth += 1 }
+                else if c == "}" || c == "]" {
+                    if depth == 0 { break }
+                    depth -= 1
+                } else if c == "," && depth == 0 { break }
+                i = s.index(after: i)
+            }
+            return s[start..<i].trimmingCharacters(in: .whitespacesAndNewlines)[...]
+        }
+
+        skipWS(); guard i < s.endIndex, s[i] == "{" else { throw ParseError.invalidJSON }
+        i = s.index(after: i)
+        while true {
+            skipWS(); guard i < s.endIndex else { throw ParseError.invalidJSON }
+            if s[i] == "}" { return }
+            let key = try parseString()
+            skipWS(); guard i < s.endIndex, s[i] == ":" else { throw ParseError.invalidJSON }
+            i = s.index(after: i)
+            let raw = try skipValue()
+            if keys.contains(key), raw.isEmpty || raw.contains(where: { !$0.isNumber }) {
+                throw ParseError.type
             }
             skipWS(); if i < s.endIndex, s[i] == "," { i = s.index(after: i); continue }
             skipWS(); if i < s.endIndex, s[i] == "}" { return }
