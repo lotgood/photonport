@@ -411,8 +411,12 @@ enum SessionCrypto {
 // MARK: - Framing (4-byte BE length + JSON payload)
 
 enum PairingWire {
-    static func frame<T: Encodable>(_ message: T) -> Data? {
-        guard let payload = try? JSONEncoder().encode(message) else { return nil }
+    static func frame<T: Encodable>(_ message: T, kind: ProtocolParser.FrameKind = .pairing) -> Data? {
+        guard let payload = try? JSONEncoder().encode(message),
+              (try? ProtocolParser.validatePayload(
+                payload, expectedLength: payload.count, kind: kind)) != nil else {
+            return nil
+        }
         var header = UInt32(payload.count).bigEndian
         var data = Data(bytes: &header, count: 4)
         data.append(payload)
