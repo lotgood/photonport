@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/receipt-payload-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "receiptId",
+    "releaseAttemptId",
+    "gateId",
+    "status",
+    "sourceTuple",
+    "issuer",
+    "verifier",
+    "invocation",
+    "artifacts",
+    "children",
+    "observationTime"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "photonport.gate.g004-automated.v2",
+        "photonport.gate.g004-physical.v2",
+        "photonport.gate.g006-provenance.v2",
+        "photonport.gate.export-review.v2",
+        "photonport.gate.apple-distribution.v2",
+        "photonport.gate.rollback-build.v2"
+      ]
+    },
+    "receiptId": {
+      "type": "string",
+      "pattern": "^r-[A-Za-z0-9._:-]{8,128}$"
+    },
+    "releaseAttemptId": {
+      "type": "string",
+      "pattern": "^attempt-[A-Za-z0-9._:-]{8,128}$"
+    },
+    "gateId": {
+      "type": "string",
+      "enum": [
+        "g004.automated",
+        "g004.physical",
+        "g006.provenance",
+        "export.review",
+        "apple.distribution",
+        "rollback.build"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "blocked",
+        "not_run"
+      ]
+    },
+    "sourceTuple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "macCommit",
+        "macTree",
+        "iosCommit",
+        "iosTree",
+        "protocolCommit",
+        "protocolTree",
+        "protocolManifestSha256",
+        "protocolPinSha256"
+      ],
+      "properties": {
+        "macCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "macTree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "iosCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "iosTree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "protocolCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "protocolTree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "protocolManifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "protocolPinSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "identity",
+        "role",
+        "trustDomain"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["agent", "ci", "human", "provider"]
+        },
+        "identity": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["test", "automated-ci", "release-engineer", "export-reviewer", "apple-provider"]
+        },
+        "trustDomain": {
+          "type": "string",
+          "enum": ["test", "opendisplay-ci", "human-approval", "external-provider"]
+        }
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "scriptSha256",
+        "schemaSha256",
+        "trustPolicySha256"
+      ],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "scriptSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "schemaSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "trustPolicySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool",
+        "argv",
+        "cwd",
+        "toolchain"
+      ],
+      "properties": {
+        "tool": { "type": "string" },
+        "argv": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "cwd": { "type": "string" },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputs",
+        "outputs"
+      ],
+      "properties": {
+        "inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "outputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" }
+        }
+      }
+    },
+    "children": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receiptId",
+          "payloadSha256",
+          "envelopeSha256",
+          "gateId"
+        ],
+        "properties": {
+          "receiptId": {
+            "type": "string",
+            "pattern": "^r-[A-Za-z0-9._:-]{8,128}$"
+          },
+          "payloadSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "envelopeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "gateId": {
+            "type": "string",
+            "enum": [
+              "g004.automated",
+              "g004.physical",
+              "g006.provenance",
+              "export.review",
+              "apple.distribution",
+              "rollback.build"
+            ]
+          }
+        }
+      }
+    },
+    "observationTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiry": {
+      "anyOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "null" }
+      ]
+    },
+    "deviceOs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "type": "string" },
+        "device": { "type": "string" },
+        "transport": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

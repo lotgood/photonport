@@ -17,7 +17,7 @@ The standalone iOS receiver is a provenance-cleared reconstruction: 47 shipped
 files, byte-verified MIT lineage, 1,267 similarity candidates independently
 dispositioned APPROVE (receipts in `photonport-ios/artifacts/provenance/`).
 `scripts/release-ios.sh` here is a fail-closed transition guard; the monorepo
-iOS target stays as rollback until `retirementReady` flips true.
+iOS target stays as rollback until `retirementEligible` flips true.
 
 ## Supported matrix (only claim)
 
@@ -70,7 +70,7 @@ python3 scripts/capture-supported-device-evidence.py --probe-local \
   --observations artifacts/cross-repo/physical-observations.json \
   --output artifacts/cross-repo/physical-availability.json
 
-# Transition readiness (retirementReady flips true when every gate passes)
+# Transition readiness (expected exit 2 while M0 gates remain blocked; retirementEligible stays false)
 python3 scripts/verify-ios-transition-readiness.py \
   --mac-root . --ios-root ../photonport-ios --protocol-root ../photonport-protocol \
   --g004-automated artifacts/cross-repo/automated-matrix.json \
