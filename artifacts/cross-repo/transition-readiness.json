@@ -2,17 +2,82 @@
   "blockers": [
     {
       "category": "g004",
-      "reason": "G004 automated receipt and both physical macOS/iPadOS 27 USB/Wi-Fi scenarios must pass"
+      "reason": "legacy v1 evidence is historical and cannot establish M0 eligibility"
+    },
+    {
+      "category": "g004",
+      "reason": "legacy gate evidence is not passed and cannot establish M0 eligibility"
+    },
+    {
+      "category": "g006",
+      "reason": "legacy v1 evidence is historical and cannot establish M0 eligibility"
     },
     {
       "category": "export_review",
-      "reason": "independent export review must pass"
+      "reason": "gate evidence is absent"
     },
     {
       "category": "apple_distribution",
-      "reason": "Apple credentials, signing, TestFlight, and publication evidence must pass"
+      "reason": "gate evidence is absent"
+    },
+    {
+      "category": "rollback",
+      "reason": "legacy v1 evidence is historical and cannot establish M0 eligibility"
     }
   ],
+  "exitCode": 2,
+  "gates": [
+    {
+      "category": "g004",
+      "gateId": "g004.automated",
+      "inputPath": "artifacts/cross-repo/automated-matrix.json",
+      "reason": "legacy v1 evidence is historical and cannot establish M0 eligibility",
+      "reasonCode": "legacy_untrusted_v1",
+      "status": "blocked"
+    },
+    {
+      "category": "g004",
+      "gateId": "g004.physical",
+      "inputPath": "artifacts/cross-repo/physical-availability.json",
+      "reason": "legacy gate evidence is not passed and cannot establish M0 eligibility",
+      "reasonCode": "gate_not_passed",
+      "status": "blocked"
+    },
+    {
+      "category": "g006",
+      "gateId": "g006.provenance",
+      "inputPath": "../photonport-ios/artifacts/provenance/g006-closure.json",
+      "reason": "legacy v1 evidence is historical and cannot establish M0 eligibility",
+      "reasonCode": "legacy_untrusted_v1",
+      "status": "blocked"
+    },
+    {
+      "category": "export_review",
+      "gateId": "export.review",
+      "inputPath": null,
+      "reason": "gate evidence is absent",
+      "reasonCode": "missing_gate_evidence",
+      "status": "blocked"
+    },
+    {
+      "category": "apple_distribution",
+      "gateId": "apple.distribution",
+      "inputPath": null,
+      "reason": "gate evidence is absent",
+      "reasonCode": "missing_gate_evidence",
+      "status": "blocked"
+    },
+    {
+      "category": "rollback",
+      "gateId": "rollback.build",
+      "inputPath": "artifacts/cross-repo/rollback-build.json",
+      "reason": "legacy v1 evidence is historical and cannot establish M0 eligibility",
+      "reasonCode": "legacy_untrusted_v1",
+      "status": "blocked"
+    }
+  ],
+  "kind": "ios-transition-readiness-v2",
+  "observedAt": "2026-07-14T04:47:00Z",
   "preservation": {
     "currentTree": {
       "source": true,
@@ -23,9 +88,27 @@
       "target": true
     }
   },
-  "retirementReady": false,
-  "schemaVersion": 1,
+  "retirementEligible": false,
+  "schemaVersion": 2,
+  "sourceTuple": {
+    "iosCommit": null,
+    "iosRoot": "/Users/ltg/workspace/photonport-ios",
+    "iosTree": null,
+    "macCommit": null,
+    "macRoot": "/Users/ltg/workspace/opendisplay",
+    "macTree": null,
+    "protocolCommit": null,
+    "protocolManifestSha256": null,
+    "protocolPinSha256": null,
+    "protocolRoot": "/Users/ltg/workspace/photonport-protocol",
+    "protocolTree": null
+  },
   "standalone": {
     "present": true
+  },
+  "trustMode": "production",
+  "verifier": {
+    "schema": "artifacts/schemas/transition-input-v2.schema.json",
+    "script": "scripts/verify-ios-transition-readiness.py"
   }
 }
