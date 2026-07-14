@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/ios-interop",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-kr2huzqu/build/ios-interop",
     "encode",
     "stats"
   ],
@@ -8,5 +8,5 @@
   "label": "ios-to-mac-stats-encode",
   "stderr": "",
   "stdoutBytes": 54,
-  "stdoutSha256": "9972f7ad7d1e1bd5bbc9ad92662b492058017bf85533ee778272834b4622f7f8"
+  "stdoutSha256": "1e1d549b80e5ab16ca3d58ad8bf68928806fe7f35fb2c8cc0de8f032249e4e1f"
 }

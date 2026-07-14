@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/fresh-mac",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-kr2huzqu/fresh-mac",
     "checkout",
     "--detach",
-    "2541c74af19c8c966a16e44caba6d86c2793201b"
+    "6d24ddac6c47613844bc0fd02f6fa73245c0f125"
   ],
   "exitCode": 0,
   "label": "fresh-mac-checkout",
-  "stderr": "HEAD is now at 2541c74 docs/release: scope export acknowledgement to the Mac review\n",
+  "stderr": "HEAD is now at 6d24dda ci: generate Xcode project before the protocol-contract suite\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }
