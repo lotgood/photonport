@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "./scripts/test-receiver-adversarial.sh"
+  ],
+  "exitCode": 0,
+  "label": "suite-ios-adversarial",
+  "stderr": "",
+  "stdoutBytes": 36,
+  "stdoutSha256": "298aaaacca8d386ecee94dbc7d6a17982797a0fb178c8492a8c39dcda7cd0ff1"
+}

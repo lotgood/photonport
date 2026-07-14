@@ -11,8 +11,8 @@ state lives in `.gjc/ultragoal/` (local, not committed).
 | Repository | License | Role | State |
 |---|---|---|---|
 | `lotgood/photonport` (this repo) | GPL-3.0 | Mac sender + preserved historical iOS source | public, active |
-| `lotgood/photonport-ios` | MIT | standalone fresh iOS receiver | private, pushed (`f648668`) |
-| `lotgood/photonport-protocol` | MIT | canonical pairing-v2 / session-v3 contract | private, pushed (`c23d345`) |
+| `lotgood/photonport-ios` | MIT | standalone fresh iOS receiver | private; origin at `f648668`, local `a2313c0` (3 unpushed commits) |
+| `lotgood/photonport-protocol` | MIT | canonical pairing-v2 / session-v3 contract | private; origin at `c23d345`, local `2280861` (1 unpushed commit) |
 
 The standalone iOS receiver is a provenance-cleared reconstruction: 47 shipped
 files, byte-verified MIT lineage, 1,267 similarity candidates independently
@@ -67,8 +67,11 @@ notarization result, or TestFlight result.
 | `export_review` | independent Mac/iOS export classifications; record the Mac review before setting `EXPORT_COMPLIANCE_CONFIRMED=1` | external reviewer |
 | `apple_distribution` | App Store Connect, signing, notarization, Gatekeeper, Sparkle `SUPublicEDKey`, TestFlight, and publication receipts remain external records; `ASC_ISSUER_ID` availability alone satisfies none of them | account holder |
 
-Open decisions: publish timing for the two private repositories; whether to
-push GitHub Pages/appcast for Mac auto-update before 0.1.0 signing.
+Open decisions: publish timing for the two private repositories; pushing the
+sibling repos' local commits to their private origins — `Mac/ProtocolBuildPin.json`
+pins protocol commit `2280861`, which currently exists only in the local
+`photonport-protocol` clone; whether to push GitHub Pages/appcast for Mac
+auto-update before 0.1.0 signing.
 
 ## How to re-verify everything
 

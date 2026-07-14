@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "xcodebuild",
+    "-quiet",
+    "-project",
+    "PhotonPortReceiver.xcodeproj",
+    "-scheme",
+    "PhotonPortReceiver",
+    "-configuration",
+    "Debug",
+    "-sdk",
+    "iphonesimulator",
+    "-destination",
+    "generic/platform=iOS Simulator",
+    "-derivedDataPath",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/ios-product",
+    "CODE_SIGNING_ALLOWED=NO",
+    "build"
+  ],
+  "exitCode": 0,
+  "label": "build-ios-product",
+  "stderr": "",
+  "stdoutBytes": 0,
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

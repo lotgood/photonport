@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/mac-interop",
+    "decode"
+  ],
+  "exitCode": 0,
+  "label": "ios-to-mac-stats-decode",
+  "stderr": "OK\n",
+  "stdoutBytes": 0,
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

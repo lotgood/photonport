@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "swiftc",
+    "-O",
+    "/Users/ltg/workspace/opendisplay/Tests/IOSInteropLauncher.swift",
+    "/Users/ltg/workspace/photonport-ios/Sources/StrictJSON.swift",
+    "/Users/ltg/workspace/photonport-ios/Sources/ReceiverContracts.swift",
+    "/Users/ltg/workspace/photonport-ios/Sources/Pairing.swift",
+    "/Users/ltg/workspace/photonport-ios/Sources/Log.swift",
+    "-o",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/ios-interop"
+  ],
+  "exitCode": 0,
+  "label": "compile-ios-launcher-host",
+  "stderr": "",
+  "stdoutBytes": 0,
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

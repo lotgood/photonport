@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "./generate.sh"
+  ],
+  "exitCode": 0,
+  "label": "generate-ios-product-project",
+  "stderr": "",
+  "stdoutBytes": 230,
+  "stdoutSha256": "a2c261b366b6d1497ff172c8f2cabc48642b0740eb3f578a2bf457f98a664a3c"
+}

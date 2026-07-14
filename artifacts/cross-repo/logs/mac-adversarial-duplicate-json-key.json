@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/mac-interop",
+    "case",
+    "duplicate-json-key"
+  ],
+  "exitCode": 0,
+  "label": "mac-adversarial-duplicate-json-key",
+  "stderr": "",
+  "stdoutBytes": 50,
+  "stdoutSha256": "eb526bad0ffbaf31e077c78fbc4a6a46d393a028950a1676a742a3f2439ad047"
+}

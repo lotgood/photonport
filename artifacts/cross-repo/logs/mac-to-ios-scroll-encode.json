@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/mac-interop",
+    "encode",
+    "scroll"
+  ],
+  "exitCode": 0,
+  "label": "mac-to-ios-scroll-encode",
+  "stderr": "",
+  "stdoutBytes": 39,
+  "stdoutSha256": "36098c77efe98525be5644273eb2ccf892329fd6cc1a03ea116e03ee15c55bb6"
+}

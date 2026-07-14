@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/mac-interop",
+    "encode",
+    "touch"
+  ],
+  "exitCode": 0,
+  "label": "mac-to-ios-touch-encode",
+  "stderr": "",
+  "stdoutBytes": 54,
+  "stdoutSha256": "5164eada7023c8756346d5e1d32866b626b351e17caa694523534390581b7441"
+}

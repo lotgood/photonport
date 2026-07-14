@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "./scripts/test-mac-protocol-adversarial.sh"
+  ],
+  "exitCode": 0,
+  "label": "suite-mac-adversarial",
+  "stderr": "",
+  "stdoutBytes": 80,
+  "stdoutSha256": "b898b059fe6cf9f79cbc507af518869959fd48cca2987b766c3f8712fc0cb3a8"
+}
