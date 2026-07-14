@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ED25519_MODULE_SHA256 = hashlib.sha256((ROOT / "scripts/evidence/ed25519_rfc8032.py").read_bytes()).hexdigest()
 SPEC = importlib.util.spec_from_file_location("verify_receipt", ROOT / "scripts/evidence/verify_receipt.py")
 verify_receipt = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verify_receipt)
@@ -34,7 +35,7 @@ def payload(**overrides):
         "status": "passed",
         "sourceTuple": TUPLE,
         "issuer": {"kind": "agent", "identity": "fixture", "role": "test", "trustDomain": "test"},
-        "verifier": {"commit": "0" * 40, "scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64},
+        "verifier": {"commit": "0" * 40, "scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64, "ed25519ModuleSha256": ED25519_MODULE_SHA256},
         "invocation": {"tool": "unittest", "argv": ["python3", "-m", "unittest"], "cwd": ".", "toolchain": {"python": "3"}},
         "artifacts": {"inputs": [], "outputs": []},
         "children": [],
@@ -61,7 +62,7 @@ def write_receipt(path, payload_value):
 
 
 def expected():
-    return {"releaseAttemptId": "attempt-m0m1-test-0001", "gateId": "g004.automated", "kind": "photonport.gate.g004-automated.v2", "sourceTuple": TUPLE, "verifier": {"scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64}}
+    return {"releaseAttemptId": "attempt-m0m1-test-0001", "gateId": "g004.automated", "kind": "photonport.gate.g004-automated.v2", "sourceTuple": TUPLE, "verifier": {"scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64, "ed25519ModuleSha256": ED25519_MODULE_SHA256}}
 
 
 class ReceiptReplayDriftTests(unittest.TestCase):
@@ -140,7 +141,7 @@ class ReceiptReplayDriftTests(unittest.TestCase):
 
         receipt = self.tmp_path / "bad-b64.json"
         env = envelope_for(payload())
-        env["payload"] = env["payload"].rstrip("=")
+        env["payload"] = "!" + env["payload"][1:]
         receipt.write_text(json.dumps(env), encoding="utf-8")
         result = self.verify(receipt)
         self.assertEqual(result["reasonCode"], "bad_payload_base64")

@@ -43,6 +43,38 @@
             }
           }
         }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "artifacts": {
+            "anyOf": [
+              {
+                "properties": {
+                  "inputs": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "outputs": {
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
       }
     }
   ]

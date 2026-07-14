@@ -72,23 +72,20 @@ separate and are never committed.
 - Store it locally, e.g. `~/.private_keys/AuthKey_<KEYID>.p8`
   (`notarytool` also accepts `--key`, `--key-id`, `--issuer`).
 
-### 0.3 Sparkle EdDSA key (appcast signing)
+### 0.3 Sparkle EdDSA key and tools (appcast signing)
+
 Sparkle signs each update with an EdDSA (ed25519) key; the app verifies it with
 the **public** key baked into `Info.plist` (`SUPublicEDKey`).
 
-- Generate once with Sparkle's tool (from the resolved SwiftPM checkout or a
-  downloaded Sparkle release):
-  ```sh
-  # path may vary; Sparkle ships generate_keys in its bin/ artifacts
-  ./bin/generate_keys
-  ```
-  This stores the **private** key in your login Keychain and prints the
-  **public** key (a base64 string).
-- The public key is already committed in `project.yml`. Verify that the
-  Keychain key still matches before every release:
-  ```sh
-  ./bin/generate_keys -p
-  ```
+- Build the project once so SwiftPM resolves Sparkle, then locate the directory
+  containing both `generate_appcast` and `generate_keys` under the generated
+  `build/SourcePackages` artifacts. Alternatively, install a Sparkle release
+  that provides both tools and set `SPARKLE_BIN` to that directory. The release
+  script searches the build artifacts only when `SPARKLE_BIN` is unset.
+- Generate the key once with that directory's `generate_keys`. It stores the
+  **private** key in the login Keychain and prints the **public** base64 key.
+  The public key is already committed in `project.yml`; run
+  `generate_keys -p` before each release and require an exact match.
 - A local mode-0600 export was created at
   `~/.private_keys/photonport-sparkle-ed25519.pem`. Move a copy to encrypted
   offline storage; the local path is not a sufficient backup by itself.
@@ -110,13 +107,21 @@ the **public** key baked into `Info.plist` (`SUPublicEDKey`).
 | Sparkle EdDSA public key | Mac app at runtime | `project.yml` `SUPublicEDKey` |
 | `$DEVELOPMENT_TEAM` | Mac release and standalone iOS release records | `.env` (gitignored); ownership and receipts remain separate |
 
-Environment the scripts expect (export before running, do **not** commit):
+Environment the scripts require (export before running, do **not** commit):
 ```sh
 export DEVELOPMENT_TEAM=XXXXXXXXXX
 export ASC_KEY_ID=XXXXXXXXXX
 export ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 export ASC_KEY_PATH=$HOME/.private_keys/AuthKey_XXXXXXXXXX.p8
+# Set only after the Mac export-classification review is recorded.
+export EXPORT_COMPLIANCE_CONFIRMED=1
+# Optional: directory containing both generate_appcast and generate_keys.
+export SPARKLE_BIN=/path/to/Sparkle/bin
 ```
+
+`SPARKLE_BIN` is optional; see §0.3 for the build-artifact discovery path.
+`EXPORT_COMPLIANCE_CONFIRMED=1` is a local fail-closed acknowledgement, not
+evidence that an export review was approved.
 
 ---
 
@@ -136,41 +141,62 @@ comparison is needed.
    rollback/provenance; it is not the transitioned iOS release candidate.
 2. For the Mac DMG, obtain and privately record the Mac export-classification
    review. Apply required changes and record the reviewer, conclusion, date,
-   exact commit, version, and any Apple declaration or exemption. This gate
-   blocks Mac distribution.
-3. For the standalone iOS candidate, obtain and privately record a separate iOS
-   export-classification review covering CryptoKit/TLS-PSK/session-v3, then
-   separately obtain the GPL-3.0/Apple/TestFlight terms review and App Privacy
-   determination. These gates block iOS distribution and are not evidence of
-   approval until the external receipts exist.
-4. Create the Mac release tag on the exact clean commit, but do not push it yet:
+   exact commit, version, and any Apple declaration or exemption. Set
+   `EXPORT_COMPLIANCE_CONFIRMED=1` only after that record exists. This blocks
+   Mac distribution.
+3. Separately obtain and privately record the standalone iOS
+   export-classification review covering CryptoKit/TLS-PSK/session-v3. This is
+   an iOS distribution record, may proceed in parallel, and does **not** gate
+   the Mac GitHub Release.
+4. **Before running `release-mac.sh`, push the exact clean release commit to
+   `origin/main`, then create its signed annotated release tag locally.**
+   `release-common.sh` requires `HEAD == origin/main`; the release *tag*, not
+   the release commit, is what remains unpublished at this point:
    ```sh
+   git push origin HEAD:main
+   git fetch origin
+   test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
    git tag -s photonport-v0.1.0 -m "PhotonPort 0.1.0"
+   git verify-tag photonport-v0.1.0
    ```
+   Do not push the tag yet. `release-common.sh` rejects unsigned or
+   unverifiable tags with `git verify-tag`.
 5. Build the notarized Mac DMG and signed appcast:
    ```sh
    ./scripts/release-mac.sh 0.1.0
    ```
-   Verify codesign, Gatekeeper, notarization/stapling, checksums, appcast URL,
-   EdDSA signature, and the embedded Sparkle public key against the private key.
+   After export, the script fails closed before DMG construction unless
+   `artifacts/cross-repo/compatibility-report.json` is `compatible`, binds the
+   committed-tree Mac snapshot to `HEAD`, and has `identity=committed_tree`.
+   That same post-export phase requires exactly one `ProtocolBuildPin.json` in
+   the exported app and byte-compares it with `Mac/ProtocolBuildPin.json`.
+   After stapling, it mounts the DMG and runs `spctl --assess --type exec -vvv`
+   on the mounted `PhotonPort.app`; Gatekeeper acceptance is therefore
+   automated. It then
+   verifies the generated appcast with
+   `scripts/verify-appcast-artifact.py`: the exact version/tag enclosure URL,
+   `sparkle:shortVersionString`, and the real Ed25519 signature over the DMG
+   bytes against `project.yml` `SUPublicEDKey`. The success banner appears only
+   after every check passes.
 6. **AC#9 runtime smoke (blocking):** install this exact notarized Mac candidate
-   on the supported macOS 27 Mac and run one USB Mac↔iPad session covering
-   virtual display, capture, input, audio, disconnect/reconnect, and replug.
-   Confirm redacted `CapabilityProbe` and session-v3 reason logs are healthy.
+   on the supported macOS 27 Mac. Complete the eight-item USB checklist:
+   `usb_display`, `usb_hdr`, `usb_120hz`, `usb_audio`, `usb_rotation`,
+   `usb_input`, `usb_disconnect`, and `usb_replug`. Retain the checklist and
+   `/tmp/photonport-mac.log` lines for the session-v3 accept and end reason.
    Runs on other OS versions do not satisfy this gate.
-6. On any failure, delete the unpublished local tag and candidate artifacts, fix
-   on a new commit, and restart. On success, push the tag, create and verify a
-   draft GitHub Release, publish it, then verify Pages, `releases/latest`, the DMG
-   URL, and the appcast before announcing. If the release-triggered Pages deploy
-   is blocked or the feed is stale, run **Actions → Pages → Run workflow** from
-   `main` with the exact published `photonport-v*` tag; invalid or unpublished tags
-   fail closed.
-7. Before any standalone iOS TestFlight upload, obtain and privately record the
+7. On any failure, delete the unpublished local tag and candidate artifacts, fix
+   on a new commit, and restart. On success, push the verified signed tag,
+   create and verify a draft GitHub Release, publish it, then verify Pages,
+   `releases/latest`, the DMG URL, and the appcast before announcing. If the
+   release-triggered Pages deploy is blocked or the feed is stale, run
+   **Actions → Pages → Run workflow** from `main` with the exact published
+   `photonport-v*` tag; invalid or unpublished tags fail closed.
+8. Before any standalone iOS TestFlight upload, obtain and privately record the
    separate GPL-3.0/Apple/TestFlight terms review and App Privacy determination.
-   Only that iOS gate permits `APPLE_DISTRIBUTION_TERMS_REVIEWED=1`; it does not
-   gate the Mac GitHub Release once the Mac export review and Mac evidence are
-   complete.
-8. Build and upload the iOS candidate only from the standalone
+   Only the `photonport-ios` release tooling consumes
+   `APPLE_DISTRIBUTION_TERMS_REVIEWED=1`; this repository's scripts do not.
+   This iOS acknowledgement does not gate the Mac GitHub Release.
+9. Build and upload the iOS candidate only from the standalone
    [photonport-ios repository](https://github.com/lotgood/photonport-ios), using
    its own signing, TestFlight, privacy, and export receipts. The monorepo
    `scripts/release-ios.sh` command is historical context and rollback tooling,
@@ -209,24 +235,42 @@ date stamp (`YYYYMMDDHHMM`) to keep TestFlight builds monotonic.
 
 ## 4. Acceptance criteria (verify before "done")
 
-- AC#1 `spctl -a -vvv PhotonPort.app` = **accepted** on a clean Mac.
-- AC#2 For the first binary release, manual update-check verifies and downloads
-  the signed `0.1.0` appcast. Full old→new update testing begins with `0.1.1`.
-- AC#3 In-app "Get the Mac app" → `releases/latest` returns 200.
-- AC#4 iOS `0.1.0` processes on TestFlight, has an accepted privacy manifest,
-  and shows the expected recorded export-compliance state.
-- AC#5 `MARKETING_VERSION=0.1.0`, date-based build number, CHANGELOG section present.
-- AC#6 Protocol-v3 vectors, session ownership/replay harness, and unsigned builds
-  stay green for both targets.
-- AC#7 README keeps the EXPERIMENTAL / single-hardware-pair framing and accurately
-  distinguishes receiver binding from the remaining stolen-PSK/no-PFS risks.
-- AC#8 Release artifacts/credentials are ignored; LICENSE, third-party notices,
-  and asset notices ship with the DMG.
-- AC#9 (**blocking**) the supported-device USB runtime smoke passes on the exact
-  notarized candidate before the Mac release is published.
-- AC#10 Export review covers Mac and standalone iOS independently before either
-  distribution; standalone iOS provenance/legal and Apple/TestFlight distribution
-  records are complete before upload.
+### Mac distribution blockers
+
+Every row in this table, including the Mac export record, blocks publication of
+the Mac GitHub Release.
+
+| Criterion | Required evidence |
+|---|---|
+| Mac export classification | Private record for the exact Mac commit/version: reviewer, conclusion/date, Apple declaration or exemption, and required changes. `EXPORT_COMPLIANCE_CONFIRMED=1` may be set only after this record. |
+| AC#1 | `release-mac.sh` completes its mounted-DMG Gatekeeper assessment (`spctl --assess --type exec -vvv`); the script does not require a separate manual Gatekeeper step. |
+| AC#2 | Manual update-check log contains the signature-verified line for the signed `0.1.0` appcast **and** a screenshot of that successful update check. Full old→new update testing begins with `0.1.1`. |
+| AC#3 | In-app **Get the Mac app** opens `releases/latest`; retain an HTTP 200 check or browser evidence showing the DMG. |
+| AC#5 | `MARKETING_VERSION=0.1.0`, a date-based build number, and the matching `CHANGELOG.md` section. |
+| AC#8 | Release artifacts and credentials are ignored, and the mounted DMG contains exactly these required notice payloads: `LICENSE`, `README.md`, `THIRD_PARTY_NOTICES.md`, `ASSETS.md`, and `LICENSES/`. |
+| AC#9 | The exact notarized candidate passes the eight USB checks in §2 step 7; retain that checklist plus `/tmp/photonport-mac.log` session-v3 accept and end-reason lines. |
+
+The G004 WiFi scenarios have a narrower scope: `wifi_unpaired` and
+`wifi_takeover` are required before a Mac public release. `wifi_wrong_mac`
+remains `not_run` until a second Mac is available; it blocks only retirement of
+the monorepo iOS target (`retirementEligible`), not Mac DMG distribution.
+
+### Standalone iOS distribution records (do not gate the Mac GitHub Release)
+
+These entries belong to the standalone iOS authority and must not be used to
+claim that the Mac release approved or published iOS.
+
+| Criterion | Required evidence |
+|---|---|
+| AC#4 | App Store Connect screenshot showing the TestFlight build state transition **Processing → Ready** and the recorded export-compliance field; retain the accepted privacy-manifest record. |
+| AC#6 (iOS portion) | `artifacts/cross-repo/automated-matrix.json` has `"result": "passed"` **and** the corresponding green CI run URL is retained. |
+| AC#10 (iOS portion) | Independent standalone-iOS export review plus provenance/legal, Apple/TestFlight terms, signing, and upload records for the exact iOS candidate. |
+
+### Shared documentation record
+
+| Criterion | Required evidence |
+|---|---|
+| AC#7 | README's Security section separately states receiver binding, the stolen-PSK residual risk, and the no-forward-secrecy residual risk. |
 
 ## 5. Distribution compliance records
 

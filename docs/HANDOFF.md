@@ -1,8 +1,9 @@
 # PhotonPort handoff — state and remaining gates
 
-Last updated: 2026-07-11 (after the first full physical test session on the
-supported pair). This file is the single entry point for picking the release
-work back up. Machine-readable receipts live under `artifacts/`; durable goal
+Last updated: 2026-07-14. This file is the single entry point for picking the
+release work back up. The full test-suite re-verification recorded on this date
+was green; it does not evidence external approval, signing, notarization, or
+publication. Machine-readable receipts live under `artifacts/`; durable goal
 state lives in `.gjc/ultragoal/` (local, not committed).
 
 ## Repository split
@@ -36,10 +37,13 @@ Remaining `not_run` (human, on-device):
 
 1. `wifi_unpaired` — unpair (Mac session row re-pair button, or remove the
    pairing on the device), attempt Connect, confirm rejection, then re-pair
-   via fresh SAS comparison.
+   via fresh SAS comparison. This blocks Mac public release.
 2. `wifi_takeover` — while a WiFi session streams, plug USB and confirm the
-   receiver rejects the competing session (`session_busy`).
+   receiver rejects the competing session (`session_busy`). This blocks Mac
+   public release.
 3. `wifi_wrong_mac` — needs a second Mac; stays `not_run` until one exists.
+   It blocks only monorepo iOS-target retirement (`retirementEligible`), not
+   Mac DMG distribution.
 
 Defects found and fixed during the physical session (all verified live):
 cursor-lag implicit CALayer animation (photonport-ios `f648668`), EDR-backend
@@ -50,11 +54,18 @@ disabling AirDrop/Handoff or using USB; app-level levers are exhausted.
 
 ## Remaining release gates (`artifacts/cross-repo/transition-readiness.json`)
 
+The 2026-07-14 full test-suite re-verification was green. `ASC_ISSUER_ID` is now
+available with the release credentials; the only remaining release-script
+environment acknowledgement is `EXPORT_COMPLIANCE_CONFIRMED=1`, which must
+remain unset until the Mac export-classification record exists. Credential
+availability is not an Apple approval, export conclusion, signing result,
+notarization result, or TestFlight result.
+
 | Gate | Blocker | Who |
 |---|---|---|
-| `g004` | 3 physical scenarios above | device owner |
-| `export_review` | independent Mac/iOS export classifications (`Distribution/EXPORT_CLASSIFICATION.json` in photonport-ios; Mac gate in `scripts/release-mac.sh`) | external reviewer |
-| `apple_distribution` | `ASC_ISSUER_ID` missing; App Store Connect record, signing, notarization, Gatekeeper, Sparkle `SUPublicEDKey` swap, TestFlight, publication receipts | account holder |
+| `g004` | `wifi_unpaired` and `wifi_takeover` before Mac public release; `wifi_wrong_mac` before monorepo iOS retirement only | device owner |
+| `export_review` | independent Mac/iOS export classifications; record the Mac review before setting `EXPORT_COMPLIANCE_CONFIRMED=1` | external reviewer |
+| `apple_distribution` | App Store Connect, signing, notarization, Gatekeeper, Sparkle `SUPublicEDKey`, TestFlight, and publication receipts remain external records; `ASC_ISSUER_ID` availability alone satisfies none of them | account holder |
 
 Open decisions: publish timing for the two private repositories; whether to
 push GitHub Pages/appcast for Mac auto-update before 0.1.0 signing.
@@ -62,15 +73,32 @@ push GitHub Pages/appcast for Mac auto-update before 0.1.0 signing.
 ## How to re-verify everything
 
 ```sh
-# Full cross-repo matrix (tests, builds, gates, compatibility receipt) — 11 commands
-python3 scripts/run-cross-repo-matrix.py
+# Full cross-repo matrix: every required argparse input is explicit. These
+# values must name the candidate commits; the two digests come from its Mac pin.
+MAC_COMMIT="$(git rev-parse HEAD)"
+IOS_COMMIT="$(git -C ../photonport-ios rev-parse HEAD)"
+PROTOCOL_COMMIT="$(git -C ../photonport-protocol rev-parse HEAD)"
+COMPATIBILITY_DIGEST="$(python3 -c 'import json; print(json.load(open("Mac/ProtocolBuildPin.json"))["compatibilityDigest"])')"
+NORMATIVE_MANIFEST_DIGEST="$(python3 -c 'import json; print(json.load(open("Mac/ProtocolBuildPin.json"))["normativeManifestDigest"])')"
+
+python3 scripts/run-cross-repo-matrix.py \
+  --mac-root . \
+  --ios-root ../photonport-ios \
+  --protocol-root ../photonport-protocol \
+  --expected-mac-commit "$MAC_COMMIT" \
+  --expected-ios-commit "$IOS_COMMIT" \
+  --expected-protocol-commit "$PROTOCOL_COMMIT" \
+  --expected-compatibility-digest "$COMPATIBILITY_DIGEST" \
+  --expected-normative-manifest-digest "$NORMATIVE_MANIFEST_DIGEST" \
+  --output artifacts/cross-repo/automated-matrix.json
 
 # Physical availability + scenario receipt (redacted, read-only probe)
 python3 scripts/capture-supported-device-evidence.py --probe-local \
   --observations artifacts/cross-repo/physical-observations.json \
   --output artifacts/cross-repo/physical-availability.json
 
-# Transition readiness (expected exit 2 while M0 gates remain blocked; retirementEligible stays false)
+# Transition readiness (expected exit 2 while M0 gates remain blocked;
+# retirementEligible stays false)
 python3 scripts/verify-ios-transition-readiness.py \
   --mac-root . --ios-root ../photonport-ios --protocol-root ../photonport-protocol \
   --g004-automated artifacts/cross-repo/automated-matrix.json \

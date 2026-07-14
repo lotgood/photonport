@@ -33,9 +33,9 @@ The compatibility manifest is pinned to protocol **3.0.0** and pairing
 **2.0.0**; the Mac minimum is **0.1.0**, the standalone iOS minimum is
 **1.0.0**, and mismatches fail closed with an upgrade message. The only
 supported runtime pair is an **M4 Max Mac running macOS 27 over USB with an
-iPad Pro 11-inch M4 running iPadOS 27** (the same hardware pair the original
-measurements were made on, since updated from OS26). Other OS versions remain
-**unverified**; no other support claim is made.
+iPad Pro 11-inch M4 running iPadOS 27**. All measurements cited here were made
+on that pair; other OS versions remain **unverified** and no other support
+claim is made.
 
 The standalone receiver is the intended post-transition build target. The
 monorepo iOS target is intentionally preserved for historical reproducibility
@@ -50,12 +50,17 @@ the split as a completed release.
   **SAS numeric comparison** (Bluetooth-style): both devices derive the same
   6-digit code from a fresh X25519 key exchange and you confirm the two
   screens match. No secret is typed or transmitted, so there is no offline
-  PIN oracle, and an active same-network attacker inserting a fake endpoint
-  produces *different* codes on the two screens — mismatch means "don't
-  confirm". The confirmed key is stored per-Mac (device-only Keychain) and
-  WiFi sessions run over TLS-PSK. The receiver's plaintext port only accepts
-  loopback (USB/usbmux) peers, and the pairing listener exists only while the
-  device's pairing screen is open.
+  PIN oracle. The commitment phase prevents an active same-network attacker
+  from choosing matching codes after seeing the peer's opening, so an inserted
+  fake endpoint normally produces different codes — mismatch means "don't
+  confirm". A 6-digit SAS still leaves a 1-in-1,000,000 online guess chance per
+  attempt; repeated attempts accumulate that risk. The confirmed key is stored
+  per-Mac in the default file Keychain with iCloud synchronization disabled.
+  This build cannot use the data-protection Keychain without its required
+  entitlement, so the requested `ThisDeviceOnly` accessibility is ignored
+  rather than providing device-only storage. WiFi sessions run over TLS-PSK.
+  The receiver's plaintext port only accepts loopback (USB/usbmux) peers, and
+  the pairing listener exists only while the device's pairing screen is open.
 - **Stream sessions are receiver-bound.** After the receiver-first hello, protocol
   v3 authenticates the claimed Mac identity, returns a receiver proof, and binds
   the dedicated audio socket to the accepted primary session. A second primary

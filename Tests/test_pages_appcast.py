@@ -6,18 +6,26 @@ import tempfile
 import unittest
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).parents[1] / "scripts" / "select-pages-appcast.py"
+ROOT = Path(__file__).parents[1]
+MODULE_PATH = ROOT / "scripts" / "select-pages-appcast.py"
 SPEC = importlib.util.spec_from_file_location("pages_appcast", MODULE_PATH)
 assert SPEC and SPEC.loader
 pages_appcast = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pages_appcast)
-VERIFY_PATH = Path(__file__).parents[1] / "scripts" / "verify-pages-appcast.py"
+VERIFY_PATH = ROOT / "scripts" / "verify-pages-appcast.py"
 VERIFY_SPEC = importlib.util.spec_from_file_location(
     "verify_pages_appcast", VERIFY_PATH
 )
 assert VERIFY_SPEC and VERIFY_SPEC.loader
 verify_pages_appcast = importlib.util.module_from_spec(VERIFY_SPEC)
 VERIFY_SPEC.loader.exec_module(verify_pages_appcast)
+ED25519_PATH = ROOT / "scripts" / "evidence" / "ed25519_rfc8032.py"
+ED25519_SPEC = importlib.util.spec_from_file_location("ed25519_rfc8032", ED25519_PATH)
+assert ED25519_SPEC and ED25519_SPEC.loader
+ed25519 = importlib.util.module_from_spec(ED25519_SPEC)
+ED25519_SPEC.loader.exec_module(ed25519)
+
+FIXTURE_SEED = bytes(range(32))
 
 
 def release(
@@ -55,23 +63,37 @@ def release(
     }
 
 
-def appcast_files(directory, tag="photonport-v0.1.0"):
-    signature = base64.b64encode(bytes(range(64))).decode("ascii")
+def update_checksum(appcast, checksum):
+    checksum.write_text(
+        f"{hashlib.sha256(appcast.read_bytes()).hexdigest()}  appcast.xml\n",
+        encoding="utf-8",
+    )
+
+
+def appcast_files(
+    directory,
+    tag="photonport-v0.1.0",
+    *,
+    enclosure_url=None,
+    dmg_bytes=b"fixture Sparkle update",
+):
+    dmg = Path(directory) / "fixture.dmg"
+    dmg.write_bytes(dmg_bytes)
+    public_key = ed25519.public_key(FIXTURE_SEED)
+    signature = base64.b64encode(ed25519.sign(FIXTURE_SEED, dmg_bytes)).decode("ascii")
+    url = enclosure_url or verify_pages_appcast._expected_enclosure_url(tag)
     payload = (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
         '<channel><item><enclosure '
-        f'url="https://downloads.example/{tag}/PhotonPort.dmg" '
+        f'url="{url}" '
         f'sparkle:edSignature="{signature}" /></item></channel></rss>'
     ).encode("utf-8")
     appcast = Path(directory) / "appcast.xml"
     checksum = Path(directory) / "appcast.xml.sha256"
     appcast.write_bytes(payload)
-    checksum.write_text(
-        f"{hashlib.sha256(payload).hexdigest()}  appcast.xml\n",
-        encoding="utf-8",
-    )
-    return appcast, checksum
+    update_checksum(appcast, checksum)
+    return appcast, checksum, dmg, public_key
 
 
 class PagesAppcastSelectionTests(unittest.TestCase):
@@ -134,6 +156,15 @@ class PagesAppcastSelectionTests(unittest.TestCase):
             event="release", releases=releases, release_tag="v9.9.9"
         )
         self.assertEqual(selected["tag"], "photonport-v0.2.0")
+    def test_malformed_photonport_release_event_fails_closed(self):
+        releases = [release("photonport-v0.2.0", "2026-02-01T00:00:00Z")]
+        with self.assertRaises(pages_appcast.SelectionError):
+            pages_appcast.select_appcast(
+                event="release",
+                releases=releases,
+                release_tag="photonport-v0.2",
+            )
+
 
     def test_only_non_photon_releases_keeps_privacy_only(self):
         releases = [release("v9.9.9", "2026-03-01T00:00:00Z")]
@@ -214,72 +245,167 @@ class PagesAppcastSelectionTests(unittest.TestCase):
 
     def test_appcast_artifact_verifier_accepts_matching_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
-            appcast, checksum = appcast_files(directory)
+            appcast, checksum, dmg, public_key = appcast_files(directory)
             verify_pages_appcast.verify_appcast(
-                appcast, checksum, "photonport-v0.1.0"
+                appcast,
+                checksum,
+                "photonport-v0.1.0",
+                dmg=dmg,
+                public_key=public_key,
+            )
+    def test_appcast_artifact_verifier_reads_project_public_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            appcast, checksum, dmg, public_key = appcast_files(directory)
+            project = Path(directory) / "project.yml"
+            project.write_text(
+                f"SUPublicEDKey: {base64.b64encode(public_key).decode('ascii')}\n",
+                encoding="utf-8",
+            )
+            verify_pages_appcast.verify_appcast(
+                appcast,
+                checksum,
+                "photonport-v0.1.0",
+                dmg=dmg,
+                project=project,
             )
 
     def test_appcast_artifact_verifier_rejects_wrong_digest(self):
         with tempfile.TemporaryDirectory() as directory:
-            appcast, checksum = appcast_files(directory)
+            appcast, checksum, dmg, public_key = appcast_files(directory)
             checksum.write_text(f"{'0' * 64}  appcast.xml\n", encoding="utf-8")
             with self.assertRaises(verify_pages_appcast.VerificationError):
                 verify_pages_appcast.verify_appcast(
-                    appcast, checksum, "photonport-v0.1.0"
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=public_key,
                 )
 
     def test_appcast_artifact_verifier_rejects_wrong_release_tag(self):
         with tempfile.TemporaryDirectory() as directory:
-            appcast, checksum = appcast_files(directory)
+            appcast, checksum, dmg, public_key = appcast_files(directory)
             with self.assertRaises(verify_pages_appcast.VerificationError):
                 verify_pages_appcast.verify_appcast(
-                    appcast, checksum, "photonport-v9.9.9"
+                    appcast,
+                    checksum,
+                    "photonport-v9.9.9",
+                    dmg=dmg,
+                    public_key=public_key,
                 )
 
     def test_appcast_artifact_verifier_rejects_malformed_xml(self):
         with tempfile.TemporaryDirectory() as directory:
-            appcast, checksum = appcast_files(directory)
-            payload = b"<rss>"
-            appcast.write_bytes(payload)
-            checksum.write_text(
-                f"{hashlib.sha256(payload).hexdigest()}  appcast.xml\n",
-                encoding="utf-8",
-            )
+            appcast, checksum, dmg, public_key = appcast_files(directory)
+            appcast.write_bytes(b"<rss>")
+            update_checksum(appcast, checksum)
             with self.assertRaises(verify_pages_appcast.VerificationError):
                 verify_pages_appcast.verify_appcast(
-                    appcast, checksum, "photonport-v0.1.0"
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=public_key,
                 )
 
     def test_appcast_artifact_verifier_rejects_missing_signature(self):
         with tempfile.TemporaryDirectory() as directory:
-            appcast, checksum = appcast_files(directory)
-            payload = appcast.read_bytes().replace(
-                b"sparkle:edSignature", b"sparkle:other"
+            appcast, checksum, dmg, public_key = appcast_files(directory)
+            appcast.write_bytes(
+                appcast.read_bytes().replace(
+                    b"sparkle:edSignature", b"sparkle:other"
+                )
             )
-            appcast.write_bytes(payload)
-            checksum.write_text(
-                f"{hashlib.sha256(payload).hexdigest()}  appcast.xml\n",
-                encoding="utf-8",
-            )
+            update_checksum(appcast, checksum)
             with self.assertRaises(verify_pages_appcast.VerificationError):
                 verify_pages_appcast.verify_appcast(
-                    appcast, checksum, "photonport-v0.1.0"
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=public_key,
                 )
 
     def test_appcast_artifact_verifier_rejects_short_signature(self):
         with tempfile.TemporaryDirectory() as directory:
-            appcast, checksum = appcast_files(directory)
-            full_signature = base64.b64encode(bytes(range(64)))
+            appcast, checksum, dmg, public_key = appcast_files(directory)
+            full_signature = base64.b64encode(
+                ed25519.sign(FIXTURE_SEED, dmg.read_bytes())
+            )
             short_signature = base64.b64encode(bytes(range(32)))
-            payload = appcast.read_bytes().replace(full_signature, short_signature)
-            appcast.write_bytes(payload)
-            checksum.write_text(
-                f"{hashlib.sha256(payload).hexdigest()}  appcast.xml\n",
-                encoding="utf-8",
+            appcast.write_bytes(
+                appcast.read_bytes().replace(full_signature, short_signature)
+            )
+            update_checksum(appcast, checksum)
+            with self.assertRaises(verify_pages_appcast.VerificationError):
+                verify_pages_appcast.verify_appcast(
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=public_key,
+                )
+
+    def test_appcast_artifact_verifier_rejects_tampered_dmg(self):
+        with tempfile.TemporaryDirectory() as directory:
+            appcast, checksum, dmg, public_key = appcast_files(directory)
+            dmg.write_bytes(b"tampered DMG bytes")
+            with self.assertRaises(verify_pages_appcast.VerificationError):
+                verify_pages_appcast.verify_appcast(
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=public_key,
+                )
+
+    def test_appcast_artifact_verifier_rejects_wrong_public_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            appcast, checksum, dmg, _ = appcast_files(directory)
+            wrong_public_key = ed25519.public_key(bytes(reversed(FIXTURE_SEED)))
+            with self.assertRaises(verify_pages_appcast.VerificationError):
+                verify_pages_appcast.verify_appcast(
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=wrong_public_key,
+                )
+
+    def test_appcast_artifact_verifier_rejects_wrong_enclosure_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            appcast, checksum, dmg, public_key = appcast_files(
+                directory,
+                enclosure_url=(
+                    "https://github.com/lotgood/other/releases/download/"
+                    "photonport-v0.1.0/PhotonPort-0.1.0.dmg"
+                ),
             )
             with self.assertRaises(verify_pages_appcast.VerificationError):
                 verify_pages_appcast.verify_appcast(
-                    appcast, checksum, "photonport-v0.1.0"
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=public_key,
+                )
+
+    def test_appcast_artifact_verifier_rejects_version_mismatched_enclosure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            appcast, checksum, dmg, public_key = appcast_files(
+                directory,
+                enclosure_url=(
+                    "https://github.com/lotgood/photonport/releases/download/"
+                    "photonport-v0.1.0/PhotonPort-0.2.0.dmg"
+                ),
+            )
+            with self.assertRaises(verify_pages_appcast.VerificationError):
+                verify_pages_appcast.verify_appcast(
+                    appcast,
+                    checksum,
+                    "photonport-v0.1.0",
+                    dmg=dmg,
+                    public_key=public_key,
                 )
 
 

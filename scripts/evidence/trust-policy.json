@@ -22,7 +22,7 @@
     }
   },
   "productionRoot": {
-    "publicKeyVerifier": "deferred",
+    "publicKeyVerifier": "ed25519-rfc8032",
     "keys": {
       "prod-ci-ed25519-v1": {
         "alg": "ED25519-DSSE",

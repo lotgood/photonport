@@ -101,6 +101,7 @@
         "status": {
           "type": "string",
           "enum": [
+            "passed",
             "failed",
             "blocked",
             "not_run"

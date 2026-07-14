@@ -14,6 +14,6 @@
     "rollbackBuild": ""
   },
   "requiredPhysicalScenarios": ["usb", "wifi"],
-  "requiredOsMajor": 26,
-  "retirementPolicy": "Retirement remains false until physical OS26 evidence, G006 provenance, independent export review, Apple distribution evidence, and rollback build receipt all pass."
+  "requiredOsMajor": 27,
+  "retirementPolicy": "Retirement remains false until physical OS27 evidence, G006 provenance, independent export review, Apple distribution evidence, and rollback build receipt all pass."
 }

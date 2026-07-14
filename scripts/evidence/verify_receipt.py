@@ -8,6 +8,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import importlib.util
 import json
 import re
 import sys
@@ -29,7 +30,7 @@ TRUST_POLICY = {
         }
     },
     "productionRoot": {
-        "publicKeyVerifier": "deferred",
+        "publicKeyVerifier": "ed25519-rfc8032",
         "keys": {
             "prod-ci-ed25519-v1": {"alg": "ED25519-DSSE", "trustDomain": "opendisplay-ci", "roles": ["automated-ci"], "publicKeyRef": "deferred:opendisplay-ci/prod-ci-ed25519-v1"},
             "prod-human-ed25519-v1": {"alg": "ED25519-DSSE", "trustDomain": "human-approval", "roles": ["release-engineer", "export-reviewer"], "publicKeyRef": "deferred:human-approval/prod-human-ed25519-v1"},
@@ -46,6 +47,7 @@ GATE_KINDS = {
     "rollback.build": "photonport.gate.rollback-build.v2",
 }
 ACTIVE_STATUSES = {"passed", "blocked", "not_run"}
+EVIDENCE_REQUIRED_GATES = {"g004.physical", "export.review", "apple.distribution", "rollback.build"}
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 RECEIPT_ID_RE = re.compile(r"^r-[A-Za-z0-9._:-]{8,128}$")
@@ -62,7 +64,7 @@ ISSUER_MATRIX = {
 GATE_STATUSES = {
     "g004.automated": {"passed", "failed", "blocked", "not_run"},
     "g004.physical": {"passed", "failed", "blocked", "not_run"},
-    "g006.provenance": {"failed", "blocked", "not_run"},
+    "g006.provenance": {"passed", "failed", "blocked", "not_run"},
     "export.review": {"passed", "failed", "blocked", "not_run"},
     "apple.distribution": {"passed", "failed", "blocked", "not_run"},
     "rollback.build": {"passed", "failed", "blocked", "not_run"},
@@ -75,6 +77,28 @@ class ReceiptError(Exception):
         super().__init__(reason)
         self.code = code
         self.reason = reason
+
+_ED25519_VERIFY: Any | None = None
+
+
+def _ed25519_verifier() -> Any:
+    global _ED25519_VERIFY
+    if _ED25519_VERIFY is not None:
+        return _ED25519_VERIFY
+    module_path = Path(__file__).with_name("ed25519_rfc8032.py")
+    try:
+        spec = importlib.util.spec_from_file_location("photonport_receipt_ed25519", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot load Ed25519 verifier")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        verifier = getattr(module, "verify")
+        if not callable(verifier):
+            raise RuntimeError("Ed25519 verifier is not callable")
+    except Exception as exc:
+        raise ReceiptError("configuration_error", "cannot load Ed25519 verifier") from exc
+    _ED25519_VERIFY = verifier
+    return verifier
 
 
 def _now() -> str:
@@ -342,9 +366,9 @@ def _validate_payload_schema(payload: dict[str, Any]) -> None:
         raise ReceiptError("wrong_role", "unsupported issuer role")
     if issuer["trustDomain"] not in {"test", "opendisplay-ci", "human-approval", "external-provider"}:
         raise ReceiptError("wrong_trust_domain", "unsupported trust domain")
-    verifier = _require_obj(payload["verifier"], {"commit", "scriptSha256", "schemaSha256", "trustPolicySha256"})
+    verifier = _require_obj(payload["verifier"], {"commit", "scriptSha256", "schemaSha256", "trustPolicySha256", "ed25519ModuleSha256"})
     _require_str(verifier["commit"], pattern=HEX40_RE)
-    for field in ("scriptSha256", "schemaSha256", "trustPolicySha256"):
+    for field in ("scriptSha256", "schemaSha256", "trustPolicySha256", "ed25519ModuleSha256"):
         _require_str(verifier[field], pattern=HEX64_RE)
     invocation = _require_obj(payload["invocation"], {"tool", "argv", "cwd", "toolchain"})
     _require_str(invocation["tool"], nonempty=True)
@@ -360,6 +384,8 @@ def _validate_payload_schema(payload: dict[str, Any]) -> None:
             raise ReceiptError("unknown_receipt_kind", "artifact collections must be arrays")
         for item in artifacts[key]:
             _validate_artifact(item)
+    if payload["status"] == "passed" and payload["gateId"] in EVIDENCE_REQUIRED_GATES and not (artifacts["inputs"] or artifacts["outputs"]):
+        raise ReceiptError("unknown_receipt_kind", "passed payload requires at least one artifact")
     if not isinstance(payload["children"], list):
         raise ReceiptError("unknown_receipt_kind", "children must be an array")
     for child in payload["children"]:
@@ -373,6 +399,10 @@ def _validate_payload_schema(payload: dict[str, Any]) -> None:
             raise ReceiptError("unknown_receipt_kind", "unexpected deviceOs key")
         if not all(isinstance(v, str) for v in device_os.values()):
             raise ReceiptError("unknown_receipt_kind", "deviceOs values must be strings")
+    if payload["gateId"] == "g004.physical" and payload["status"] == "passed":
+        device_os = payload.get("deviceOs")
+        if not isinstance(device_os, dict) or device_os.get("host") != "27" or device_os.get("device") != "27":
+            raise ReceiptError("unknown_receipt_kind", "passed physical payload requires macOS and iPadOS version 27")
 
 
 def _validate_payload(payload: dict[str, Any], expected: dict[str, Any], *, target: bool) -> None:
@@ -408,7 +438,12 @@ def _validate_payload(payload: dict[str, Any], expected: dict[str, Any], *, targ
     exp_verifier = expected.get("verifier")
     if not isinstance(exp_verifier, dict):
         raise ReceiptError("configuration_error", "expected verifier digests are required")
-    for field, code in (("scriptSha256", "stale_verifier_digest"), ("schemaSha256", "stale_schema_digest"), ("trustPolicySha256", "stale_trust_policy_digest")):
+    for field, code in (
+        ("scriptSha256", "stale_verifier_digest"),
+        ("schemaSha256", "stale_schema_digest"),
+        ("trustPolicySha256", "stale_trust_policy_digest"),
+        ("ed25519ModuleSha256", "stale_ed25519_module_digest"),
+    ):
         if field not in exp_verifier:
             raise ReceiptError("configuration_error", f"expected verifier {field} is required")
         if verifier.get(field) != exp_verifier[field]:
@@ -438,7 +473,9 @@ def _verify_signature(envelope: dict[str, Any], payload: dict[str, Any], payload
             raise ReceiptError("invalid_signature", "signature does not verify")
         return True, None
     if keyid in prod_keys:
-        key = prod_keys[keyid]
+        key = _expect_obj(prod_keys[keyid], "configuration_error")
+        if key.get("alg") != "ED25519-DSSE":
+            raise ReceiptError("configuration_error", "production key alg must be ED25519-DSSE")
         if alg != key.get("alg"):
             raise ReceiptError("wrong_alg_for_key", "signature alg does not match key")
         issuer = _expect_obj(payload.get("issuer"), "wrong_role")
@@ -446,21 +483,36 @@ def _verify_signature(envelope: dict[str, Any], payload: dict[str, Any], payload
             raise ReceiptError("wrong_role", "issuer role is not trusted by key")
         if issuer.get("trustDomain") != key.get("trustDomain"):
             raise ReceiptError("wrong_trust_domain", "issuer trust domain is not trusted by key")
-        return False, "production_signature_verifier_unavailable"
+        if "publicKeyHex" not in key:
+            public_key_ref = key.get("publicKeyRef")
+            if isinstance(public_key_ref, str) and public_key_ref.startswith("deferred:") and len(public_key_ref) > len("deferred:"):
+                return False, "production_signature_verifier_unavailable"
+            raise ReceiptError("configuration_error", "production key requires publicKeyHex or deferred publicKeyRef")
+        public_key_hex = key["publicKeyHex"]
+        if not isinstance(public_key_hex, str) or not re.fullmatch(r"[0-9A-Fa-f]{64}", public_key_hex):
+            raise ReceiptError("configuration_error", "production publicKeyHex must be 32 bytes of hex")
+        try:
+            public_key = bytes.fromhex(public_key_hex)
+        except ValueError as exc:
+            raise ReceiptError("configuration_error", "production publicKeyHex must be valid hex") from exc
+        if len(public_key) != 32:
+            raise ReceiptError("configuration_error", "production publicKeyHex must be 32 bytes")
+        if not _ed25519_verifier()(public_key, dsse_pae(envelope["payloadType"], payload_bytes), sig_bytes):
+            raise ReceiptError("invalid_signature", "signature does not verify")
+        return True, None
     raise ReceiptError("unknown_keyid", "unknown signature keyid")
 
 
-def _active(payload: dict[str, Any], now: datetime) -> bool:
-    if payload.get("status") not in ACTIVE_STATUSES:
-        return False
+def _is_expired(payload: dict[str, Any], now: datetime) -> bool:
     expiry = payload.get("expiry")
-    if not expiry:
-        return True
-    try:
-        exp = datetime.fromisoformat(str(expiry).replace("Z", "+00:00"))
-    except ValueError:
-        return True
-    return exp > now
+    if expiry is None:
+        return False
+    parsed_expiry = _parse_utc(expiry, nullable=True)
+    return parsed_expiry is not None and parsed_expiry <= now
+
+
+def _active(payload: dict[str, Any], now: datetime) -> bool:
+    return payload.get("status") in ACTIVE_STATUSES and not _is_expired(payload, now)
 
 
 def _result(path: Path, trust_mode: str, exit_code: int, reason_code: str, reason: str, *, payload: dict[str, Any] | None = None, payload_sha: str | None = None, envelope_sha: str | None = None, trusted: bool = False, checked: list[str] | None = None, verifier: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -482,7 +534,7 @@ def _result(path: Path, trust_mode: str, exit_code: int, reason_code: str, reaso
         "envelopeSha256": envelope_sha,
         "children": payload.get("children", []) if payload else [],
         "checkedReceiptSet": checked or [],
-        "verifier": {"scriptSha256": verifier.get("scriptSha256") if verifier else None, "schemaSha256": verifier.get("schemaSha256") if verifier else None, "trustPolicySha256": verifier.get("trustPolicySha256") if verifier else None},
+        "verifier": {"scriptSha256": verifier.get("scriptSha256") if verifier else None, "schemaSha256": verifier.get("schemaSha256") if verifier else None, "trustPolicySha256": verifier.get("trustPolicySha256") if verifier else None, "ed25519ModuleSha256": verifier.get("ed25519ModuleSha256") if verifier else None},
         "observedAt": _now(),
     }
 
@@ -538,6 +590,8 @@ def verify_envelope(receipt_path: Path, *, expected: dict, trust_policy_path: Pa
         trusted, blocked_code = _verify_signature(target_envelope, target_payload, target_payload_bytes, policy, trust_mode)
         if blocked_code:
             return _result(receipt_path, trust_mode, 2, blocked_code, "production signature verification is deferred in M1", payload=target_payload, payload_sha=target_payload_sha, envelope_sha=target_envelope_sha, trusted=False, checked=checked, verifier=expected_verifier)
+        if _is_expired(target_payload, now):
+            return _result(receipt_path, trust_mode, 2, "receipt_expired", "receipt payload expiry has passed", payload=target_payload, payload_sha=target_payload_sha, envelope_sha=target_envelope_sha, trusted=trusted, checked=checked, verifier=expected_verifier)
         status = target_payload.get("status")
         if status == "passed":
             return _result(receipt_path, trust_mode, 0, "passed", "receipt is trusted and passed", payload=target_payload, payload_sha=target_payload_sha, envelope_sha=target_envelope_sha, trusted=trusted, checked=checked, verifier=expected_verifier)
@@ -569,6 +623,7 @@ def _expected_from_args(args: argparse.Namespace) -> dict[str, Any]:
             "scriptSha256": args.expected_verifier_script_sha256,
             "schemaSha256": args.expected_verifier_schema_sha256,
             "trustPolicySha256": args.expected_verifier_trust_policy_sha256,
+            "ed25519ModuleSha256": args.expected_verifier_ed25519_module_sha256,
         },
     }
 
@@ -592,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-verifier-script-sha256", required=True)
     parser.add_argument("--expected-verifier-schema-sha256", required=True)
     parser.add_argument("--expected-verifier-trust-policy-sha256", required=True)
+    parser.add_argument("--expected-verifier-ed25519-module-sha256", required=True)
     parser.add_argument("--allowed-root", action="append", required=True, type=Path)
     parser.add_argument("--receipt-set", action="append", default=[], type=Path)
     parser.add_argument("--output", required=True, type=Path)

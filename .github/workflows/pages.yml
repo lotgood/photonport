@@ -8,6 +8,8 @@ on:
       - "docs/privacy.html"
       - "scripts/select-pages-appcast.py"
       - "scripts/verify-pages-appcast.py"
+      - "scripts/evidence/ed25519_rfc8032.py"
+      - "project.yml"
   release:
     types: [published]
   workflow_dispatch:
@@ -73,16 +75,23 @@ jobs:
           APPCAST_TAG: ${{ steps.appcast.outputs.tag }}
           APPCAST_CHECKSUM_URL: ${{ steps.appcast.outputs.checksum_url }}
         run: |
+          APPCAST_VERSION="${APPCAST_TAG#photonport-v}"
+          APPCAST_DMG="PhotonPort-${APPCAST_VERSION}.dmg"
+          APPCAST_DMG_URL="https://github.com/lotgood/photonport/releases/download/${APPCAST_TAG}/${APPCAST_DMG}"
           curl --fail --location --retry 3 \
             --output "$RUNNER_TEMP/appcast.xml" \
             "$APPCAST_URL"
           curl --fail --location --retry 3 \
             --output "$RUNNER_TEMP/appcast.xml.sha256" \
             "$APPCAST_CHECKSUM_URL"
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/$APPCAST_DMG" \
+            "$APPCAST_DMG_URL"
           python3 scripts/verify-pages-appcast.py \
             --appcast "$RUNNER_TEMP/appcast.xml" \
             --checksum "$RUNNER_TEMP/appcast.xml.sha256" \
-            --tag "$APPCAST_TAG"
+            --tag "$APPCAST_TAG" \
+            --dmg "$RUNNER_TEMP/$APPCAST_DMG"
           mv "$RUNNER_TEMP/appcast.xml" public/appcast.xml
           echo "::notice::Preserved and verified appcast from $APPCAST_TAG"
 

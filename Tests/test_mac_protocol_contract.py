@@ -100,6 +100,41 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertNotRegex(SENDER, r"guard\s+\w+\s*>\s*0\s*,\s*\w+\s*<\s*1\s*<<\s*20\s+else")
         self.assertNotRegex(SENDER, r"receive\([^\n]*(?:control|audio)[^\n]*1\s*<<\s*20")
 
+    def test_parse_entry_points_reject_oversized_data_before_decode(self):
+        guarded_entry_points = {
+            "parsePairCommit": ("pairingCap", "strictObject"),
+            "parsePairHello": ("pairingCap", "strictObject"),
+            "parseServerHello": ("smallControlCap", "strictObject"),
+            "parseSessionAccept": ("smallControlCap", "strictObject"),
+            "parseVerifiedSessionAccept": ("smallControlCap", "parseSessionAccept"),
+            "parseSessionBusy": ("smallControlCap", "strictObject"),
+            "parseChannelOpen": ("smallControlCap", "strictObject"),
+            "parseGenerationSnapshot": ("smallControlCap", "strictObject"),
+            "parseControl": ("smallControlCap", "strictAnyObject"),
+        }
+        for name, (cap, first_parse_step) in guarded_entry_points.items():
+            entry_point = swift_function(PARSER, name)
+            guard = f"guard data.count <= {cap} else {{ throw ParseError.invalidFrame }}"
+            self.assertIn(guard, entry_point, name)
+            self.assertLess(entry_point.index(guard), entry_point.index(first_parse_step), name)
+
+    def test_harness_exercises_oversized_direct_parse_entry_points(self):
+        direct_caps = swift_function(HARNESS, "directParserEntryPointCaps")
+        self.assertIn("ProtocolParser.pairingCap + 1", direct_caps)
+        self.assertIn("ProtocolParser.smallControlCap + 1", direct_caps)
+        for symbol in (
+            "parsePairCommit",
+            "parsePairHello",
+            "parseServerHello",
+            "parseSessionAccept",
+            "parseVerifiedSessionAccept",
+            "parseSessionBusy",
+            "parseChannelOpen",
+            "parseGenerationSnapshot",
+            "parseControl",
+        ):
+            self.assertIn(symbol, direct_caps)
+        self.assertIn('expectRejects("\\(name) oversized direct parse")', direct_caps)
     def test_scroll_input_has_conservative_bounds_and_backpressure(self):
         self.assertRegex(PARSER, r"scrollDeltaCap\s*=\s*120\.0\b")
         self.assertIn("Mac/ScrollEventCoalescer.swift", swiftc_inputs(HARNESS_SCRIPT))

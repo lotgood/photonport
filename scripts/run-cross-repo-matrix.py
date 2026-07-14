@@ -66,7 +66,7 @@ def run(argv, cwd, log_dir, label, *, stdin=None):
     }
 
 
-def read_pin(path):
+def read_pin_bytes(data, path):
     def pairs_hook(pairs):
         value = {}
         for key, item in pairs:
@@ -76,8 +76,8 @@ def read_pin(path):
         return value
 
     try:
-        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs_hook)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs_hook)
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise SystemExit(f"FAIL_CLOSED: malformed build pin {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise SystemExit("FAIL_CLOSED: build pin must be a JSON object: " + str(path))
@@ -97,6 +97,18 @@ def read_pin(path):
         if not isinstance(item, str) or len(item) != length or any(c not in "0123456789abcdef" for c in item):
             raise SystemExit(f"FAIL_CLOSED: build pin {field} is not lowercase full hex: {path}")
     return value
+
+
+def pin_evidence(path):
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise SystemExit(f"FAIL_CLOSED: malformed build pin {path}: {exc}") from exc
+    return read_pin_bytes(data, path), digest(data)
+
+
+def read_pin(path):
+    return pin_evidence(path)[0]
 
 
 
@@ -142,7 +154,15 @@ def single_built_pin(products_root, label):
     candidates = sorted(path for path in products_root.rglob("ProtocolBuildPin.json") if ".app" in path.as_posix())
     if len(candidates) != 1:
         raise RuntimeError(f"{label} build produced {len(candidates)} ProtocolBuildPin.json resources")
-    return read_pin(candidates[0])
+    return pin_evidence(candidates[0])
+
+
+def built_pins_match(expected_pin, source_pins, built_pins, source_pin_sha256, built_pin_sha256):
+    return (
+        source_pins == {"mac": expected_pin, "ios": expected_pin}
+        and built_pins == source_pins
+        and built_pin_sha256 == source_pin_sha256
+    )
 
 
 def build_product_pins(mac, ios, ios_commit, build, logs, receipts):
@@ -400,6 +420,8 @@ def main():
     positive_suite_covered = []
     source_pins = {}
     built_pins = {}
+    source_pin_sha256 = {}
+    built_pin_sha256 = {}
     unexecutable = []
     result = "passed"
 
@@ -430,17 +452,23 @@ def main():
         expected_pin = {"schemaVersion": 1, "protocolCommit": args.expected_protocol_commit, "compatibilityDigest": args.expected_compatibility_digest, "normativeManifestDigest": args.expected_normative_manifest_digest}
         if authorized_tag_value:
             expected_pin["protocolTag"] = authorized_tag_value
-        source_pins = {
-            "mac": read_pin(mac / "Mac/ProtocolBuildPin.json"),
-            "ios": read_pin(ios / "Resources/ProtocolBuildPin.json"),
+        source_pin_evidence = {
+            "mac": pin_evidence(mac / "Mac/ProtocolBuildPin.json"),
+            "ios": pin_evidence(ios / "Resources/ProtocolBuildPin.json"),
         }
+        source_pins = {label: evidence[0] for label, evidence in source_pin_evidence.items()}
+        source_pin_sha256 = {label: evidence[1] for label, evidence in source_pin_evidence.items()}
         try:
-            built_mac_pin, built_ios_pin = build_product_pins(
+            built_mac_evidence, built_ios_evidence = build_product_pins(
                 mac, ios, args.expected_ios_commit, build, logs, receipts
             )
-            built_pins = {"mac": built_mac_pin, "ios": built_ios_pin}
-            if source_pins != {"mac": expected_pin, "ios": expected_pin} or built_pins != source_pins:
-                failures.append("built product pins do not match tracked source pins and expected tuple")
+            built_pin_evidence = {"mac": built_mac_evidence, "ios": built_ios_evidence}
+            built_pins = {label: evidence[0] for label, evidence in built_pin_evidence.items()}
+            built_pin_sha256 = {label: evidence[1] for label, evidence in built_pin_evidence.items()}
+            if not built_pins_match(
+                expected_pin, source_pins, built_pins, source_pin_sha256, built_pin_sha256
+            ):
+                failures.append("built product pin bytes do not match tracked source pins and expected tuple")
         except RuntimeError as exc:
             failures.append(str(exc))
 
@@ -560,6 +588,8 @@ def main():
         "builtPinEvidence": {
             "trackedConsumerPins": source_pins,
             "builtProductPins": built_pins,
+            "trackedConsumerPinSha256": source_pin_sha256,
+            "builtProductPinSha256": built_pin_sha256,
         },
         "commands": receipts,
         "failures": failures,

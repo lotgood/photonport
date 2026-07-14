@@ -18,11 +18,11 @@ def host():
     return {"SPHardwareDataType": [{"chip_type": "Apple M4 Max", "machine_name": "Mac"}]}
 
 
-def device(simulator=False):
+def device(model="iPad Pro 11-inch (M4)", simulator=False):
     return {
         "devices": [{
             "hardwareProperties": {
-                "marketingName": "iPad Pro 13-inch (M4)",
+                "marketingName": model,
                 "productType": "iPad16,6",
                 "reality": "simulated" if simulator else "physical",
                 "platform": "iOS",
@@ -38,15 +38,29 @@ class SupportedDeviceEvidenceTests(unittest.TestCase):
         receipt = MOD.build_receipt(host(), "ProductVersion: 27.0", device())
         self.assertTrue(receipt["host"]["matched"])
         self.assertTrue(receipt["device"]["matched"])
+        self.assertEqual(receipt["device"]["normalized_model"], "ipad pro 11-inch (m4)")
+        self.assertEqual(receipt["device"]["reason"], "matched:ipad pro 11-inch (m4)")
         self.assertEqual(receipt["availability"], "available")
         self.assertTrue(all(row["status"] == "not_run" for row in receipt["scenarios"]))
         self.assertTrue(all(row["evidence"] == "human_only_required" for row in receipt["scenarios"]))
 
     def test_simulator_is_rejected_and_presence_never_passes(self):
-        receipt = MOD.build_receipt(host(), "ProductVersion: 27.0", device(True))
+        receipt = MOD.build_receipt(host(), "ProductVersion: 27.0", device(simulator=True))
         self.assertFalse(receipt["device"]["matched"])
         self.assertEqual(receipt["availability"], "human_only_required")
         self.assertTrue(all(row["status"] != "pass" for row in receipt["scenarios"]))
+
+    def test_unsupported_ipad_models_are_rejected(self):
+        for model in ("iPad Pro 13-inch (M4)", "iPad Air 11-inch (M4)"):
+            with self.subTest(model=model):
+                receipt = MOD.build_receipt(host(), "ProductVersion: 27.0", device(model))
+                self.assertFalse(receipt["device"]["matched"])
+                self.assertEqual(receipt["device"]["normalized_model"], model.lower())
+                self.assertEqual(
+                    receipt["device"]["reason"],
+                    f"missing_or_unsupported_physical_device:{model.lower()}",
+                )
+                self.assertEqual(receipt["availability"], "human_only_required")
 
     def test_redaction_and_atomic_cli_output(self):
         with tempfile.TemporaryDirectory() as temporary:
