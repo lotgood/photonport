@@ -44,6 +44,19 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Install XcodeGen
+        run: |
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.45.4/xcodegen.zip
+          echo "090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef  $RUNNER_TEMP/xcodegen.zip" \
+            | shasum -a 256 --check
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      # test_mac_protocol_contract reads the generated project.pbxproj
+      # (gitignored XcodeGen output), so generate before the suite runs.
+      - name: Generate project
+        run: ./generate.sh
       - name: Verify Mac/iOS pairing parity
         run: ./scripts/test-pairing-vectors.sh
       - name: Verify session ownership and replay state
