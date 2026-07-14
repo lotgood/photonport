@@ -1,40 +1,45 @@
 {
-  "compatibility": {
-    "ios": {
-      "minimum": "1.0.0"
-    },
-    "mac": {
-      "minimum": "0.1.0"
-    },
-    "mismatch": "fail_closed_with_upgrade_message",
-    "pairing": "2.0.0",
-    "protocol": "3.0.0"
+  "authorizedProtocolTag": null,
+  "authorizedProtocolTagRef": null,
+  "protocolContract": {
+    "commit": "2280861313b2363b673089637d1c1dc544e208d8",
+    "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+    "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+    "paths": [
+      "COMPATIBILITY.json",
+      "NORMATIVE_MANIFEST.json",
+      "schemas/build-pin.schema.json"
+    ]
   },
-  "normalized_manifest_sha256": "7faaa5b0e7662344a2cd67a7c12cc7c9a7eacccbb9eafbf2ca3757623e6c1e56",
-  "protocol_content_sha256": "f075e22534795f61c1b7204322270fd949a89110878a2e3b1926fe372e726f28",
   "result": "compatible",
-  "schema_version": 1,
-  "snapshots": {
+  "schemaVersion": 1,
+  "sourceTuple": {
+    "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+    "iosCommit": "a2313c0c26c4d98d366381357aabd6cd8e5e6d59",
+    "macCommit": "e4014a2b07b4cfdf300ac7ba2e9b09f87f4b1123",
+    "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+    "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8"
+  },
+  "verifiedConsumerPins": {
     "ios": {
-      "content_sha256": "ef83ff61ee295de7aba815cb8ab271056a6784ed1ae5264186441f0e1dd7997e",
-      "git_repository": true,
-      "head": "afe896c85a2a6f63030fe68a08ef2b4f750a2bb7",
-      "identity": "committed_with_uncommitted_changes",
-      "uncommitted": true
+      "path": "Resources/ProtocolBuildPin.json",
+      "sha256": "9d058c9dc313326b94ea9d913b441c93aea6991acf9d18258829bc4152015f84",
+      "value": {
+        "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+        "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+        "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
+        "schemaVersion": 1
+      }
     },
     "mac": {
-      "content_sha256": "f5136521f38e9db39549d52218f8311f0d2cb3f5a95bcdce238454aaafc4a30a",
-      "git_repository": true,
-      "head": "bb3777e02ba9f858dc7dd0a35833ad874c22512d",
-      "identity": "committed_with_uncommitted_changes",
-      "uncommitted": true
-    },
-    "protocol": {
-      "content_sha256": "9b636ef295e8d0eea6606221032225ae2efc1377895fd636ebea134e5a1bd12b",
-      "git_repository": true,
-      "head": "c23d345e8cb70abb8392b5b1a2f406203fe02400",
-      "identity": "committed_tree",
-      "uncommitted": false
+      "path": "Mac/ProtocolBuildPin.json",
+      "sha256": "9d058c9dc313326b94ea9d913b441c93aea6991acf9d18258829bc4152015f84",
+      "value": {
+        "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+        "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+        "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
+        "schemaVersion": 1
+      }
     }
   }
 }

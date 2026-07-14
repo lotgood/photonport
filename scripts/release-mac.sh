@@ -69,11 +69,30 @@ cmp -s Mac/ProtocolBuildPin.json "$BUNDLED_PIN_PATHS[1]" || {
 }
 codesign --verify --deep --strict --verbose=2 "$APP"
 
-echo "==> validating current cross-repo compatibility matrix"
+echo "==> verifying cross-repo protocol compatibility (live, fail-closed)"
 CURRENT_HEAD="$(git rev-parse HEAD)"
-MATRIX_REPORT="artifacts/cross-repo/compatibility-report.json"
-python3 -c 'import json, pathlib, sys; path, head = pathlib.Path(sys.argv[1]), sys.argv[2]; report = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}; mac = report.get("snapshots", {}).get("mac", {}); sys.exit(0 if report.get("result") == "compatible" and mac.get("head") == head and mac.get("identity") == "committed_tree" else 1)' "$MATRIX_REPORT" "$CURRENT_HEAD" || {
-  echo "cross-repo matrix rerun required: compatibility report is missing, stale, or not from a committed Mac tree" >&2
+IOS_ROOT="${PHOTONPORT_IOS_ROOT:-../photonport-ios}"
+PROTOCOL_ROOT="${PHOTONPORT_PROTOCOL_ROOT:-../photonport-protocol}"
+IOS_PIN="${PHOTONPORT_IOS_PIN:-Resources/ProtocolBuildPin.json}"
+COMPAT_RECEIPT="$DIST/compatibility-report-$VERSION.json"
+python3 scripts/verify-cross-repo-compatibility.py \
+  --mac-root . --ios-root "$IOS_ROOT" --protocol-root "$PROTOCOL_ROOT" \
+  --expected-mac-commit "$CURRENT_HEAD" \
+  --expected-ios-commit "$(git -C "$IOS_ROOT" rev-parse HEAD)" \
+  --expected-protocol-commit "$(git -C "$PROTOCOL_ROOT" rev-parse HEAD)" \
+  --expected-compatibility-digest "$(python3 -c 'import json; print(json.load(open("Mac/ProtocolBuildPin.json"))["compatibilityDigest"])')" \
+  --expected-normative-manifest-digest "$(python3 -c 'import json; print(json.load(open("Mac/ProtocolBuildPin.json"))["normativeManifestDigest"])')" \
+  --ios-pin "$IOS_PIN" \
+  --output "$COMPAT_RECEIPT" || {
+  echo "cross-repo compatibility verification failed for HEAD $CURRENT_HEAD; fix the pins/commits before releasing (docs/HANDOFF.md §How to re-verify)" >&2
+  exit 1
+}
+python3 -c '
+import json, sys
+report = json.load(open(sys.argv[1]))
+sys.exit(0 if report.get("result") == "compatible" and report.get("sourceTuple", {}).get("macCommit") == sys.argv[2] else 1)
+' "$COMPAT_RECEIPT" "$CURRENT_HEAD" || {
+  echo "compatibility receipt did not bind to HEAD $CURRENT_HEAD" >&2
   exit 1
 }
 

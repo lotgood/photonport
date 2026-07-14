@@ -165,9 +165,15 @@ comparison is needed.
    ```sh
    ./scripts/release-mac.sh 0.1.0
    ```
-   After export, the script fails closed before DMG construction unless
-   `artifacts/cross-repo/compatibility-report.json` is `compatible`, binds the
-   committed-tree Mac snapshot to `HEAD`, and has `identity=committed_tree`.
+   After export, the script re-runs
+   `scripts/verify-cross-repo-compatibility.py` live against the sibling
+   checkouts (`PHOTONPORT_IOS_ROOT`/`PHOTONPORT_PROTOCOL_ROOT`, default
+   `../photonport-ios` and `../photonport-protocol`; iOS pin
+   `PHOTONPORT_IOS_PIN`, default `Resources/ProtocolBuildPin.json`), pinned to
+   the exact `HEAD`, sibling heads, and `Mac/ProtocolBuildPin.json` digests. It
+   fails closed before DMG construction unless the fresh receipt
+   (`dist/compatibility-report-<version>.json`, archive it with the release
+   record) is `compatible` and binds `sourceTuple.macCommit` to `HEAD`.
    That same post-export phase requires exactly one `ProtocolBuildPin.json` in
    the exported app and byte-compares it with `Mac/ProtocolBuildPin.json`.
    After stapling, it mounts the DMG and runs `spctl --assess --type exec -vvv`
