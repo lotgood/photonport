@@ -2,7 +2,7 @@
   "schema": "opendisplay.supported-device-evidence.v1",
   "supported_matrix": {
     "host": {"model": "Apple M4 Max", "os_major": "27"},
-    "device": {"model": "iPad Pro M4", "os_major": "27", "platform": "iOS"}
+    "device": {"model": "iPad Pro 11-inch (M4)", "os_major": "27", "platform": "iOS"}
   },
   "availability": "human_only_required",
   "scenarios": [

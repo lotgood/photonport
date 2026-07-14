@@ -324,6 +324,45 @@ class CrossRepoMatrixInputTests(unittest.TestCase):
         pin.write_text('{"schemaVersion":1,"schemaVersion":1}', encoding="utf-8")
         with self.assertRaisesRegex(SystemExit, "FAIL_CLOSED.*duplicate key"):
             MATRIX.read_pin(pin)
+    def test_matrix_rejects_built_only_pin_reformat(self):
+        pin = {
+            "schemaVersion": 1,
+            "protocolCommit": "a" * 40,
+            "compatibilityDigest": "b" * 64,
+            "normativeManifestDigest": "c" * 64,
+        }
+        source_path = self.root / "Mac" / "ProtocolBuildPin.json"
+        source_path.parent.mkdir()
+        source_path.write_text(
+            json.dumps(pin, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        built_root = self.root / "Build" / "Products"
+        built_path = (
+            built_root
+            / "Debug"
+            / "PhotonPort.app"
+            / "Contents"
+            / "Resources"
+            / "ProtocolBuildPin.json"
+        )
+        built_path.parent.mkdir(parents=True)
+        built_path.write_text(json.dumps(pin, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+        source_pin, source_sha256 = MATRIX.pin_evidence(source_path)
+        built_pin, built_sha256 = MATRIX.single_built_pin(built_root, "Mac")
+
+        self.assertEqual(source_pin, built_pin)
+        self.assertNotEqual(source_sha256, built_sha256)
+        self.assertFalse(
+            MATRIX.built_pins_match(
+                pin,
+                {"mac": source_pin, "ios": source_pin},
+                {"mac": built_pin, "ios": built_pin},
+                {"mac": source_sha256, "ios": source_sha256},
+                {"mac": built_sha256, "ios": built_sha256},
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -55,8 +55,48 @@
                 "const": "human-approval"
               }
             }
+          },
+          "artifacts": {
+            "anyOf": [
+              {
+                "properties": {
+                  "inputs": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "outputs": {
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
+          },
+          "deviceOs": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "host",
+              "device"
+            ],
+            "properties": {
+              "host": {
+                "const": "27"
+              },
+              "device": {
+                "const": "27"
+              },
+              "transport": {
+                "type": "string"
+              }
+            }
           }
-        }
+        },
+        "required": [
+          "deviceOs"
+        ]
       },
       "else": {
         "properties": {

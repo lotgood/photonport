@@ -97,6 +97,7 @@ fileprivate struct ParserCase {
 struct MacProtocolAdversarialHarness {
     static func main() {
         framingCaps()
+        directParserEntryPointCaps()
         strictJSON()
         canonicalFields()
         transportRules()
@@ -124,6 +125,30 @@ struct MacProtocolAdversarialHarness {
             var n = UInt32(cap).bigEndian
             precondition((try? ProtocolParser.framedPayloadLength(from: Data(bytes: &n, count: 4), kind: kind)) == cap)
             precondition((try? ProtocolParser.validatePayload(Data(repeating: 0, count: cap - 1), expectedLength: cap, kind: kind)) == nil)
+        }
+    }
+    static func directParserEntryPointCaps() {
+        let oversizedPairing = Data(repeating: 0, count: ProtocolParser.pairingCap + 1)
+        let oversizedControl = Data(repeating: 0, count: ProtocolParser.smallControlCap + 1)
+        let key = SymmetricKey(data: Data(repeating: 0, count: 32))
+        let entries: [(String, Data, (Data) throws -> Void)] = [
+            ("pair commit", oversizedPairing, { _ = try ProtocolParser.parsePairCommit($0) }),
+            ("pair hello", oversizedPairing, { _ = try ProtocolParser.parsePairHello($0) }),
+            ("server hello", oversizedControl, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("session accept", oversizedControl, { _ = try ProtocolParser.parseSessionAccept($0) }),
+            ("verified session accept", oversizedControl, {
+                _ = try ProtocolParser.parseVerifiedSessionAccept(
+                    $0, primaryKey: key, macInstallID: "mac", deviceInstallID: "device",
+                    macNonce: Data(repeating: 0, count: 32),
+                    deviceNonce: Data(repeating: 0, count: 32))
+            }),
+            ("session busy", oversizedControl, { _ = try ProtocolParser.parseSessionBusy($0) }),
+            ("channel open", oversizedControl, { _ = try ProtocolParser.parseChannelOpen($0) }),
+            ("generation snapshot", oversizedControl, { _ = try ProtocolParser.parseGenerationSnapshot($0) }),
+            ("control", oversizedControl, { _ = try ProtocolParser.parseControl($0, transport: .wifi) })
+        ]
+        for (name, data, parse) in entries {
+            expectRejects("\(name) oversized direct parse") { try parse(data) }
         }
     }
 

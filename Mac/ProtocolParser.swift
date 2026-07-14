@@ -90,6 +90,7 @@ enum ProtocolParser {
     }
 
     static func parsePairCommit(_ data: Data) throws -> PairCommit {
+        guard data.count <= pairingCap else { throw ParseError.invalidFrame }
         let object = try strictObject(data, keys: ["type", "v", "commit"])
         guard try string(object, "type") == "pair-commit", try int(object, "v") == PairingCrypto.version else { throw ParseError.value }
         _ = try base64(try string(object, "commit"), bytes: 32)
@@ -97,6 +98,7 @@ enum ProtocolParser {
     }
 
     static func parsePairHello(_ data: Data, role: String? = nil) throws -> PairHello {
+        guard data.count <= pairingCap else { throw ParseError.invalidFrame }
         let allowed = Set(["type", "v", "role", "installID", "name", "pub", "nonce"])
         let object = try strictObject(data, allowedKeys: allowed)
         guard try string(object, "type") == "pair-hello", try int(object, "v") == PairingCrypto.version else { throw ParseError.value }
@@ -113,6 +115,7 @@ enum ProtocolParser {
     }
 
     static func parseServerHello(_ data: Data, transport: Transport) throws -> ServerHello {
+        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
         let base: Set<String> = ["type", "sessionVersion", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr"]
         let required = transport == .usb ? base.union(["usbSessionSeed"]) : base
         let object = try strictObject(data, keys: required)
@@ -131,6 +134,7 @@ enum ProtocolParser {
     }
 
     static func parseSessionAccept(_ data: Data) throws -> SessionAccept {
+        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
         let object = try strictObject(data, keys: ["type", "v", "sessionID", "generation", "acceptProof"])
         guard try string(object, "type") == "session-accept", try int(object, "v") == SessionCrypto.version else { throw ParseError.value }
         _ = try base64(try string(object, "sessionID"), bytes: 16)
@@ -142,6 +146,7 @@ enum ProtocolParser {
     static func parseVerifiedSessionAccept(_ data: Data, primaryKey: SymmetricKey,
                                            macInstallID: String, deviceInstallID: String,
                                            macNonce: Data, deviceNonce: Data) throws -> VerifiedSessionAccept {
+        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
         let message = try parseSessionAccept(data)
         let sessionID = try base64(message.sessionID, bytes: 16)
         let proof = try base64(message.acceptProof, bytes: 32)
@@ -156,6 +161,7 @@ enum ProtocolParser {
     }
 
     static func parseSessionBusy(_ data: Data) throws -> SessionBusy {
+        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
         let object = try strictObject(data, keys: ["type", "v", "reason"])
         guard try string(object, "type") == "session-busy", try int(object, "v") == SessionCrypto.version else { throw ParseError.value }
         let reasons: Set<String> = ["incompatible", "invalid_session_open", "primary_auth_failed", "random_failed", "session_busy", "audio_without_primary", "stale_audio_channel", "audio_proof_or_replay"]
@@ -164,6 +170,7 @@ enum ProtocolParser {
     }
 
     static func parseChannelOpen(_ data: Data, channel: String? = nil) throws -> SessionChannelOpen {
+        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
         let object = try strictObject(data, keys: ["type", "v", "macInstallID", "sessionID", "generation", "channel", "nonce", "proof"])
         guard try string(object, "type") == "channel-open", try int(object, "v") == SessionCrypto.version else { throw ParseError.value }
         if let channel, try string(object, "channel") != channel { throw ParseError.value }
@@ -177,6 +184,7 @@ enum ProtocolParser {
     }
 
     static func parseGenerationSnapshot(_ data: Data) throws -> SessionOwnershipState.Snapshot {
+        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
         let object = try strictObject(data, keys: ["generation", "generationExhausted"])
         guard let generationExhausted = object["generationExhausted"] as? Bool else {
             throw ParseError.type
@@ -187,6 +195,7 @@ enum ProtocolParser {
     }
 
     static func parseControl(_ data: Data, transport: Transport) throws -> Control {
+        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
         let object = try strictAnyObject(data)
         switch try string(object, "type") {
         case "ping", "pong":

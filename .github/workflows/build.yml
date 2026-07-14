@@ -1,8 +1,8 @@
-# Unsigned build verification for both targets. This fork ships no binaries,
-# so CI's only job is catching compile regressions — especially cheap
-# insurance for a codebase that leans on private APIs and OS-version-gated
-# fallback paths that local development (one macOS version) never compiles
-# against differently.
+# Unsigned build verification for both targets, plus the protocol-contract,
+# evidence-chain, and adversarial-harness suites. This fork ships no binaries
+# from CI; the jobs catch compile regressions — especially cheap insurance for
+# a codebase that leans on private APIs and OS-version-gated fallback paths —
+# and protocol/security-contract regressions that local runs might skip.
 #
 # No signing: DEVELOPMENT_TEAM stays unset (no .env in CI), which project.yml
 # documents as the supported unsigned configuration, and CODE_SIGNING_ALLOWED=NO
@@ -41,13 +41,17 @@ jobs:
 
   pairing-vectors:
     runs-on: macos-26
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Verify Mac/iOS pairing parity
         run: ./scripts/test-pairing-vectors.sh
       - name: Verify session ownership and replay state
         run: ./scripts/test-session-binding.sh
+      - name: Verify protocol contract, evidence chain, and release gates
+        run: python3 -m unittest discover -s Tests -p 'test_*.py' -v
+      - name: Adversarial Mac protocol harness
+        run: ./scripts/test-mac-protocol-adversarial.sh
 
   pages-appcast:
     runs-on: ubuntu-latest

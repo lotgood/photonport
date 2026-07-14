@@ -41,6 +41,11 @@ require_release_source() {
     echo "tag $tag must exist and point at HEAD ($head)" >&2
     return 1
   }
+  # docs/RELEASE.md requires `git tag -s`; reject unsigned or lightweight tags.
+  git verify-tag "$tag" || {
+    echo "tag $tag must have a valid trusted signature" >&2
+    return 1
+  }
 
   remote_main="$(git rev-parse -q --verify refs/remotes/origin/main 2>/dev/null || true)"
   [[ "$remote_main" == "$head" ]] || {

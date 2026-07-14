@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import json
 import subprocess
@@ -10,6 +11,12 @@ HERE = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("transition", HERE / "scripts/verify-ios-transition-readiness.py")
 transition = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(transition)
+ED25519_SPEC = importlib.util.spec_from_file_location(
+    "ed25519_rfc8032", HERE / "scripts" / "evidence" / "ed25519_rfc8032.py"
+)
+ed25519_rfc8032 = importlib.util.module_from_spec(ED25519_SPEC)
+ED25519_SPEC.loader.exec_module(ed25519_rfc8032)
+
 
 
 class TransitionReadinessTests(unittest.TestCase):
@@ -74,7 +81,78 @@ class TransitionReadinessTests(unittest.TestCase):
         return {gate["reasonCode"] for gate in result["gates"]}
 
     def fake_digests(self, kind="photonport.gate.g004-automated.v2", policy=None):
-        return {"scriptSha256": "1" * 64, "schemaSha256": "2" * 64, "trustPolicySha256": "3" * 64}
+        return {
+            "scriptSha256": "1" * 64,
+            "ed25519ModuleSha256": "2" * 64,
+            "schemaSha256": "3" * 64,
+            "trustPolicySha256": "4" * 64,
+        }
+
+    def production_receipts(self):
+        self.init_m1_roots()
+        ignored = self.mac / ".gitignore"
+        ignored.write_text("iOS/fixtures/production-*.json\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=self.mac, check=True)
+        subprocess.run(["git", "-c", "user.email=test@example.invalid", "-c", "user.name=test", "commit", "-qm", "ignore production fixtures"], cwd=self.mac, check=True)
+
+        api = transition.load_verify_receipt_api()
+        self.assertIsNotNone(api)
+        seeds = {
+            "prod-ci-ed25519-v1": bytes.fromhex("11" * 32),
+            "prod-human-ed25519-v1": bytes.fromhex("22" * 32),
+            "prod-provider-ed25519-v1": bytes.fromhex("33" * 32),
+        }
+        policy = json.loads((HERE / "scripts" / "evidence" / "trust-policy.json").read_text(encoding="utf-8"))
+        for keyid, seed in seeds.items():
+            policy["productionRoot"]["keys"][keyid]["publicKeyHex"] = ed25519_rfc8032.public_key(seed).hex()
+        policy_path = self.mac / "iOS" / "fixtures" / "production-policy.json"
+        policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+        roots = {"macRoot": self.mac, "iosRoot": self.ios, "protocolRoot": self.protocol}
+        snapshot = transition.snapshot_roots(roots)
+        source_tuple = transition.source_tuple_from_snapshot(roots, snapshot)
+        source_tuple = {key: value for key, value in source_tuple.items() if key not in {"macRoot", "iosRoot", "protocolRoot"}}
+        release_attempt_id = "attempt-production-fixture-0001"
+        issuers = {
+            "g004_automated": ("prod-ci-ed25519-v1", {"kind": "ci", "identity": "fixture", "role": "automated-ci", "trustDomain": "opendisplay-ci"}),
+            "g004_physical": ("prod-human-ed25519-v1", {"kind": "human", "identity": "fixture", "role": "release-engineer", "trustDomain": "human-approval"}),
+            "g006_provenance": ("prod-ci-ed25519-v1", {"kind": "ci", "identity": "fixture", "role": "automated-ci", "trustDomain": "opendisplay-ci"}),
+            "export_review": ("prod-human-ed25519-v1", {"kind": "human", "identity": "fixture", "role": "export-reviewer", "trustDomain": "human-approval"}),
+            "apple_distribution": ("prod-provider-ed25519-v1", {"kind": "provider", "identity": "fixture", "role": "apple-provider", "trustDomain": "external-provider"}),
+            "rollback_build": ("prod-ci-ed25519-v1", {"kind": "ci", "identity": "fixture", "role": "automated-ci", "trustDomain": "opendisplay-ci"}),
+        }
+        receipts = {}
+        for label, (gate_id, _, kind) in transition.GATES.items():
+            keyid, issuer = issuers[label]
+            payload = {
+                "schemaVersion": 2,
+                "kind": kind,
+                "receiptId": f"r-production-{label}",
+                "releaseAttemptId": release_attempt_id,
+                "gateId": gate_id,
+                "status": "passed",
+                "sourceTuple": source_tuple,
+                "issuer": issuer,
+                "verifier": {"commit": snapshot["macRoot"]["commit"], **transition.verifier_digests(kind, policy_path)},
+                "invocation": {"tool": "unittest", "argv": ["python3", "-m", "unittest"], "cwd": ".", "toolchain": {"python": "3"}},
+                "artifacts": {"inputs": [{"path": "fixtures/evidence.txt", "sha256": "0" * 64, "size": 0}], "outputs": []} if gate_id in {"g004.physical", "export.review", "apple.distribution", "rollback.build"} else {"inputs": [], "outputs": []},
+                "children": [],
+                "observationTime": "2026-07-14T00:00:00Z",
+                **({"deviceOs": {"host": "27", "device": "27"}} if gate_id == "g004.physical" else {}),
+            }
+            payload_bytes = api.canonical_json(payload)
+            signature = ed25519_rfc8032.sign(seeds[keyid], api.dsse_pae(api.PAYLOAD_TYPE, payload_bytes))
+            envelope = {
+                "schemaVersion": 2,
+                "kind": "photonport.receipt-envelope.v2",
+                "payloadType": api.PAYLOAD_TYPE,
+                "payload": base64.b64encode(payload_bytes).decode("ascii"),
+                "signatures": [{"keyid": keyid, "alg": "ED25519-DSSE", "sig": base64.b64encode(signature).decode("ascii")}],
+            }
+            receipt = self.mac / "iOS" / "fixtures" / f"production-{label}.json"
+            receipt.write_text(json.dumps(envelope), encoding="utf-8")
+            receipts[label] = receipt
+        return receipts, policy_path, release_attempt_id
 
     def test_forged_result_passed_is_malformed_exit_3(self):
         forged = self.write_receipt("forged.json", {"result": "passed"})
@@ -183,7 +261,7 @@ class TransitionReadinessTests(unittest.TestCase):
         self.assertEqual(result["exitCode"], 2)
         self.assertIn("legacy_untrusted_v1", self.reason_codes(result))
 
-    def test_synthetic_all_pass_legacy_is_blocked_or_malformed_never_eligible(self):
+    def test_synthetic_legacy_evidence_never_eligible(self):
         auto = self.write_receipt("auto.json", {"schemaVersion": 1, "commands": [{"exitCode": 0}]})
         physical = self.write_receipt("physical.json", {"schemaVersion": 1, "availability": "available", "scenarios": [{"status": "pass"}]})
         kwargs = dict(g004_automated=auto, g004_physical=physical,
@@ -192,7 +270,7 @@ class TransitionReadinessTests(unittest.TestCase):
             apple_distribution=self.write_receipt("apple.json", {"schemaVersion": 2, "kind": "photonport.gate.apple-distribution.v2", "gateId": "apple.distribution", "status": "passed"}),
             rollback_build=self.write_receipt("rollback.json", {"schemaVersion": 2, "kind": "photonport.gate.rollback-build.v2", "gateId": "rollback.build", "status": "passed"}))
         result = transition.verify(self.args(**kwargs))
-        self.assertIn(result["exitCode"], {2, 3})
+        self.assertEqual(result["exitCode"], 2)
         self.assertFalse(result["retirementEligible"])
 
     def test_cli_writes_retirement_eligible_and_returns_2_for_current_blocked(self):
@@ -204,6 +282,7 @@ class TransitionReadinessTests(unittest.TestCase):
         self.assertIn("retirementEligible", written)
         self.assertNotIn("retirementReady", written)
         self.assertEqual(written["exitCode"], 2)
+        self.assertEqual(written["trustMode"], "production")
 
     def test_missing_release_attempt_id_blocks_typed_transition_exit_2(self):
         self.init_m1_roots()
@@ -329,6 +408,36 @@ class TransitionReadinessTests(unittest.TestCase):
         self.assertEqual(result["verifier"]["scriptSha256"], self.fake_digests()["scriptSha256"])
         self.assertEqual(result["verifier"]["schemaSha256"], self.fake_digests()["schemaSha256"])
         self.assertEqual(result["verifier"]["trustPolicySha256"], self.fake_digests()["trustPolicySha256"])
+        self.assertEqual(result["verifier"]["ed25519ModuleSha256"], self.fake_digests()["ed25519ModuleSha256"])
 
+    def test_test_mode_all_trusted_gate_receipts_stays_ineligible_exit_2(self):
+        receipts, policy_path, release_attempt_id = self.production_receipts()
+        result = transition.verify(self.args(
+            **receipts,
+            trust_policy=policy_path,
+            trust_mode="test",
+            release_attempt_id=release_attempt_id,
+        ))
+        self.assertEqual(result["trustMode"], "test")
+        self.assertEqual(result["exitCode"], 2)
+        self.assertFalse(result["retirementEligible"])
+        self.assertTrue(all(gate["status"] == "passed" and gate["trusted"] for gate in result["gates"]))
+
+    def test_production_mode_all_trusted_gate_receipts_is_retirement_eligible(self):
+        receipts, policy_path, release_attempt_id = self.production_receipts()
+        result = transition.verify(self.args(
+            **receipts,
+            trust_policy=policy_path,
+            trust_mode="production",
+            release_attempt_id=release_attempt_id,
+        ))
+        self.assertEqual(result["trustMode"], "production")
+        self.assertEqual(result["exitCode"], 0)
+        self.assertTrue(result["retirementEligible"])
+        self.assertEqual(
+            result["verifier"]["ed25519ModuleSha256"],
+            transition.sha256_file(HERE / "scripts" / "evidence" / "ed25519_rfc8032.py"),
+        )
+        self.assertTrue(all(gate["status"] == "passed" and gate["trusted"] for gate in result["gates"]))
 if __name__ == "__main__":
     unittest.main()

@@ -53,7 +53,29 @@ sed "s/TEAMID_PLACEHOLDER/$DEVELOPMENT_TEAM/" scripts/exportOptions-mac.plist > 
 rm -rf "$EXPORT_DIR"
 xcodebuild -exportArchive -archivePath "$ARCHIVE" \
   -exportOptionsPlist "$EXPORT_PLIST" -exportPath "$EXPORT_DIR"
+echo "==> verifying exported ProtocolBuildPin resource"
+typeset -a BUNDLED_PIN_PATHS
+BUNDLED_PIN_PATHS=()
+while IFS= read -r -d $'\0' bundled_pin; do
+  BUNDLED_PIN_PATHS+=("$bundled_pin")
+done < <(find "$APP/Contents/Resources" -type f -name ProtocolBuildPin.json -print0)
+[[ ${#BUNDLED_PIN_PATHS} -eq 1 ]] || {
+  echo "exported app must contain exactly one ProtocolBuildPin.json resource" >&2
+  exit 1
+}
+cmp -s Mac/ProtocolBuildPin.json "$BUNDLED_PIN_PATHS[1]" || {
+  echo "exported ProtocolBuildPin.json does not byte-match Mac/ProtocolBuildPin.json" >&2
+  exit 1
+}
 codesign --verify --deep --strict --verbose=2 "$APP"
+
+echo "==> validating current cross-repo compatibility matrix"
+CURRENT_HEAD="$(git rev-parse HEAD)"
+MATRIX_REPORT="artifacts/cross-repo/compatibility-report.json"
+python3 -c 'import json, pathlib, sys; path, head = pathlib.Path(sys.argv[1]), sys.argv[2]; report = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}; mac = report.get("snapshots", {}).get("mac", {}); sys.exit(0 if report.get("result") == "compatible" and mac.get("head") == head and mac.get("identity") == "committed_tree" else 1)' "$MATRIX_REPORT" "$CURRENT_HEAD" || {
+  echo "cross-repo matrix rerun required: compatibility report is missing, stale, or not from a committed Mac tree" >&2
+  exit 1
+}
 
 echo "==> building DMG (hdiutil)"
 rm -f "$DMG"
@@ -74,6 +96,24 @@ xcrun notarytool submit "$DMG" \
   --key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
+echo "==> assessing stapled app bundle (Gatekeeper)"
+MOUNT="$(mktemp -d)"
+detach_stapled_dmg() {
+  hdiutil detach "$MOUNT" >/dev/null 2>&1 || true
+  rmdir "$MOUNT" >/dev/null 2>&1 || true
+}
+trap detach_stapled_dmg EXIT INT TERM
+hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
+MOUNTED_APP="$MOUNT/PhotonPort.app"
+[[ -d "$MOUNTED_APP" ]] || {
+  echo "mounted DMG does not contain PhotonPort.app" >&2
+  exit 1
+}
+spctl --assess --type exec -vvv "$MOUNTED_APP"
+hdiutil detach "$MOUNT"
+rmdir "$MOUNT" || true
+trap - EXIT INT TERM
+
 
 echo "==> generating signed appcast (Sparkle EdDSA)"
 GEN=""
@@ -93,6 +133,12 @@ ACTUAL_PUBLIC_KEY="$($KEY_TOOL -p)"
 }
 "$GEN" "$DIST" \
   --download-url-prefix "https://github.com/lotgood/photonport/releases/download/$PHOTONPORT_RELEASE_TAG/"
+python3 scripts/verify-appcast-artifact.py \
+  --appcast "$DIST/appcast.xml" \
+  --dmg "$DMG" \
+  --version "$VERSION" \
+  --tag "$PHOTONPORT_RELEASE_TAG" \
+  --public-key "$EXPECTED_PUBLIC_KEY"
 (
   cd "$DIST"
   shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256"
@@ -103,4 +149,4 @@ echo "==> done"
 echo "    DMG:     $DMG"
 echo "    appcast: $DIST/appcast.xml"
 echo "    source:  https://github.com/lotgood/photonport/tree/$PHOTONPORT_RELEASE_TAG"
-echo "Next: verify Gatekeeper (spctl -a -vvv \"$APP\"), then publish (docs/RELEASE.md §3)."
+echo "Next: publish (docs/RELEASE.md §3)."

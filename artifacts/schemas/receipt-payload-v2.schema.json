@@ -118,13 +118,15 @@
         "commit",
         "scriptSha256",
         "schemaSha256",
-        "trustPolicySha256"
+        "trustPolicySha256",
+        "ed25519ModuleSha256"
       ],
       "properties": {
         "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "scriptSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "schemaSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "trustPolicySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "trustPolicySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "ed25519ModuleSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
     "invocation": {

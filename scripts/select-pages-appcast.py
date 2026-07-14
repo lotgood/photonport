@@ -106,7 +106,11 @@ def select_appcast(
             raise SelectionError(f"published PhotonPort release not found: {dispatch_tag}")
         return _appcast_selection(match)
 
-    if event == "release" and TAG_PATTERN.fullmatch(release_tag):
+    if event == "release" and release_tag.startswith("photonport-v"):
+        if not TAG_PATTERN.fullmatch(release_tag):
+            raise SelectionError(
+                "release tag with photonport-v prefix must be a valid PhotonPort release tag"
+            )
         match = next(
             (release for release in published if release.get("tag_name") == release_tag),
             None,

@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ED25519_MODULE_SHA256 = hashlib.sha256((ROOT / "scripts/evidence/ed25519_rfc8032.py").read_bytes()).hexdigest()
 SPEC = importlib.util.spec_from_file_location("verify_receipt", ROOT / "scripts/evidence/verify_receipt.py")
 verify_receipt = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verify_receipt)
@@ -34,7 +35,7 @@ def payload(**overrides):
         "status": "passed",
         "sourceTuple": TUPLE,
         "issuer": {"kind": "agent", "identity": "fixture", "role": "test", "trustDomain": "test"},
-        "verifier": {"commit": "0" * 40, "scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64},
+        "verifier": {"commit": "0" * 40, "scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64, "ed25519ModuleSha256": ED25519_MODULE_SHA256},
         "invocation": {"tool": "unittest", "argv": ["python3", "-m", "unittest"], "cwd": ".", "toolchain": {"python": "3"}},
         "artifacts": {"inputs": [], "outputs": []},
         "children": [],
@@ -61,7 +62,7 @@ def write_json(path, value):
 
 
 def expected():
-    return {"releaseAttemptId": "attempt-m0m1-test-0001", "gateId": "g004.automated", "kind": "photonport.gate.g004-automated.v2", "sourceTuple": TUPLE, "verifier": {"scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64}}
+    return {"releaseAttemptId": "attempt-m0m1-test-0001", "gateId": "g004.automated", "kind": "photonport.gate.g004-automated.v2", "sourceTuple": TUPLE, "verifier": {"scriptSha256": "3" * 64, "schemaSha256": "4" * 64, "trustPolicySha256": "5" * 64, "ed25519ModuleSha256": ED25519_MODULE_SHA256}}
 
 
 class ReceiptEnvelopeTests(unittest.TestCase):
@@ -127,6 +128,14 @@ class ReceiptEnvelopeTests(unittest.TestCase):
         self.assertEqual(result["exitCode"], 0)
         self.assertIs(result["trusted"], True)
         self.assertEqual(result["verifier"], expected()["verifier"])
+
+    def test_expired_target_is_blocked_exit_2(self):
+        receipt = self.tmp_path / "expired.json"
+        write_json(receipt, envelope_for(payload(expiry="2020-01-01T00:00:00Z")))
+        result = self.verify(receipt)
+        self.assertEqual(result["exitCode"], 2)
+        self.assertEqual(result["reasonCode"], "receipt_expired")
+        self.assertIs(result["trusted"], True)
 
     def test_changed_child_payload_or_envelope_hash_exit_3(self):
         child = payload(receiptId="r-child-receipt-0001", gateId="g006.provenance", kind="photonport.gate.g006-provenance.v2", status="failed")

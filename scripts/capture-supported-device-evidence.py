@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SUPPORTED_HOST = {"model": "Apple M4 Max", "os_major": "27"}
-SUPPORTED_DEVICE = {"model": "iPad Pro M4", "os_major": "27", "platform": "iOS"}
+SUPPORTED_DEVICE = {"model": "iPad Pro 11-inch (M4)", "os_major": "27", "platform": "iOS"}
+SUPPORTED_DEVICE_NORMALIZED_MODEL = "ipad pro 11-inch (m4)"
 SCENARIOS = [
     "usb_display", "usb_hdr", "usb_120hz", "usb_audio", "usb_rotation",
     "usb_input", "usb_disconnect", "usb_replug", "wifi_sas", "wifi_tls",
@@ -94,15 +95,21 @@ def _devices(data: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _normalized_model(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().lower()
+
+
 def device_identity(data: Any) -> Dict[str, Any]:
     devices = _devices(data)
     if not devices:
-        return {"model": "", "os_major": "", "platform": "", "transport": "", "physical": False, "matched": False, "reason": "no_device"}
+        return {"model": "", "normalized_model": "", "os_major": "", "platform": "", "transport": "", "physical": False, "matched": False, "reason": "no_device"}
 
     candidates = []
     for device in devices:
         values = _find_values(device, ("marketingName", "modelName", "productType", "hardwareModel"))
-        model = next((value for value in values if "ipad" in value.lower() and "m4" in value.lower()), values[0] if values else "")
+        model = next((value for value in values if _normalized_model(value) == SUPPORTED_DEVICE_NORMALIZED_MODEL), values[0] if values else "")
+        normalized_model = _normalized_model(model)
+        model_matches = normalized_model == SUPPORTED_DEVICE_NORMALIZED_MODEL
         versions = _find_values(device, ("osVersionNumber", "osVersion", "os_version", "productVersion", "version"))
         platform = next(iter(_find_values(device, ("platform", "platformType", "devicePlatform"))), "")
         transport = next(iter(_find_values(device, ("transport", "connectionType", "connection"))), "")
@@ -115,15 +122,19 @@ def device_identity(data: Any) -> Dict[str, Any]:
         )
         os_major = _major(versions[0] if versions else "")
         matched = (
-            "ipad" in model.lower()
-            and "m4" in model.lower()
+            model_matches
             and os_major == SUPPORTED_DEVICE["os_major"]
             and platform.lower() in ("ios", "iphoneos")
             and physical
         )
-        reason = "matched" if matched else ("simulator_rejected" if simulated else "missing_or_unsupported_physical_device")
+        reason = (
+            f"matched:{normalized_model}"
+            if matched
+            else f"{'simulator_rejected' if simulated else 'missing_or_unsupported_physical_device'}:{normalized_model}"
+        )
         identity = {
             "model": model,
+            "normalized_model": normalized_model,
             "os_major": os_major,
             "platform": platform,
             "transport": transport,
@@ -132,7 +143,7 @@ def device_identity(data: Any) -> Dict[str, Any]:
             "reason": reason,
         }
         rank = (
-            int("ipad" in model.lower() and "m4" in model.lower()),
+            int(model_matches),
             int(physical),
             int(platform.lower() in ("ios", "iphoneos")),
         )

@@ -231,10 +231,12 @@ def schema_contract_bytes(gate_kind: str) -> bytes:
 
 def verifier_digests(gate_kind: str, trust_policy_path: Path) -> Dict[str, str]:
     script_path = Path(__file__).resolve().parent / "evidence" / "verify_receipt.py"
+    ed25519_path = Path(__file__).resolve().parent / "evidence" / "ed25519_rfc8032.py"
     trust_policy_bytes = read_required_bytes(trust_policy_path)
     load_required_json(trust_policy_path)
     return {
         "scriptSha256": sha256_bytes(read_required_bytes(script_path)),
+        "ed25519ModuleSha256": sha256_bytes(read_required_bytes(ed25519_path)),
         "schemaSha256": sha256_bytes(schema_contract_bytes(gate_kind)),
         "trustPolicySha256": sha256_bytes(trust_policy_bytes),
     }
@@ -467,12 +469,13 @@ def verify(args: argparse.Namespace) -> Dict[str, Any]:
         except InputError as exc:
             gates.append(config_gate(exc.reason_code, "sourceTuple"))
 
-    retirement_eligible = bool(gates) and all(g.get("status") == "passed" and g.get("trusted") is True and g.get("verdict", {}).get("exitCode") == 0 and g.get("verdict", {}).get("status") == "passed" for g in gates) and all(current.values()) and all(history.values()) and standalone
+    retirement_eligible = trust_mode == "production" and bool(gates) and all(g.get("status") == "passed" and g.get("trusted") is True and g.get("verdict", {}).get("exitCode") == 0 and g.get("verdict", {}).get("status") == "passed" for g in gates) and all(current.values()) and all(history.values()) and standalone
     exit_code = 3 if any(g["status"] == "malformed" for g in gates) else 0 if retirement_eligible else 2
     blockers = [{"category": g["category"], "reason": g["reason"]} for g in gates if g["status"] != "passed"]
     return {
         "schemaVersion": 2,
         "kind": "ios-transition-readiness-v2",
+        "trustMode": trust_mode,
         "retirementEligible": retirement_eligible,
         "exitCode": exit_code,
         "sourceTuple": source_tuple,
