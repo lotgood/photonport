@@ -7,16 +7,17 @@
     "-scheme",
     "OpenSidecarMac",
     "-configuration",
-    "Release",
+    "Debug",
     "-destination",
     "platform=macOS",
     "-derivedDataPath",
-    "/tmp/photonport-g004-mac-release",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/mac-product",
     "CODE_SIGNING_ALLOWED=NO",
     "build"
   ],
-  "cwd": "/Users/ltg/workspace/opendisplay",
   "exitCode": 0,
+  "label": "build-mac-product",
   "stderr": "--- xcodebuild: WARNING: Using the first of multiple matching destinations:\n{ platform:macOS, arch:arm64, id:00006041-001C301A2E31801C, name:My Mac }\n{ platform:macOS, arch:x86_64, id:00006041-001C301A2E31801C, name:My Mac }\n",
-  "stdout": ""
+  "stdoutBytes": 4433,
+  "stdoutSha256": "3dd2351d1ae60ef563acf286e7e3fea3ef8fe3aba68fd871abeaca20673c1822"
 }

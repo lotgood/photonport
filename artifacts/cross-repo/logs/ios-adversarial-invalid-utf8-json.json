@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/ios-interop",
+    "case",
+    "invalid-utf8-json"
+  ],
+  "exitCode": 0,
+  "label": "ios-adversarial-invalid-utf8-json",
+  "stderr": "",
+  "stdoutBytes": 49,
+  "stdoutSha256": "6a1406d282194c7f2b27ca7ee80063104f61c536f5e7bc5fa47a2642f8eb4ec3"
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "./scripts/test-session-binding.sh"
+  ],
+  "exitCode": 0,
+  "label": "suite-mac-session-vectors",
+  "stderr": "",
+  "stdoutBytes": 43,
+  "stdoutSha256": "53902b9877d3c3d3ff1c547941f6c54e898389121efeb16b9e5ca95469262cc0"
+}

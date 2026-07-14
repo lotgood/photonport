@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/ios-interop",
+    "case",
+    "oversize-frame"
+  ],
+  "exitCode": 0,
+  "label": "ios-adversarial-oversize-frame",
+  "stderr": "",
+  "stdoutBytes": 46,
+  "stdoutSha256": "53dbe1cc23868afb3b8cf6cf15d051a73a18e9af9def5545ed26561871e67d81"
+}

@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/mac-interop",
+    "encode",
+    "ping"
+  ],
+  "exitCode": 0,
+  "label": "mac-to-ios-ping-encode",
+  "stderr": "",
+  "stdoutBytes": 35,
+  "stdoutSha256": "9d659fede71a60b99c6240860370fc0ee0295243866b374906564f5c855bbfa4"
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "./scripts/test-pairing-vectors.sh"
+  ],
+  "exitCode": 0,
+  "label": "suite-ios-pairing-vectors",
+  "stderr": "",
+  "stdoutBytes": 700,
+  "stdoutSha256": "173490d5b9bc20dcb7e89318a4a4d4fae68faf8d6ee6bd0f5643ecde92f4548a"
+}

@@ -1,207 +1,464 @@
 {
+  "builtPinEvidence": {
+    "builtProductPinSha256": {
+      "ios": "047552408876e6e4f963afa4b1be237686082d3a23f997f30108eb0af95f8e2b",
+      "mac": "047552408876e6e4f963afa4b1be237686082d3a23f997f30108eb0af95f8e2b"
+    },
+    "builtProductPins": {
+      "ios": {
+        "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+        "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+        "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
+        "schemaVersion": 1
+      },
+      "mac": {
+        "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+        "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+        "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
+        "schemaVersion": 1
+      }
+    },
+    "trackedConsumerPinSha256": {
+      "ios": "047552408876e6e4f963afa4b1be237686082d3a23f997f30108eb0af95f8e2b",
+      "mac": "047552408876e6e4f963afa4b1be237686082d3a23f997f30108eb0af95f8e2b"
+    },
+    "trackedConsumerPins": {
+      "ios": {
+        "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+        "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+        "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
+        "schemaVersion": 1
+      },
+      "mac": {
+        "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+        "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+        "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
+        "schemaVersion": 1
+      }
+    }
+  },
   "commands": [
     {
-      "argv": [
-        "python3",
-        "-m",
-        "unittest",
-        "Tests.test_cross_repo_compatibility",
-        "Tests.test_supported_device_evidence",
-        "Tests.test_mac_protocol_contract",
-        "Tests.test_archive_baselines",
-        "Tests.test_provenance_manifest",
-        "Tests.test_scan_forbidden",
-        "Tests.test_build_inventory",
-        "-v"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/000.json",
-      "logSha256": "85dbaf68c7fb25a34381ee7d40edd90e9c4cfc8c7719a7aa88f367111cbf37fa",
-      "stderrSha256": "effc21f6002abd1c027bd219e21dc9fb40678a352ad5f21b19476b566353d743",
-      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "label": "suite-mac-adversarial",
+      "logPath": "logs/suite-mac-adversarial.json"
     },
     {
-      "argv": [
-        "./scripts/test-pairing-vectors.sh"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/001.json",
-      "logSha256": "3f46e8b4084f0162bec3d96b0b0f719328fd0304183a8332d7a9398d3bf84edf",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdoutSha256": "8324e1137613d8619ac178fbbac5424a71bc23c145a1f524077e2a30a5a78971"
+      "label": "suite-mac-session-vectors",
+      "logPath": "logs/suite-mac-session-vectors.json"
     },
     {
-      "argv": [
-        "./scripts/test-session-binding.sh"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/002.json",
-      "logSha256": "7469d5cc551b070e70e83f0304fe4f715430c63ab3101725be9ad3af85e298bb",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdoutSha256": "53902b9877d3c3d3ff1c547941f6c54e898389121efeb16b9e5ca95469262cc0"
+      "label": "suite-ios-adversarial",
+      "logPath": "logs/suite-ios-adversarial.json"
     },
     {
-      "argv": [
-        "./scripts/test-mac-protocol-adversarial.sh"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/003.json",
-      "logSha256": "3acd0cbdb6f7ab7459eeefbaa5fc77fa216a53164d4f5fde6a8a7812479bdfac",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdoutSha256": "b898b059fe6cf9f79cbc507af518869959fd48cca2987b766c3f8712fc0cb3a8"
+      "label": "suite-ios-session-vectors",
+      "logPath": "logs/suite-ios-session-vectors.json"
     },
     {
-      "argv": [
-        "python3",
-        "-m",
-        "unittest",
-        "discover",
-        "-s",
-        "tests",
-        "-p",
-        "test_*.py",
-        "-v"
-      ],
-      "cwd": "/Users/ltg/workspace/photonport-protocol",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/004.json",
-      "logSha256": "c5565cd03bb0d5d031ee788e90000edf561ec7d1ecaecc4daecfaf39833ee4b5",
-      "stderrSha256": "419340bbafa833985d9ec13b7387413e34ecbb348ff2fc878850618a66345bd6",
-      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "label": "suite-ios-pairing-vectors",
+      "logPath": "logs/suite-ios-pairing-vectors.json"
     },
     {
-      "argv": [
-        "python3",
-        "scripts/run-g003-gates.py"
-      ],
-      "cwd": "/Users/ltg/workspace/photonport-ios",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/005.json",
-      "logSha256": "041effb18b502143e371db62ad648d41084261e1a961b8b577660efd51047179",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "label": "suite-protocol-positive-vectors",
+      "logPath": "logs/suite-protocol-positive-vectors.json"
     },
     {
-      "argv": [
-        "python3",
-        "scripts/verify-g003-evidence.py"
-      ],
-      "cwd": "/Users/ltg/workspace/photonport-ios",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/006.json",
-      "logSha256": "e18e190e50d403bfd490556d02d95686ce176a79839a90597c305a6d479fcb4a",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdoutSha256": "3b69fe9e7a20e97d82c52b10723e1e55ee547b76c360be73c9aa89030981398b"
+      "label": "suite-protocol-negative-vectors",
+      "logPath": "logs/suite-protocol-negative-vectors.json"
     },
     {
-      "argv": [
-        "xcodebuild",
-        "-quiet",
-        "-project",
-        "OpenSidecar.xcodeproj",
-        "-scheme",
-        "OpenSidecarMac",
-        "-configuration",
-        "Debug",
-        "-destination",
-        "platform=macOS",
-        "-derivedDataPath",
-        "/tmp/photonport-g004-mac-debug",
-        "CODE_SIGNING_ALLOWED=NO",
-        "build"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/007.json",
-      "logSha256": "4d3d7f6c4d7193b5b950ded5e817c16170aa5a2bf61308cabea4f957b2a33355",
-      "stderrSha256": "cf0646102566aca630945746bb0d75cc4d76e4bb8373fe9d6a3f5da5b8ae704b",
-      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "label": "suite-protocol-conformance",
+      "logPath": "logs/suite-protocol-conformance.json"
     },
     {
-      "argv": [
-        "xcodebuild",
-        "-quiet",
-        "-project",
-        "OpenSidecar.xcodeproj",
-        "-scheme",
-        "OpenSidecarMac",
-        "-configuration",
-        "Release",
-        "-destination",
-        "platform=macOS",
-        "-derivedDataPath",
-        "/tmp/photonport-g004-mac-release",
-        "CODE_SIGNING_ALLOWED=NO",
-        "build"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/008.json",
-      "logSha256": "630e2d13b2e3640f3394dadd4c88b991a64a6fad7f0408afd42d380319b2fbeb",
-      "stderrSha256": "cf0646102566aca630945746bb0d75cc4d76e4bb8373fe9d6a3f5da5b8ae704b",
-      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "label": "build-mac-product",
+      "logPath": "logs/build-mac-product.json"
     },
     {
-      "argv": [
-        "python3",
-        "scripts/verify-cross-repo-compatibility.py",
-        "--mac-root",
-        "/Users/ltg/workspace/opendisplay",
-        "--ios-root",
-        "/Users/ltg/workspace/photonport-ios",
-        "--protocol-root",
-        "/Users/ltg/workspace/photonport-protocol",
-        "--output",
-        "artifacts/cross-repo/compatibility-report.json"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/009.json",
-      "logSha256": "7f87e031a672084f8280d39d4f6f10c223ab30f3b776651db3558837b434251b",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "label": "build-ios-source-clone",
+      "logPath": "logs/build-ios-source-clone.json"
     },
     {
-      "argv": [
-        "python3",
-        "scripts/capture-supported-device-evidence.py",
-        "--probe-local",
-        "--output",
-        "artifacts/cross-repo/physical-availability.json"
-      ],
-      "cwd": "/Users/ltg/workspace/opendisplay",
       "exitCode": 0,
-      "logPath": "artifacts/cross-repo/logs/010.json",
-      "logSha256": "694c2e1c9aa01849947d6a11e70e00cfb4ada1f6bcbae6ea9d9dbe483c38cea4",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "label": "build-ios-source-checkout",
+      "logPath": "logs/build-ios-source-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "generate-ios-product-project",
+      "logPath": "logs/generate-ios-product-project.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "build-ios-product",
+      "logPath": "logs/build-ios-product.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "compile-mac-launcher",
+      "logPath": "logs/compile-mac-launcher.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "compile-ios-launcher-host",
+      "logPath": "logs/compile-ios-launcher-host.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-ping-encode",
+      "logPath": "logs/mac-to-ios-ping-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-ping-decode",
+      "logPath": "logs/mac-to-ios-ping-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-touch-encode",
+      "logPath": "logs/mac-to-ios-touch-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-touch-decode",
+      "logPath": "logs/mac-to-ios-touch-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-scroll-encode",
+      "logPath": "logs/mac-to-ios-scroll-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-scroll-decode",
+      "logPath": "logs/mac-to-ios-scroll-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-keyframe-encode",
+      "logPath": "logs/mac-to-ios-keyframe-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-keyframe-decode",
+      "logPath": "logs/mac-to-ios-keyframe-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-session-open-v3-encode",
+      "logPath": "logs/mac-to-ios-session-open-v3-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-session-open-v3-decode",
+      "logPath": "logs/mac-to-ios-session-open-v3-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-pong-encode",
+      "logPath": "logs/ios-to-mac-pong-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-pong-decode",
+      "logPath": "logs/ios-to-mac-pong-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-stats-encode",
+      "logPath": "logs/ios-to-mac-stats-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-stats-decode",
+      "logPath": "logs/ios-to-mac-stats-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-keyframe-encode",
+      "logPath": "logs/ios-to-mac-keyframe-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-keyframe-decode",
+      "logPath": "logs/ios-to-mac-keyframe-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-session-accept-v3-encode",
+      "logPath": "logs/ios-to-mac-session-accept-v3-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-session-accept-v3-decode",
+      "logPath": "logs/ios-to-mac-session-accept-v3-decode.json"
+    },
+    {
+      "exitCode": 1,
+      "label": "negative-to-mac-zero-length",
+      "logPath": "logs/negative-to-mac-zero-length.json"
+    },
+    {
+      "exitCode": 1,
+      "label": "negative-to-ios-zero-length",
+      "logPath": "logs/negative-to-ios-zero-length.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-adversarial-duplicate-json-key",
+      "logPath": "logs/mac-adversarial-duplicate-json-key.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-adversarial-invalid-utf8-json",
+      "logPath": "logs/mac-adversarial-invalid-utf8-json.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-adversarial-bad-length-prefix",
+      "logPath": "logs/mac-adversarial-bad-length-prefix.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-adversarial-oversize-frame",
+      "logPath": "logs/mac-adversarial-oversize-frame.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-adversarial-duplicate-json-key",
+      "logPath": "logs/ios-adversarial-duplicate-json-key.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-adversarial-invalid-utf8-json",
+      "logPath": "logs/ios-adversarial-invalid-utf8-json.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-adversarial-bad-length-prefix",
+      "logPath": "logs/ios-adversarial-bad-length-prefix.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-adversarial-oversize-frame",
+      "logPath": "logs/ios-adversarial-oversize-frame.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "verifier-primary",
+      "logPath": "logs/verifier-primary.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "changed-pin-mac-clone",
+      "logPath": "logs/changed-pin-mac-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "changed-pin-mac-checkout",
+      "logPath": "logs/changed-pin-mac-checkout.json"
+    },
+    {
+      "exitCode": 1,
+      "label": "verifier-changed-pin-failure",
+      "logPath": "logs/verifier-changed-pin-failure.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-mac-clone",
+      "logPath": "logs/fresh-mac-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-mac-checkout",
+      "logPath": "logs/fresh-mac-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-ios-clone",
+      "logPath": "logs/fresh-ios-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-ios-checkout",
+      "logPath": "logs/fresh-ios-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-protocol-clone",
+      "logPath": "logs/fresh-protocol-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-protocol-checkout",
+      "logPath": "logs/fresh-protocol-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "verifier-fresh-path",
+      "logPath": "logs/verifier-fresh-path.json"
     }
   ],
   "compatibilityReceipt": {
-    "path": "artifacts/cross-repo/compatibility-report.json",
-    "sha256": "b3b035aec2c4d4e2eecd3225b7737278bbfe8eeb5a24a136ae977bcb3bcdd4d9"
+    "path": "compatibility-report.json",
+    "sha256": "84703fe7bd93bc820056f8047fe75af09c5e49a1c893cfd5c6206cd27594e578"
   },
-  "kind": "cross-repo-test-report",
-  "physicalAvailabilityReceipt": {
-    "path": "artifacts/cross-repo/physical-availability.json",
-    "sha256": "0e11f9576b9954b0a7899d88858ffadfdefcf05967055010d4dcde7ab3d13101"
-  },
-  "productIdentifiers": [
-    {
-      "configuration": "Debug",
-      "path": "/tmp/photonport-g004-mac-debug/Build/Products/Debug/PhotonPort.app/Contents/Info.plist",
-      "sha256": "f969de5853088e79224c98d511a6e78d36968cc70b26b86a1f3ee7361c20dacb"
+  "coverageContract": {
+    "enumeratedProtocolNegativeVectorIDs": [
+      "commitment-reveal-mismatch",
+      "reveal-before-both-commitments",
+      "duplicate-pairing-role",
+      "role-reflection",
+      "wrong-mac-install-id",
+      "wrong-device-install-id",
+      "wrong-mac-nonce",
+      "wrong-device-nonce",
+      "wrong-version",
+      "wrong-session-id",
+      "zero-generation",
+      "wrong-channel",
+      "channel-nonce-replay",
+      "primary-proof-field-order",
+      "transport-ikm-cross-use",
+      "audio-before-primary-timeout",
+      "wifi-usb-seed-present",
+      "usb-seed-missing",
+      "compatibility-mismatch",
+      "sensitive-reason-code",
+      "duplicate-json-key",
+      "invalid-utf8-json",
+      "bad-length-prefix",
+      "invalid-base64",
+      "oversize-frame"
+    ],
+    "enumeratedProtocolPositiveVectorIDs": [
+      "pairing-v2:canonical",
+      "session-v3:wifi-psk",
+      "session-v3:usb-seed",
+      "session-v3-frame:serverHelloUsb",
+      "session-v3-frame:serverHelloWifi",
+      "session-v3-frame:sessionOpenPayloadLength"
+    ],
+    "negativeVectorEvidenceLabels": [
+      "suite-mac-adversarial",
+      "suite-ios-adversarial",
+      "suite-protocol-negative-vectors"
+    ],
+    "positiveRawFrameCases": [
+      "mac-to-ios-ping",
+      "mac-to-ios-touch",
+      "mac-to-ios-scroll",
+      "mac-to-ios-keyframe",
+      "mac-to-ios-session-open-v3",
+      "ios-to-mac-pong",
+      "ios-to-mac-stats",
+      "ios-to-mac-keyframe",
+      "ios-to-mac-session-accept-v3"
+    ],
+    "positiveVectorEvidenceLabels": [
+      "suite-mac-session-vectors",
+      "suite-ios-session-vectors",
+      "suite-ios-pairing-vectors",
+      "suite-protocol-positive-vectors"
+    ],
+    "productionDerivedAdversarialCases": {
+      "ios": [
+        "duplicate-json-key",
+        "invalid-utf8-json",
+        "bad-length-prefix",
+        "oversize-frame"
+      ],
+      "mac": [
+        "duplicate-json-key",
+        "invalid-utf8-json",
+        "bad-length-prefix",
+        "oversize-frame"
+      ]
     },
-    {
-      "configuration": "Release",
-      "path": "/tmp/photonport-g004-mac-release/Build/Products/Release/PhotonPort.app/Contents/Info.plist",
-      "sha256": "56ee5c3ab4559d0ee6bafd64bda5a0b83fc295c5f4ac4d12fccdbed0f2fdeb44"
-    }
-  ],
+    "productionSuiteCoveredNegativeVectorIDs": [
+      "commitment-reveal-mismatch",
+      "reveal-before-both-commitments",
+      "duplicate-pairing-role",
+      "role-reflection",
+      "wrong-mac-install-id",
+      "wrong-device-install-id",
+      "wrong-mac-nonce",
+      "wrong-device-nonce",
+      "wrong-version",
+      "wrong-session-id",
+      "zero-generation",
+      "wrong-channel",
+      "channel-nonce-replay",
+      "primary-proof-field-order",
+      "transport-ikm-cross-use",
+      "audio-before-primary-timeout",
+      "wifi-usb-seed-present",
+      "usb-seed-missing",
+      "compatibility-mismatch",
+      "sensitive-reason-code",
+      "duplicate-json-key",
+      "invalid-utf8-json",
+      "bad-length-prefix",
+      "invalid-base64",
+      "oversize-frame"
+    ],
+    "productionSuiteCoveredPositiveVectorIDs": [
+      "pairing-v2:canonical",
+      "session-v3:wifi-psk",
+      "session-v3:usb-seed",
+      "session-v3-frame:serverHelloUsb",
+      "session-v3-frame:serverHelloWifi",
+      "session-v3-frame:sessionOpenPayloadLength"
+    ],
+    "productionSuiteResults": {
+      "suite-ios-adversarial": true,
+      "suite-ios-pairing-vectors": true,
+      "suite-ios-session-vectors": true,
+      "suite-mac-adversarial": true,
+      "suite-mac-session-vectors": true,
+      "suite-protocol-conformance": true,
+      "suite-protocol-negative-vectors": true,
+      "suite-protocol-positive-vectors": true
+    },
+    "unexecutableNegativeVectorIDs": [],
+    "unexecutablePolicy": "matrix fails rather than claiming vector coverage without passing production suites"
+  },
+  "failures": [],
+  "freshCompatibilityReceipt": {
+    "path": "compatibility-report-fresh.json",
+    "sha256": "84703fe7bd93bc820056f8047fe75af09c5e49a1c893cfd5c6206cd27594e578"
+  },
+  "kind": "cross-repo-production-interop-report",
+  "physicalAvailability": "outside automated matrix evidence DAG; S-P1-05 OPEN-WAIVED",
+  "processProtocol": {
+    "directions": [
+      "mac-encoder-to-ios-decoder",
+      "ios-encoder-to-mac-decoder"
+    ],
+    "framing": "4-byte big-endian length followed by raw payload bytes over stdout/stdin",
+    "negativeCases": [
+      "zero-length frame exits nonzero",
+      "production-derived adversarial case mode exits nonzero on unexpected acceptance"
+    ],
+    "topology": "separate production-derived Swift executables"
+  },
   "result": "passed",
-  "schemaVersion": 1
+  "schemaVersion": 2,
+  "sourceTuple": {
+    "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+    "iosCommit": "a2313c0c26c4d98d366381357aabd6cd8e5e6d59",
+    "macCommit": "2541c74af19c8c966a16e44caba6d86c2793201b",
+    "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+    "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8"
+  }
 }

@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/python3",
+    "/Users/ltg/workspace/opendisplay/scripts/verify-cross-repo-compatibility.py",
+    "--mac-root",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/changed-pin-mac",
+    "--ios-root",
+    "/Users/ltg/workspace/photonport-ios",
+    "--protocol-root",
+    "/Users/ltg/workspace/photonport-protocol",
+    "--mac-pin",
+    "Mac/ProtocolBuildPin.json",
+    "--ios-pin",
+    "Resources/ProtocolBuildPin.json",
+    "--expected-mac-commit",
+    "2541c74af19c8c966a16e44caba6d86c2793201b",
+    "--expected-ios-commit",
+    "a2313c0c26c4d98d366381357aabd6cd8e5e6d59",
+    "--expected-protocol-commit",
+    "2280861313b2363b673089637d1c1dc544e208d8",
+    "--expected-compatibility-digest",
+    "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
+    "--expected-normative-manifest-digest",
+    "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
+    "--output",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/changed-pin.json"
+  ],
+  "exitCode": 1,
+  "label": "verifier-changed-pin-failure",
+  "stderr": "FAIL_CLOSED: mac pin has unstaged tracked changes: Mac/ProtocolBuildPin.json\n",
+  "stdoutBytes": 0,
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

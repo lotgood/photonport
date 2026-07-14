@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/ios-interop",
+    "encode",
+    "pong"
+  ],
+  "exitCode": 0,
+  "label": "ios-to-mac-pong-encode",
+  "stderr": "",
+  "stdoutBytes": 34,
+  "stdoutSha256": "bd19a192aab571c6d2798620e866b3b543612158d4d562ff27fc22a4d50e6885"
+}

@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-gaf3qdk1/build/mac-interop",
+    "case",
+    "bad-length-prefix"
+  ],
+  "exitCode": 0,
+  "label": "mac-adversarial-bad-length-prefix",
+  "stderr": "",
+  "stdoutBytes": 49,
+  "stdoutSha256": "fb7c126951a475ac57f3a0433a850e5f45c806dc1fa5cda7794f9c9ccb5e6833"
+}

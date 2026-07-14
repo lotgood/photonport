@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "./scripts/test-session-binding.sh"
+  ],
+  "exitCode": 0,
+  "label": "suite-ios-session-vectors",
+  "stderr": "",
+  "stdoutBytes": 33,
+  "stdoutSha256": "cbfe6a3036ac107ae3d07659e5a3b5323cf5c679a1d853867ef1bd96960ac526"
+}
