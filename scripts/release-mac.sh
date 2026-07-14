@@ -10,7 +10,9 @@
 #   ASC_KEY_ID         App Store Connect API key id
 #   ASC_ISSUER_ID      App Store Connect issuer id
 #   ASC_KEY_PATH       path to AuthKey_<id>.p8
-#   EXPORT_COMPLIANCE_CONFIRMED=1 after external export review covering Mac+iOS
+#   EXPORT_COMPLIANCE_CONFIRMED=1 only after the Mac export-classification
+#                      review is recorded (iOS review is a separate
+#                      photonport-ios record and does not gate this script)
 # Optional:
 #   SPARKLE_BIN        dir containing Sparkle's generate_appcast
 #                      (default: search build/SourcePackages artifacts)
@@ -27,7 +29,7 @@ require_release_source "$VERSION"
 : "${ASC_KEY_PATH:?set ASC_KEY_PATH (path to AuthKey_*.p8)}"
 [[ -f "$ASC_KEY_PATH" ]] || { echo "ASC_KEY_PATH does not exist: $ASC_KEY_PATH" >&2; exit 1; }
 require_acknowledgement EXPORT_COMPLIANCE_CONFIRMED \
-  "completing and recording the Mac+iOS encryption/export-classification review"
+  "completing and recording the Mac encryption/export-classification review"
 
 BUILD="$(date +%Y%m%d%H%M)"
 DIST="dist"
