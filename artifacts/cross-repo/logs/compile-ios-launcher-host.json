@@ -2,13 +2,13 @@
   "argv": [
     "swiftc",
     "-O",
-    "/Users/ltg/workspace/opendisplay/Tests/IOSInteropLauncher.swift",
+    "/private/tmp/photonport-mac-src/Tests/IOSInteropLauncher.swift",
     "/Users/ltg/workspace/photonport-ios/Sources/StrictJSON.swift",
     "/Users/ltg/workspace/photonport-ios/Sources/ReceiverContracts.swift",
     "/Users/ltg/workspace/photonport-ios/Sources/Pairing.swift",
     "/Users/ltg/workspace/photonport-ios/Sources/Log.swift",
     "-o",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-kr2huzqu/build/ios-interop"
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/build/ios-interop"
   ],
   "exitCode": 0,
   "label": "compile-ios-launcher-host",

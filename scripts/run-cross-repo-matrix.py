@@ -47,6 +47,27 @@ def require_full_hex(value, label, length):
     return value
 
 
+def require_source_binding(root, expected_commit, label):
+    def git_query(argv):
+        completed = subprocess.run(["git", "-C", str(root), *argv], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if completed.returncode:
+            raise SystemExit("FAIL_CLOSED: " + label + " source binding query failed: git " + " ".join(argv))
+        return completed.stdout.decode("utf-8", "replace").strip()
+
+    head = git_query(["rev-parse", "HEAD"])
+    if head != expected_commit:
+        raise SystemExit(
+            "FAIL_CLOSED: " + label + " checkout HEAD " + head + " does not match expected commit " + expected_commit
+            + "; matrix evidence binds only the executed snapshot, so post-hoc re-pinning is refused and an"
+            + " evidence-recording commit (one storing receipts/tooling/docs) can never be claimed as executed"
+        )
+    if git_query(["status", "--porcelain"]):
+        raise SystemExit(
+            "FAIL_CLOSED: " + label + " checkout is not a clean snapshot of " + expected_commit
+            + "; matrix evidence must bind an immutable clean source tree"
+        )
+
+
 def run(argv, cwd, log_dir, label, *, stdin=None):
     completed = subprocess.run(argv, cwd=cwd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     log_path = log_dir / (label + ".json")
@@ -397,6 +418,9 @@ def main():
     require_full_hex(args.expected_protocol_commit, "expected protocol commit", 40)
     require_full_hex(args.expected_compatibility_digest, "expected compatibility digest", 64)
     require_full_hex(args.expected_normative_manifest_digest, "expected normative manifest digest", 64)
+    require_source_binding(mac, args.expected_mac_commit, "mac")
+    require_source_binding(ios, args.expected_ios_commit, "ios")
+    require_source_binding(protocol, args.expected_protocol_commit, "protocol")
     authorized_tag_value = None
     if args.authorize_protocol_tag:
         prefix = "refs/tags/"
