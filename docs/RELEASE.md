@@ -269,7 +269,7 @@ claim that the Mac release approved or published iOS.
 | Criterion | Required evidence |
 |---|---|
 | AC#4 | App Store Connect screenshot showing the TestFlight build state transition **Processing → Ready** and the recorded export-compliance field; retain the accepted privacy-manifest record. |
-| AC#6 (iOS portion) | `artifacts/cross-repo/automated-matrix.json` has `"result": "passed"` **and** the corresponding green CI run URL is retained. |
+| AC#6 (iOS portion) | `artifacts/cross-repo/automated-matrix.json` has `"result": "passed"` **and** the corresponding green CI run URL is retained. Its `sourceTuple` must name the exact clean commits that were executed (the matrix fails closed otherwise); the later commit storing the receipt is an evidence-recording commit, never claimed as executed. |
 | AC#10 (iOS portion) | Independent standalone-iOS export review plus provenance/legal, Apple/TestFlight terms, signing, and upload records for the exact iOS candidate. |
 
 ### Shared documentation record

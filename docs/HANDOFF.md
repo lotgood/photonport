@@ -75,9 +75,24 @@ auto-update before 0.1.0 signing.
 
 ## How to re-verify everything
 
+The matrix fails closed unless every root is a clean checkout of the exact
+`--expected-*-commit`, so `sourceTuple` always names the immutable snapshots
+that were actually executed and can never be re-pinned after the run. The
+later commit that stores regenerated receipts, tooling, or docs is an
+evidence-recording commit: it is outside the audited source tuple and is
+never claimed as executed. If this working tree carries uncommitted edits,
+run against an immutable snapshot instead, e.g.
+`git clone --no-local . /tmp/photonport-mac-src` (or a detached
+`git worktree`), run `./generate.sh` inside it (the gitignored
+`OpenSidecar.xcodeproj` must exist before the product build), pass it as
+`--mac-root`, and keep `--output` pointing back into this repo's
+`artifacts/cross-repo/`.
+
 ```sh
 # Full cross-repo matrix: every required argparse input is explicit. These
-# values must name the candidate commits; the two digests come from its Mac pin.
+# values must name the candidate commits; the two digests come from its Mac
+# pin. Each root must be a clean checkout of its named commit or the run
+# fails closed before doing any work.
 MAC_COMMIT="$(git rev-parse HEAD)"
 IOS_COMMIT="$(git -C ../photonport-ios rev-parse HEAD)"
 PROTOCOL_COMMIT="$(git -C ../photonport-protocol rev-parse HEAD)"

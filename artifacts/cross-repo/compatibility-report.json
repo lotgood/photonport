@@ -16,7 +16,7 @@
   "sourceTuple": {
     "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
     "iosCommit": "a2313c0c26c4d98d366381357aabd6cd8e5e6d59",
-    "macCommit": "6d24ddac6c47613844bc0fd02f6fa73245c0f125",
+    "macCommit": "addd2123a3813219ca4d49199b118ad503edc2e8",
     "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
     "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8"
   },
