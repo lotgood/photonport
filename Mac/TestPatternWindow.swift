@@ -10,12 +10,25 @@ enum TestPattern {
     // One window per virtual display — multi-device sessions each get their
     // own pattern, so all pipelines stream at once during measurements.
     private static var windows: [CGDirectDisplayID: NSWindow] = [:]
+    private static var retryTasks: [CGDirectDisplayID: Task<Void, Never>] = [:]
+    private static var invalidatedGeneration: [CGDirectDisplayID: UInt64] = [:]
 
-    static func show(on displayID: CGDirectDisplayID) {
-        hide(on: displayID)
+    static func retryMayShow(on displayID: CGDirectDisplayID, requestedGeneration: UInt64,
+                             screenAvailable: Bool) -> Bool {
+        requestedGeneration > (invalidatedGeneration[displayID] ?? 0) && screenAvailable
+    }
+
+    static func show(on displayID: CGDirectDisplayID, generation: UInt64) {
+        retryTasks.removeValue(forKey: displayID)?.cancel()
+        windows.removeValue(forKey: displayID)?.orderOut(nil)
+        guard generation > (invalidatedGeneration[displayID] ?? 0) else { return }
         // The screen may register a beat after the virtual display appears.
-        Task { @MainActor in
+        retryTasks[displayID] = Task { @MainActor in
+            defer { retryTasks.removeValue(forKey: displayID) }
             for _ in 0..<10 {
+                guard !Task.isCancelled,
+                      retryMayShow(on: displayID, requestedGeneration: generation,
+                                   screenAvailable: true) else { return }
                 if let screen = NSScreen.screens.first(where: {
                     ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
                 }) {
@@ -23,6 +36,11 @@ enum TestPattern {
                                      backing: .buffered, defer: false)
                     w.contentView = NSHostingView(rootView: PatternView())
                     w.setFrame(screen.frame, display: true)
+                    guard !Task.isCancelled,
+                          generation > (invalidatedGeneration[displayID] ?? 0) else {
+                        w.orderOut(nil)
+                        return
+                    }
                     w.orderFrontRegardless()
                     windows[displayID] = w
                     Log.info("test pattern window shown on display \(displayID)")
@@ -34,7 +52,9 @@ enum TestPattern {
         }
     }
 
-    static func hide(on displayID: CGDirectDisplayID) {
+    static func hide(on displayID: CGDirectDisplayID, generation: UInt64) {
+        invalidatedGeneration[displayID] = max(invalidatedGeneration[displayID] ?? 0, generation)
+        retryTasks.removeValue(forKey: displayID)?.cancel()
         windows.removeValue(forKey: displayID)?.orderOut(nil)
     }
 }

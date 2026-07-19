@@ -1,0 +1,485 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/sealed-matrix-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "result",
+    "sourceTuple",
+    "provenance",
+    "records",
+    "mutexBindings",
+    "innerMatrix",
+    "logs",
+    "containment",
+    "inventories",
+    "publicInventories"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "photonport.sealed-cross-repo-matrix.v1"
+    },
+    "result": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    },
+    "sourceTuple": {
+      "$ref": "#/$defs/tuple"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "publicInventories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mac", "ios", "protocol"],
+      "properties": {
+        "mac": {"$ref": "#/$defs/publicInventory"},
+        "ios": {"$ref": "#/$defs/publicInventory"},
+        "protocol": {"$ref": "#/$defs/publicInventory"}
+      }
+    },
+    "records": {
+      "type": "array",
+      "minItems": 23,
+      "maxItems": 23,
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "mutexBindings": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/mutexBinding"
+      }
+    },
+    "innerMatrix": {
+      "$ref": "#/$defs/innerHashFile"
+    },
+    "logs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/logHashFile"
+      }
+    },
+    "containment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profileFormat",
+        "mode",
+        "result",
+        "profile",
+        "profileSha256",
+        "allowedWritePaths",
+        "argvSha256",
+        "environmentSha256",
+        "processTranscript",
+        "processTranscriptSha256"
+      ],
+      "properties": {
+        "profileFormat": {
+          "const": "seatbelt-v1"
+        },
+        "mode": {
+          "enum": [
+            "source-read-only",
+            "test-only"
+          ]
+        },
+        "result": {
+          "enum": [
+            "enforced",
+            "not-production"
+          ]
+        },
+        "profile": {
+          "$ref": "#/$defs/containmentArtifact"
+        },
+        "profileSha256": {
+          "$ref": "#/$defs/hex"
+        },
+        "allowedWritePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "argvSha256": {
+          "$ref": "#/$defs/hex"
+        },
+        "environmentSha256": {
+          "$ref": "#/$defs/hex"
+        },
+        "processTranscript": {
+          "$ref": "#/$defs/containmentArtifact"
+        },
+        "processTranscriptSha256": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "inventories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mac",
+        "ios",
+        "protocol"
+      ],
+      "properties": {
+        "mac": {
+          "$ref": "#/$defs/hex"
+        },
+        "ios": {
+          "$ref": "#/$defs/hex"
+        },
+        "protocol": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "tuple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "macCommit",
+        "iosCommit",
+        "protocolCommit",
+        "compatibilityDigest",
+        "normativeManifestDigest"
+      ],
+      "properties": {
+        "macCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "iosCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "protocolCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "compatibilityDigest": {
+          "$ref": "#/$defs/hex"
+        },
+        "normativeManifestDigest": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "runnerPath",
+        "runnerSha256"
+      ],
+      "properties": {
+        "mode": {
+          "const": "production"
+        },
+        "runnerPath": {
+          "const": "scripts/run-cross-repo-matrix.py"
+        },
+        "runnerSha256": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "pattern": "^((source-active|inventory|lifecycle-allocated|lifecycle-admission|seal-manifest|live-attestation|source-mutex):(mac|ios|protocol)|compatibility-receipt|fresh-compatibility-receipt)$"
+        },
+        "path": {
+          "type": "string",
+          "enum": [
+            "inputs/source-active-mac.json",
+            "inputs/lifecycle-allocated-mac.json",
+            "inputs/lifecycle-admission-mac.json",
+            "inputs/source-active-ios.json",
+            "inputs/lifecycle-allocated-ios.json",
+            "inputs/lifecycle-admission-ios.json",
+            "inputs/source-active-protocol.json",
+            "inputs/lifecycle-allocated-protocol.json",
+            "inputs/lifecycle-admission-protocol.json",
+            "inputs/seal-manifest-mac.json",
+            "inputs/seal-manifest-ios.json",
+            "inputs/seal-manifest-protocol.json",
+            "inputs/live-attestation-mac.json",
+            "inputs/live-attestation-ios.json",
+            "inputs/live-attestation-protocol.json",
+            "inputs/source-mutex-mac.json",
+            "inputs/source-mutex-ios.json",
+            "inputs/source-mutex-protocol.json",
+            "receipts/compatibility-report.json",
+            "receipts/compatibility-report-fresh.json",
+            "inputs/inventory-mac.json",
+            "inputs/inventory-ios.json",
+            "inputs/inventory-protocol.json"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "mutexBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "canonicalPath",
+        "sourceActiveSha256",
+        "sealManifestSha256",
+        "mutexSha256",
+        "lifecycleId",
+        "rootId",
+        "allocation",
+        "authority",
+        "allocationNonce",
+        "mutexNonce",
+        "supervisor",
+        "rootDev",
+        "rootIno",
+        "mutexDev",
+        "mutexIno",
+        "supervisorFdDev",
+        "supervisorFdIno",
+        "closeSecretSha256",
+        "acquisitionTag"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "mac",
+            "ios",
+            "protocol"
+          ]
+        },
+        "canonicalPath": {
+          "const": "source-root.mutex"
+        },
+        "sourceActiveSha256": {
+          "$ref": "#/$defs/hex"
+        },
+        "sealManifestSha256": {
+          "$ref": "#/$defs/hex"
+        },
+        "mutexSha256": {
+          "$ref": "#/$defs/hex"
+        },
+        "lifecycleId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rootId": {
+          "enum": [
+            "mac",
+            "ios",
+            "protocol"
+          ]
+        },
+        "allocation": {
+          "type": "object"
+        },
+        "authority": {
+          "type": "object"
+        },
+        "allocationNonce": {
+          "$ref": "#/$defs/hex"
+        },
+        "mutexNonce": {
+          "$ref": "#/$defs/hex"
+        },
+        "supervisor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rootDev": {
+          "type": "integer"
+        },
+        "rootIno": {
+          "type": "integer"
+        },
+        "mutexDev": {
+          "type": "integer"
+        },
+        "mutexIno": {
+          "type": "integer"
+        },
+        "supervisorFdDev": {
+          "type": "integer"
+        },
+        "supervisorFdIno": {
+          "type": "integer"
+        },
+        "closeSecretSha256": {
+          "$ref": "#/$defs/hex"
+        },
+        "acquisitionTag": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "innerHashFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "inner-matrix.json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "containmentArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^containment/[A-Za-z0-9_.-]+$"},
+        "sha256": {"$ref": "#/$defs/hex"},
+        "size": {"type": "integer", "minimum": 0}
+      }
+    },
+    "matrixBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "kind", "reportSha256", "reportSize", "tupleSha256", "lifecycleTupleSha256", "inventorySha256ByRoot", "fullInventorySha256ByRoot", "inventoryEntryCountsByRoot", "inventoryEntriesSha256ByRoot", "allocatedSha256ByRoot", "sourceActiveSha256ByRoot", "sealSha256ByRoot", "mutexSha256ByRoot", "containmentSha256", "innerMatrixSha256", "logsSha256"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "kind": {"const": "photonport.matrix-binding.v1"},
+        "reportSha256": {"$ref": "#/$defs/hex"},
+        "reportSize": {"type": "integer", "minimum": 0},
+        "tupleSha256": {"$ref": "#/$defs/hex"},
+        "lifecycleTupleSha256": {"$ref": "#/$defs/hex"},
+        "inventorySha256ByRoot": {"$ref": "#/$defs/publicInventoryDigestMap"},
+        "fullInventorySha256ByRoot": {"$ref": "#/$defs/rootDigestMap"},
+        "inventoryEntryCountsByRoot": {"$ref": "#/$defs/publicInventoryCountMap"},
+        "inventoryEntriesSha256ByRoot": {"$ref": "#/$defs/rootDigestMap"},
+        "allocatedSha256ByRoot": {"$ref": "#/$defs/rootDigestMap"},
+        "sourceActiveSha256ByRoot": {"$ref": "#/$defs/rootDigestMap"},
+        "sealSha256ByRoot": {"$ref": "#/$defs/rootDigestMap"},
+        "mutexSha256ByRoot": {"$ref": "#/$defs/rootDigestMap"},
+        "containmentSha256": {"$ref": "#/$defs/hex"},
+        "innerMatrixSha256": {"$ref": "#/$defs/hex"},
+        "logsSha256": {"$ref": "#/$defs/hex"}
+      }
+    },
+    "rootDigestMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mac", "ios", "protocol"],
+      "properties": {
+        "mac": {"$ref": "#/$defs/hex"},
+        "ios": {"$ref": "#/$defs/hex"},
+        "protocol": {"$ref": "#/$defs/hex"}
+      }
+    },
+    "publicInventoryDigestMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mac", "ios", "protocol"],
+      "properties": {"mac": {"$ref": "#/$defs/inventoryDigestSet"}, "ios": {"$ref": "#/$defs/inventoryDigestSet"}, "protocol": {"$ref": "#/$defs/inventoryDigestSet"}}
+    },
+    "publicInventoryCountMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mac", "ios", "protocol"],
+      "properties": {"mac": {"$ref": "#/$defs/inventoryCountSet"}, "ios": {"$ref": "#/$defs/inventoryCountSet"}, "protocol": {"$ref": "#/$defs/inventoryCountSet"}}
+    },
+    "publicInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inventorySha256", "fullInventorySha256", "inventoryEntryCounts", "inventoryEntries"],
+      "properties": {
+        "inventorySha256": {"$ref": "#/$defs/inventoryDigestSet"},
+        "fullInventorySha256": {"$ref": "#/$defs/hex"},
+        "inventoryEntryCounts": {"$ref": "#/$defs/inventoryCountSet"},
+        "inventoryEntries": {"$ref": "#/$defs/inventoryEntriesSet"}
+      }
+    },
+    "inventoryDigestSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical", "generated", "package", "cache"],
+      "properties": {"logical": {"$ref": "#/$defs/hex"}, "generated": {"$ref": "#/$defs/hex"}, "package": {"$ref": "#/$defs/hex"}, "cache": {"$ref": "#/$defs/hex"}}
+    },
+    "inventoryCountSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical", "generated", "package", "cache"],
+      "properties": {"logical": {"type": "integer", "minimum": 0}, "generated": {"type": "integer", "minimum": 0}, "package": {"type": "integer", "minimum": 0}, "cache": {"type": "integer", "minimum": 0}}
+    },
+    "inventoryEntriesSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical", "generated", "package", "cache"],
+      "properties": {"logical": {"$ref": "#/$defs/inventoryEntries"}, "generated": {"$ref": "#/$defs/inventoryEntries"}, "package": {"$ref": "#/$defs/inventoryEntries"}, "cache": {"$ref": "#/$defs/inventoryEntries"}}
+    },
+    "inventoryEntries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size", "dev", "ino"],
+        "properties": {"path": {"type": "string"}, "sha256": {"$ref": "#/$defs/hex"}, "size": {"type": "integer", "minimum": 0}, "dev": {"type": "integer", "minimum": 0}, "ino": {"type": "integer", "minimum": 0}}
+      }
+    },
+    "logHashFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^logs/[A-Za-z0-9_.-]+\\.json$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    }
+  }
+}

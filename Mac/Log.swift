@@ -1,7 +1,7 @@
 import Foundation
 
-/// Appends timestamped lines to /tmp/photonport-mac.log (and stdout) so the
-/// stream can be debugged without a debugger attached.
+/// Appends timestamped Mac-app lines to /tmp/photonport-mac.log (and stdout)
+/// so local stream diagnostics work without a debugger attached.
 enum Log {
     private static let path = "/tmp/photonport-mac.log"
     private static let previousPath = "/tmp/photonport-mac.previous.log"

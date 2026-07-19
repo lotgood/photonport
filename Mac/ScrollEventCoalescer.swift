@@ -45,7 +45,11 @@ final class ScrollEventCoalescer {
     private let lock = NSLock()
     private let callback: Callback?
     private let timerQueue: DispatchQueue
+    private let callbackQueue = DispatchQueue(label: "org.photonport.scroll-coalescer.callback")
+    private let callbackQueueKey = DispatchSpecificKey<Void>()
+    private let beforeCallbackDispatch: (() -> Void)?
     private var timer: DispatchSourceTimer?
+    private var generation: UInt64 = 0
     private var pendingDX = 0.0
     private var pendingDY = 0.0
     private var hasPending = false
@@ -53,17 +57,20 @@ final class ScrollEventCoalescer {
     init() {
         self.callback = nil
         self.timerQueue = DispatchQueue(label: "org.photonport.scroll-coalescer")
+        self.beforeCallbackDispatch = nil
+        callbackQueue.setSpecific(key: callbackQueueKey, value: ())
     }
 
-    init(callback: @escaping Callback, queue: DispatchQueue = DispatchQueue(label: "org.photonport.scroll-coalescer")) {
+    init(callback: @escaping Callback, queue: DispatchQueue = DispatchQueue(label: "org.photonport.scroll-coalescer"),
+         beforeCallbackDispatch: (() -> Void)? = nil) {
         self.callback = callback
         self.timerQueue = queue
-        startInjectionTimer()
+        self.beforeCallbackDispatch = beforeCallbackDispatch
+        callbackQueue.setSpecific(key: callbackQueueKey, value: ())
     }
 
     deinit {
-        timer?.setEventHandler {}
-        timer?.cancel()
+        cancel()
     }
 
     var pendingWorkCount: Int {
@@ -79,8 +86,36 @@ final class ScrollEventCoalescer {
         pendingDX = Self.clampedInjectedDelta(pendingDX + dx)
         pendingDY = Self.clampedInjectedDelta(pendingDY + dy)
         hasPending = true
+        let needsArm = timer == nil && callback != nil
         lock.unlock()
+        if needsArm { armTimer() }
         return true
+    }
+
+    var isArmed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return timer != nil
+    }
+
+    /// Cancels deferred injection and makes teardown/reconnect idempotent.
+    func cancel() {
+        lock.lock()
+        generation &+= 1
+        let activeTimer = timer
+        timer = nil
+        pendingDX = 0
+        pendingDY = 0
+        hasPending = false
+        lock.unlock()
+        activeTimer?.setEventHandler {}
+        activeTimer?.cancel()
+
+        // Every callback is serialized here. Waiting for the queue establishes
+        // a teardown fence without invoking user code while holding `lock`.
+        if DispatchQueue.getSpecific(key: callbackQueueKey) == nil {
+            callbackQueue.sync {}
+        }
     }
 
     func takePending() -> ScrollDelta? {
@@ -94,23 +129,55 @@ final class ScrollEventCoalescer {
         return value
     }
 
-    private func startInjectionTimer() {
-        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
-        timer.schedule(deadline: .now() + ScrollInputPolicy.injectionInterval,
-                       repeating: ScrollInputPolicy.injectionInterval)
-        timer.setEventHandler { [weak self] in
-            self?.drain()
+    private func armTimer() {
+        lock.lock()
+        guard timer == nil, hasPending, callback != nil else {
+            lock.unlock()
+            return
         }
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
+        let timerGeneration = generation
         self.timer = timer
+        lock.unlock()
+
+        timer.schedule(deadline: .now() + ScrollInputPolicy.injectionInterval)
+        timer.setEventHandler { [weak self] in
+            self?.drain(timer, generation: timerGeneration)
+        }
         timer.resume()
     }
 
-    private func drain() {
-        guard let pending = takePending() else { return }
-        guard let callback else {
-            preconditionFailure("timer-backed scroll coalescer requires a callback")
+    private func drain(_ firedTimer: DispatchSourceTimer, generation timerGeneration: UInt64) {
+        lock.lock()
+        guard timer === firedTimer, generation == timerGeneration else {
+            lock.unlock()
+            return
         }
-        callback(pending)
+        timer = nil
+        guard hasPending else {
+            lock.unlock()
+            return
+        }
+        let pending = ScrollDelta(dx: pendingDX, dy: pendingDY)
+        pendingDX = 0
+        pendingDY = 0
+        hasPending = false
+        lock.unlock()
+
+        beforeCallbackDispatch?()
+        callbackQueue.async { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let mayDispatch = self.generation == timerGeneration
+            self.lock.unlock()
+            guard mayDispatch else { return }
+            self.callback?(pending)
+        }
+
+        lock.lock()
+        let needsArm = hasPending && timer == nil
+        lock.unlock()
+        if needsArm { armTimer() }
     }
 
     private static func isAdmissible(_ value: Double) -> Bool {

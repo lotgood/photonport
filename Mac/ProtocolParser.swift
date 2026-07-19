@@ -12,9 +12,12 @@ enum ProtocolParser {
     static let smallControlCap = 65_535
     static let audioDataCap = 262_144
     static let videoDataCap = 16_777_216
+    /// Interim Mac-local bound. G003 canonical vectors remain authoritative for
+    /// the final CR-045 domain; this hook intentionally does not redefine it.
     static let scrollDeltaCap = 120.0
+    static let approvedLocalScrollDeltaBound = scrollDeltaCap
 
-    struct ServerHello {
+    struct ServerHello: Sendable {
         let pixelsWide: Int
         let pixelsHigh: Int
         let scale: Double
@@ -225,9 +228,12 @@ enum ProtocolParser {
             return .touch(phase: phase, x: x, y: y, t: t)
         case "scroll":
             guard Set(object.keys) == ["type", "dx", "dy"] else { throw ParseError.keySet }
-            return .scroll(
-                dx: try finiteDouble(object, "dx", greaterThanOrEqualTo: -scrollDeltaCap, max: scrollDeltaCap),
-                dy: try finiteDouble(object, "dy", greaterThanOrEqualTo: -scrollDeltaCap, max: scrollDeltaCap))
+            let dx = try finiteDouble(object, "dx", greaterThanOrEqualTo: -approvedLocalScrollDeltaBound,
+                                      max: approvedLocalScrollDeltaBound)
+            let dy = try finiteDouble(object, "dy", greaterThanOrEqualTo: -approvedLocalScrollDeltaBound,
+                                      max: approvedLocalScrollDeltaBound)
+            guard acceptsApprovedLocalScrollVector(dx: dx, dy: dy) else { throw ParseError.value }
+            return .scroll(dx: dx, dy: dy)
         case "kf":
             guard Set(object.keys) == ["type"] else { throw ParseError.keySet }
             return .keyframe
@@ -240,6 +246,14 @@ enum ProtocolParser {
         default:
             throw ParseError.value
         }
+    }
+
+    /// Test/integration hook for replaying G003 canonical vectors against the
+    /// currently approved Mac-local safety bound.
+    static func acceptsApprovedLocalScrollVector(dx: Double, dy: Double) -> Bool {
+        dx.isFinite && dy.isFinite
+            && abs(dx) <= approvedLocalScrollDeltaBound
+            && abs(dy) <= approvedLocalScrollDeltaBound
     }
 
     private static func parsePingPong(_ object: [String: Any],

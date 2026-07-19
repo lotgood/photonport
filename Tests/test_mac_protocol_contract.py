@@ -6,7 +6,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_YML = (ROOT / "project.yml").read_text(encoding="utf-8")
-PBXPROJ = (ROOT / "OpenSidecar.xcodeproj" / "project.pbxproj").read_text(encoding="utf-8")
 TARGETS_YML = PROJECT_YML.split("\ntargets:\n", 1)[1]
 PAIRING = (ROOT / "Mac" / "Pairing.swift").read_text(encoding="utf-8")
 SENDER = (ROOT / "Mac" / "MacSender.swift").read_text(encoding="utf-8")
@@ -192,28 +191,11 @@ class MacProtocolContractTests(unittest.TestCase):
         )
         self.assertNotIn("protocolTag", pin)
 
-    def test_mac_resource_phase_contains_exact_protocol_build_pin(self):
-        target = re.search(
-            r"A5ECD29965E529F71D22F06C /\* OpenSidecarMac \*/ = \{(?P<body>.*?)\n\t\t\};",
-            PBXPROJ,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(target, "missing OpenSidecarMac native target")
-        resource_phase_ids = re.findall(
-            r"([A-F0-9]{24}) /\* Resources \*/", target.group("body")
-        )
-        self.assertEqual(len(resource_phase_ids), 1)
-
-        resource_phase = re.search(
-            rf"{resource_phase_ids[0]} /\* Resources \*/ = \{{(?P<body>.*?)\n\t\t\}};",
-            PBXPROJ,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(resource_phase, "missing OpenSidecarMac resources phase")
-        self.assertEqual(
-            re.findall(r"ProtocolBuildPin\.json in Resources", resource_phase.group("body")),
-            ["ProtocolBuildPin.json in Resources"],
-        )
+    def test_mac_target_includes_protocol_build_pin_source_tree(self):
+        mac_target = target_block("OpenSidecarMac")
+        self.assertTrue(PIN_PATH.is_file(), "Mac/ProtocolBuildPin.json must be a production resource")
+        self.assertRegex(mac_target, r"sources:\n\s+- Mac\b")
+        self.assertNotRegex(mac_target, r"sources:\n(?:\s+- .+\n)*\s+- iOS\b")
 
     def test_inbound_frames_validate_before_receive_decode_or_dispatch(self):
         receive_control = swift_private_function(SENDER, "receiveControl")
@@ -252,16 +234,25 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("PairingWire.frame(open, kind: .audioControl)", send_audio_open)
 
     def test_begin_session_uses_canonical_phoneinfo_data_without_redecode(self):
-        phone_info = SENDER[SENDER.index("struct PhoneInfo: Decodable"):SENDER.index("/// How the sender reaches")]
-        self.assertIn("let deviceNonce: Data", phone_info)
-        self.assertIn("let usbSessionSeed: Data?", phone_info)
-        self.assertIn("self.deviceNonce = hello.deviceNonce", phone_info)
-        self.assertIn("self.usbSessionSeed = hello.usbSessionSeed", phone_info)
+        phone_info = SENDER[SENDER.index("struct PhoneInfo"):SENDER.index("/// How the sender reaches")]
+        self.assertNotIn("PhoneInfo: Decodable", phone_info)
+        self.assertNotIn("CodingKeys", phone_info)
+        self.assertNotIn("init(from decoder:", phone_info)
+        self.assertNotIn("JSONDecoder().decode(PhoneInfo.self", SENDER)
+        self.assertIn("init(_ hello: ProtocolParser.ServerHello)", phone_info)
+        self.assertIn("deviceNonce = hello.deviceNonce", phone_info)
+        self.assertIn("usbSessionSeed = hello.usbSessionSeed", phone_info)
 
         begin = swift_private_function(SENDER, "beginSessionHandshake")
         self.assertNotIn("Data(base64Encoded:", begin)
+        self.assertNotIn("JSONDecoder", begin)
+        self.assertNotIn("Mirror(", begin)
         self.assertIn("let deviceNonce = info.deviceNonce", begin)
         self.assertIn("let seed = info.usbSessionSeed", begin)
+
+        control = swift_private_function(SENDER, "handleControl")
+        self.assertIn("case .serverHello(let parsed):", control)
+        self.assertIn("let info = PhoneInfo(parsed)", control)
 
     def test_app_and_harness_compile_the_same_protocol_parser_without_clone(self):
         mac_target = target_block("OpenSidecarMac")

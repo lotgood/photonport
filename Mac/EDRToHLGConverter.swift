@@ -24,6 +24,7 @@ import Metal
 import CoreVideo
 
 final class EDRToHLGConverter {
+    private static let referenceWhiteSceneLinear: Float = 0.26496256
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipeline: MTLComputePipelineState
@@ -31,11 +32,14 @@ final class EDRToHLGConverter {
     private var pool: CVPixelBufferPool?
     private var poolSize = (w: 0, h: 0)
 
-    init?() {
-        guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue() else { return nil }
+    convenience init?() {
+        self.init(deviceFactory: MTLCreateSystemDefaultDevice,
+                  commandQueueFactory: { $0.makeCommandQueue() })
+    }
+
+    init?(device: MTLDevice, commandQueue: MTLCommandQueue) {
         self.device = device
-        self.commandQueue = queue
+        self.commandQueue = commandQueue
 
         // Compiled from source so the project needs no .metal build phase
         // (same pattern as the iOS MetalVideoRenderer).
@@ -60,8 +64,9 @@ final class EDRToHLGConverter {
                 dot(float3(0.6274f, 0.3293f, 0.0433f), lin),
                 dot(float3(0.0691f, 0.9195f, 0.0114f), lin),
                 dot(float3(0.0164f, 0.0880f, 0.8956f), lin));
-            // BT.2408 reference: SDR white (linear 1.0) = 203 of 1000 nits.
-            float3 e = clamp(lin2020 * (203.0f / 1000.0f), 0.0f, 1.0f);
+            // BT.2408 receiver decision: 203-nit SDR white is HLG signal 0.75.
+            // The inverse HLG OETF of 0.75 is 0.26496256 scene-linear.
+            float3 e = clamp(lin2020 * 0.26496256f, 0.0f, 1.0f);
             return float3(hlgOETF(e.r), hlgOETF(e.g), hlgOETF(e.b));
         }
         // One thread per 2x2 block: 4 luma samples + 1 subsampled chroma pair.
@@ -98,7 +103,24 @@ final class EDRToHLGConverter {
         guard let fn = lib.makeFunction(name: "edr2hlg") else { return nil }
         do { pipeline = try device.makeComputePipelineState(function: fn) }
         catch { Log.info("EDR→HLG pipeline failed: \(error)"); return nil }
-        CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
+        guard CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache) == kCVReturnSuccess,
+              textureCache != nil else { return nil }
+    }
+    convenience init?(deviceFactory: () -> MTLDevice?,
+                      commandQueueFactory: (MTLDevice) -> MTLCommandQueue?) {
+        guard let device = deviceFactory(),
+              let commandQueue = commandQueueFactory(device) else { return nil }
+        self.init(device: device, commandQueue: commandQueue)
+    }
+    static func hlgSignal(forLinearSDR value: Float) -> Float {
+        let e = min(max(value * referenceWhiteSceneLinear, 0), 1)
+        if e <= 1 / 12 { return sqrt(3 * e) }
+        return 0.17883277 * log(12 * e - 0.28466892) + 0.55991073
+    }
+
+    static func p010Luma(forHLGSignal value: Float) -> UInt16 {
+        let code = min(max((value * 876).rounded() + 64, 64), 940)
+        return UInt16(code) << 6
     }
 
     private func makePool(width: Int, height: Int) -> CVPixelBufferPool? {
@@ -110,7 +132,9 @@ final class EDRToHLGConverter {
             kCVPixelBufferMetalCompatibilityKey: true,
         ]
         var pool: CVPixelBufferPool?
-        CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
+        guard CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool) == kCVReturnSuccess else {
+            return nil
+        }
         return pool
     }
 
@@ -119,25 +143,28 @@ final class EDRToHLGConverter {
         guard let cache = textureCache else { return nil }
         let width = CVPixelBufferGetWidth(src) & ~1
         let height = CVPixelBufferGetHeight(src) & ~1
+        guard width > 0, height > 0 else { return nil }
         if pool == nil || poolSize.w != width || poolSize.h != height {
             pool = makePool(width: width, height: height)
             poolSize = (width, height)
         }
         guard let pool else { return nil }
         var outBuffer: CVPixelBuffer?
-        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuffer)
-        guard let out = outBuffer else { return nil }
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuffer) == kCVReturnSuccess,
+              let out = outBuffer else { return nil }
 
         var cvSrc: CVMetalTexture?
         var cvLum: CVMetalTexture?
         var cvChr: CVMetalTexture?
-        CVMetalTextureCacheCreateTextureFromImage(
+        guard CVMetalTextureCacheCreateTextureFromImage(
             nil, cache, src, nil, .rgba16Float,
-            CVPixelBufferGetWidth(src), CVPixelBufferGetHeight(src), 0, &cvSrc)
-        CVMetalTextureCacheCreateTextureFromImage(
-            nil, cache, out, nil, .r16Uint, width, height, 0, &cvLum)
-        CVMetalTextureCacheCreateTextureFromImage(
-            nil, cache, out, nil, .rg16Uint, width / 2, height / 2, 1, &cvChr)
+            CVPixelBufferGetWidth(src), CVPixelBufferGetHeight(src), 0, &cvSrc) == kCVReturnSuccess,
+            CVMetalTextureCacheCreateTextureFromImage(
+                nil, cache, out, nil, .r16Uint, width, height, 0, &cvLum) == kCVReturnSuccess,
+            CVMetalTextureCacheCreateTextureFromImage(
+                nil, cache, out, nil, .rg16Uint, width / 2, height / 2, 1, &cvChr) == kCVReturnSuccess else {
+            return nil
+        }
         guard let cvSrc, let cvLum, let cvChr,
               let texSrc = CVMetalTextureGetTexture(cvSrc),
               let texLum = CVMetalTextureGetTexture(cvLum),
@@ -154,6 +181,7 @@ final class EDRToHLGConverter {
         enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
+        guard cmd.status == .completed, cmd.error == nil else { return nil }
 
         // Already HLG/BT.2020 — tag so VideoToolbox passes values through
         // instead of converting a second time.

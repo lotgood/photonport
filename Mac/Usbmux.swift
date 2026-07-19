@@ -49,6 +49,7 @@ enum Usbmux {
         case noDevice          // nothing attached (or the chosen udid is gone)
         case refused           // device present, nothing listening on the port
         case result(Int)       // other usbmuxd result code
+        case timeout
         case protocolError(String)
 
         var errorDescription: String? {
@@ -56,6 +57,7 @@ enum Usbmux {
             case .noDevice: return "no USB device attached"
             case .refused: return "the device is not listening on the port"
             case .result(let code): return "usbmuxd result \(code)"
+            case .timeout: return "usbmuxd request timed out"
             case .protocolError(let detail): return "usbmuxd protocol error: \(detail)"
             }
         }
@@ -64,13 +66,18 @@ enum Usbmux {
     // MARK: - Requests
 
     static func listDevices(queue: DispatchQueue) async throws -> [UsbmuxDevice] {
-        let conn = try await open(queue: queue)
-        defer { conn.cancel() }
-        try await send(["MessageType": "ListDevices"], on: conn)
-        let reply = try await readMessage(on: conn)
-        let entries = reply["DeviceList"] as? [[String: Any]] ?? []
-        return entries.compactMap {
-            device(fromProperties: $0["Properties"] as? [String: Any] ?? [:])
+        try await withBoundedRetry {
+            let conn = try await open(queue: queue)
+            defer { conn.cancel() }
+            try await send(["MessageType": "ListDevices"], on: conn)
+            let reply = try await readMessage(on: conn)
+            guard reply["MessageType"] as? String == "DeviceList",
+                  let entries = reply["DeviceList"] as? [[String: Any]] else {
+                throw Failure.protocolError("unexpected reply to ListDevices")
+            }
+            return entries.compactMap {
+                device(fromProperties: $0["Properties"] as? [String: Any] ?? [:])
+            }
         }
     }
 
@@ -78,29 +85,22 @@ enum Usbmux {
     /// connection is a transparent pipe — usbmuxd is out of the picture.
     static func connect(deviceID: Int, port: UInt16,
                         queue: DispatchQueue) async throws -> NWConnection {
-        let conn = try await open(queue: queue)
-        do {
-            try await send([
-                "MessageType": "Connect",
-                "DeviceID": deviceID,
-                // usbmuxd expects the port in network byte order.
-                "PortNumber": Int((port << 8) | (port >> 8)),
-            ], on: conn)
-            let reply = try await readMessage(on: conn)
-            guard reply["MessageType"] as? String == "Result" else {
-                throw Failure.protocolError("unexpected reply to Connect")
+        try await withBoundedRetry {
+            let conn = try await open(queue: queue)
+            do {
+                try await send([
+                    "MessageType": "Connect",
+                    "DeviceID": deviceID,
+                    // usbmuxd expects the port in network byte order.
+                    "PortNumber": Int((port << 8) | (port >> 8)),
+                ], on: conn)
+                try decodeResult(try await readMessage(on: conn), operation: "Connect")
+                conn.stateUpdateHandler = nil   // the adopter installs its own
+                return conn
+            } catch {
+                conn.cancel()
+                throw error
             }
-            switch reply["Number"] as? Int ?? -1 {
-            case 0: break
-            case 2: throw Failure.noDevice    // BadDevice — unplugged mid-dial
-            case 3: throw Failure.refused     // nothing listening on the port
-            case let code: throw Failure.result(code)
-            }
-            conn.stateUpdateHandler = nil   // the adopter installs its own
-            return conn
-        } catch {
-            conn.cancel()
-            throw error
         }
     }
 
@@ -118,26 +118,32 @@ enum Usbmux {
     /// answers DeviceName without a pairing session. Note lockdown framing
     /// differs from usbmuxd framing: [UInt32 BE length][XML plist].
     static func deviceName(deviceID: Int, queue: DispatchQueue) async throws -> String {
-        let conn = try await connect(deviceID: deviceID, port: lockdownPort, queue: queue)
-        defer { conn.cancel() }
-        let request = try PropertyListSerialization.data(fromPropertyList: [
-            "Request": "GetValue", "Key": "DeviceName", "Label": "PhotonPort",
-        ] as [String: Any], format: .xml, options: 0)
-        var packet = withUnsafeBytes(of: UInt32(request.count).bigEndian) { Data($0) }
-        packet.append(request)
-        try await send(raw: packet, on: conn)
-        let header = try await receive(exactly: 4, on: conn)
-        let length = Int(UInt32(bigEndian: header.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
-        guard length > 0, length < 1 << 16 else {
-            throw Failure.protocolError("bad lockdown reply length \(length)")
+        try await withBoundedRetry {
+            let conn = try await connect(deviceID: deviceID, port: lockdownPort, queue: queue)
+            defer { conn.cancel() }
+            return try await withRequestDeadline {
+                let request = try PropertyListSerialization.data(fromPropertyList: [
+                    "Request": "GetValue", "Key": "DeviceName", "Label": "PhotonPort",
+                ] as [String: Any], format: .xml, options: 0)
+                var packet = withUnsafeBytes(of: UInt32(request.count).bigEndian) { Data($0) }
+                packet.append(request)
+                try await send(raw: packet, on: conn)
+                let header = try await receive(exactly: 4, on: conn)
+                let length = Int(UInt32(bigEndian: header.withUnsafeBytes {
+                    $0.loadUnaligned(as: UInt32.self)
+                }))
+                guard length > 0, length < 1 << 16 else {
+                    throw Failure.protocolError("bad lockdown reply length \(length)")
+                }
+                let body = try await receive(exactly: length, on: conn)
+                guard let plist = try? PropertyListSerialization.propertyList(from: body, format: nil)
+                        as? [String: Any],
+                      let name = plist["Value"] as? String, !name.isEmpty else {
+                    throw Failure.protocolError("lockdown GetValue(DeviceName) not answered")
+                }
+                return name
+            }
         }
-        let body = try await receive(exactly: length, on: conn)
-        guard let plist = try? PropertyListSerialization.propertyList(from: body, format: nil)
-                as? [String: Any],
-              let name = plist["Value"] as? String, !name.isEmpty else {
-            throw Failure.protocolError("lockdown GetValue(DeviceName) not answered")
-        }
-        return name
     }
 
     static func device(fromProperties props: [String: Any]) -> UsbmuxDevice? {
@@ -151,29 +157,110 @@ enum Usbmux {
 
     // MARK: - Socket plumbing
 
+    static let requestTimeout: Duration = .seconds(5)
+    private static let requestAttempts = 2
+    private static let messageHeaderLength = 16
+    private static let messageVersion: UInt32 = 1
+    private static let plistMessageType: UInt32 = 8
+    private static let requestTag: UInt32 = 1
+
+    static func decodeHeader(_ header: Data) throws -> Int {
+        guard header.count == messageHeaderLength else {
+            throw Failure.protocolError("truncated message header")
+        }
+        let fields = header.withUnsafeBytes { bytes in
+            (bytes.loadUnaligned(fromByteOffset: 0, as: UInt32.self).littleEndian,
+             bytes.loadUnaligned(fromByteOffset: 4, as: UInt32.self).littleEndian,
+             bytes.loadUnaligned(fromByteOffset: 8, as: UInt32.self).littleEndian,
+             bytes.loadUnaligned(fromByteOffset: 12, as: UInt32.self).littleEndian)
+        }
+        guard fields.0 >= UInt32(messageHeaderLength), fields.0 < 1 << 20 else {
+            throw Failure.protocolError("bad message length \(fields.0)")
+        }
+        guard fields.1 == messageVersion, fields.2 == plistMessageType,
+              fields.3 == requestTag else {
+            throw Failure.protocolError("unexpected message header")
+        }
+        return Int(fields.0) - messageHeaderLength
+    }
+
+    static func decodeResult(_ reply: [String: Any], operation: String) throws {
+        guard reply["MessageType"] as? String == "Result",
+              let number = reply["Number"] as? Int else {
+            throw Failure.protocolError("unexpected reply to \(operation)")
+        }
+        switch number {
+        case 0: return
+        case 2: throw Failure.noDevice
+        case 3: throw Failure.refused
+        default: throw Failure.result(number)
+        }
+    }
+
+    static func withRequestDeadline<T>(
+        timeout: Duration = requestTimeout,
+        operation: @escaping () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw Failure.timeout
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else {
+                throw Failure.protocolError("request did not start")
+            }
+            return result
+        }
+    }
+
+    static func withBoundedRetry<T>(
+        operation: @escaping () async throws -> T
+    ) async throws -> T {
+        for attempt in 0..<requestAttempts {
+            do {
+                return try await operation()
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch Failure.timeout where attempt + 1 < requestAttempts {
+                continue
+            }
+        }
+        throw Failure.timeout
+    }
     static func open(queue: DispatchQueue) async throws -> NWConnection {
         let conn = NWConnection(to: .unix(path: socketPath), using: .tcp)
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            let gate = UsbmuxContinuationGate()
-            conn.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    guard gate.claim() else { return }
-                    cont.resume()
-                case .failed(let error), .waiting(let error):
-                    // No path updates on a Unix socket — .waiting would hang
-                    // forever, so treat it as failure and let callers retry.
-                    guard gate.claim() else { return }
+        do {
+            try await withRequestDeadline {
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                        let gate = UsbmuxContinuationGate()
+                        conn.stateUpdateHandler = { state in
+                            switch state {
+                            case .ready:
+                                guard gate.claim() else { return }
+                                cont.resume()
+                            case .failed(let error), .waiting(let error):
+                                guard gate.claim() else { return }
+                                conn.cancel()
+                                cont.resume(throwing: error)
+                            default:
+                                break
+                            }
+                        }
+                        conn.start(queue: queue)
+                    }
+                } onCancel: {
                     conn.cancel()
-                    cont.resume(throwing: error)
-                default:
-                    break
                 }
             }
-            conn.start(queue: queue)
+            conn.stateUpdateHandler = nil
+            return conn
+        } catch {
+            conn.cancel()
+            throw error
         }
-        conn.stateUpdateHandler = nil
-        return conn
     }
 
     static func send(_ message: [String: Any], on conn: NWConnection) async throws {
@@ -183,7 +270,7 @@ enum Usbmux {
         let body = try PropertyListSerialization.data(
             fromPropertyList: message, format: .xml, options: 0)
         var packet = Data(capacity: 16 + body.count)
-        for field in [UInt32(16 + body.count), 1, 8, 1] {   // length, version, plist, tag
+        for field in [UInt32(16 + body.count), messageVersion, plistMessageType, requestTag] {
             withUnsafeBytes(of: field.littleEndian) { packet.append(contentsOf: $0) }
         }
         packet.append(body)
@@ -191,37 +278,48 @@ enum Usbmux {
     }
 
     static func readMessage(on conn: NWConnection) async throws -> [String: Any] {
-        let header = try await receive(exactly: 16, on: conn)
-        let total = Int(UInt32(littleEndian: header.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
-        guard total >= 16, total < 1 << 20 else {
-            throw Failure.protocolError("bad message length \(total)")
+        try await withRequestDeadline {
+            let header = try await receive(exactly: messageHeaderLength, on: conn)
+            let bodyLength = try decodeHeader(header)
+            guard bodyLength > 0 else {
+                throw Failure.protocolError("empty plist message")
+            }
+            let body = try await receive(exactly: bodyLength, on: conn)
+            guard let plist = try? PropertyListSerialization.propertyList(from: body, format: nil)
+                    as? [String: Any] else {
+                throw Failure.protocolError("non-dictionary message")
+            }
+            return plist
         }
-        guard total > 16 else { return [:] }
-        let body = try await receive(exactly: total - 16, on: conn)
-        guard let plist = try? PropertyListSerialization.propertyList(from: body, format: nil)
-                as? [String: Any] else {
-            throw Failure.protocolError("non-dictionary message")
-        }
-        return plist
     }
 
     private static func send(raw data: Data, on conn: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            conn.send(content: data, completion: .contentProcessed { error in
-                if let error { cont.resume(throwing: error) } else { cont.resume() }
-            })
+        try await withRequestDeadline {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    conn.send(content: data, completion: .contentProcessed { error in
+                        if let error { cont.resume(throwing: error) } else { cont.resume() }
+                    })
+                }
+            } onCancel: {
+                conn.cancel()
+            }
         }
     }
 
     private static func receive(exactly count: Int, on conn: NWConnection) async throws -> Data {
-        try await withCheckedThrowingContinuation { cont in
-            conn.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, error in
-                if let data, data.count == count {
-                    cont.resume(returning: data)
-                } else {
-                    cont.resume(throwing: error ?? Failure.protocolError("socket closed"))
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { cont in
+                conn.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, error in
+                    if let data, data.count == count {
+                        cont.resume(returning: data)
+                    } else {
+                        cont.resume(throwing: error ?? Failure.protocolError("truncated or closed socket"))
+                    }
                 }
             }
+        } onCancel: {
+            conn.cancel()
         }
     }
 }
@@ -233,6 +331,7 @@ enum Usbmux {
 final class UsbmuxDeviceWatcher {
     private let queue = DispatchQueue(label: "usbmux.watcher")
     private var devices: [Int: UsbmuxDevice] = [:]
+    private var attachmentGenerations: [Int: UInt64] = [:]
     private let onChange: ([UsbmuxDevice]) -> Void
 
     init(onChange: @escaping ([UsbmuxDevice]) -> Void) {
@@ -246,9 +345,9 @@ final class UsbmuxDeviceWatcher {
                 let conn = try await Usbmux.open(queue: queue)
                 defer { conn.cancel() }
                 try await Usbmux.send(["MessageType": "Listen"], on: conn)
+                try Usbmux.decodeResult(
+                    try await Usbmux.readMessage(on: conn), operation: "Listen")
                 while true {
-                    // First reply is the Result for Listen itself; it has no
-                    // Properties so handle() ignores it.
                     handle(try await Usbmux.readMessage(on: conn))
                 }
             } catch {
@@ -267,12 +366,16 @@ final class UsbmuxDeviceWatcher {
         switch message["MessageType"] as? String {
         case "Attached":
             guard let device = Usbmux.device(
-                fromProperties: message["Properties"] as? [String: Any] ?? [:]) else { return }
+                fromProperties: message["Properties"] as? [String: Any] ?? [:]),
+                  device.deviceID == deviceID else { return }
             Log.info("usbmux attached: id-prefix=\(device.udid.prefix(8))")
+            let generation = (attachmentGenerations[deviceID] ?? 0) &+ 1
+            attachmentGenerations[deviceID] = generation
             devices[deviceID] = device
             publish()
-            resolveName(deviceID: deviceID)
+            resolveName(deviceID: deviceID, udid: device.udid, generation: generation)
         case "Detached":
+            attachmentGenerations[deviceID] = (attachmentGenerations[deviceID] ?? 0) &+ 1
             if let device = devices.removeValue(forKey: deviceID) {
                 Log.info("usbmux detached: id-prefix=\(device.udid.prefix(8))")
                 publish()
@@ -282,10 +385,24 @@ final class UsbmuxDeviceWatcher {
         }
     }
 
-    private func resolveName(deviceID: Int) {
+    static func nameMayApply(
+        lookupUDID: String,
+        lookupGeneration: UInt64,
+        device: UsbmuxDevice?,
+        currentGeneration: UInt64?
+    ) -> Bool {
+        device?.udid == lookupUDID && currentGeneration == lookupGeneration
+    }
+
+    private func resolveName(deviceID: Int, udid: String, generation: UInt64) {
         Task {
             guard let name = try? await Usbmux.deviceName(deviceID: deviceID, queue: queue),
-                  devices[deviceID] != nil else { return }
+                  Self.nameMayApply(
+                    lookupUDID: udid,
+                    lookupGeneration: generation,
+                    device: devices[deviceID],
+                    currentGeneration: attachmentGenerations[deviceID]
+                  ) else { return }
             devices[deviceID]?.name = name
             publish()
         }

@@ -96,6 +96,37 @@ struct SessionChannelOpen: Codable, Sendable {
 
 /// Receiver-wide ownership and replay state for one primary stream session.
 /// Keeping this reducer independent from Network.framework makes the busy,
+/// Controller-owned session state. A generation is a lease: asynchronous
+/// completion may mutate a session only while it still owns that generation.
+enum SessionLifecycleState: Equatable, Sendable {
+    case starting(UInt64)
+    case connected(UInt64)
+    case failed(UInt64, String)
+    case stopping(UInt64)
+    case stopped(UInt64)
+
+    var generation: UInt64 {
+        switch self {
+        case .starting(let generation), .connected(let generation),
+             .failed(let generation, _), .stopping(let generation),
+             .stopped(let generation):
+            return generation
+        }
+    }
+
+    static func mayTransition(from state: SessionLifecycleState,
+                              to next: SessionLifecycleState) -> Bool {
+        guard state.generation == next.generation else { return false }
+        switch (state, next) {
+        case (.starting, .connected), (.starting, .failed), (.starting, .stopping),
+             (.connected, .stopping), (.failed, .stopping), (.stopping, .stopped):
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 /// stale-generation, and channel-replay rules deterministic to test.
 struct SessionOwnershipState: Sendable {
     struct Lease: Equatable, Sendable {
@@ -384,6 +415,8 @@ enum SessionCrypto {
         ])
     }
 
+    /// Single audited comparison primitive for fixed-length cryptographic values.
+    /// It rejects differing lengths before scanning every byte without an early exit.
     static func constantTimeEqual(_ lhs: Data, _ rhs: Data) -> Bool {
         guard lhs.count == rhs.count else { return false }
         var difference: UInt8 = 0
@@ -456,8 +489,37 @@ enum PairingWire {
 
 // MARK: - Secret storage (Keychain)
 
+/// Injectable Keychain calls used by `PairingStore`. Keeping all mutation
+/// operations behind this seam lets storage failures be tested without touching
+/// a user's Keychain.
+struct PairingKeychainOperations {
+    var copyMatching: ([String: Any]) -> (OSStatus, Data?)
+    var update: ([String: Any], [String: Any]) -> OSStatus
+    var add: ([String: Any]) -> OSStatus
+    var delete: ([String: Any]) -> OSStatus
+
+    static let live = PairingKeychainOperations(
+        copyMatching: { query in
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            return (status, result as? Data)
+        },
+        update: { query, attributes in
+            SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        },
+        add: { attributes in
+            SecItemAdd(attributes as CFDictionary, nil)
+        },
+        delete: { query in
+            SecItemDelete(query as CFDictionary)
+        })
+}
+
 enum PairingStore {
     private static let keychainService = "dev.hyupji.photonport.pairing"
+    /// Internal test seam. Production always starts with the live Security
+    /// implementation; tests must restore it after replacement.
+    static var keychainOperations = PairingKeychainOperations.live
 
     /// The Mac's stable identity — sent in pair-start and used as the
     /// TLS-PSK identity hint so the receiver picks the right key.
@@ -492,16 +554,16 @@ enum PairingStore {
         // Never let a keychain ACL prompt block this read: it runs during
         // menu-bar popover rendering, and the prompt stealing key focus
         // dismisses the popover. A foreign item (e.g. written by a build with
-        // a different code signature) reads as "not paired"; re-pairing
-        // overwrites it below.
+        // a different code signature) reads as "not paired"; re-pairing then
+        // reports storage failure rather than risking deletion of that key.
         let context = LAContext()
         context.interactionNotAllowed = true
         query[kSecUseAuthenticationContext as String] = context
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
+        let (status, data) = keychainOperations.copyMatching(query)
+        guard status == errSecSuccess else {
             return nil
         }
-        return result as? Data
+        return data
     }
 
     /// Returns false if the key could not be stored — callers MUST NOT treat
@@ -509,31 +571,40 @@ enum PairingStore {
     @discardableResult
     static func setPSK(_ psk: Data, for deviceID: String) -> Bool {
         let base = baseQuery(deviceID)
-        // Update-in-place when present so a failed add can't lose an existing
-        // PSK; only add (with the accessibility policy) when absent.
         let attrs: [String: Any] = [
             kSecValueData as String: psk,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
-        let updateStatus = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+
+        // Updating an existing Keychain item is atomic. In particular, do not
+        // delete-and-add after an update error: that sequence can destroy a
+        // credential that is still usable when either operation fails.
+        let updateStatus = keychainOperations.update(base, attrs)
         if updateStatus == errSecSuccess { return true }
-        if updateStatus != errSecItemNotFound {
-            // A stale item this build can't update (foreign-signature ACL,
-            // corrupt entry) must not brick pairing forever: replace it.
-            Log.info("pairing: keychain update failed (\(updateStatus)) — replacing item")
-            SecItemDelete(base as CFDictionary)
+        guard updateStatus == errSecItemNotFound else {
+            Log.info("pairing: keychain update failed (\(updateStatus)); existing key retained")
+            return false
         }
+
         var add = base
         add.merge(attrs) { _, new in new }
-        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        let addStatus = keychainOperations.add(add)
         if addStatus != errSecSuccess {
             Log.info("pairing: keychain add failed (\(addStatus))")
         }
         return addStatus == errSecSuccess
     }
 
-    static func removePSK(for deviceID: String) {
-        SecItemDelete(baseQuery(deviceID) as CFDictionary)
+    /// Removes a stored credential. A missing item is already unpaired; all
+    /// other Keychain errors are reported to prevent false-success state.
+    @discardableResult
+    static func removePSK(for deviceID: String) -> Bool {
+        let status = keychainOperations.delete(baseQuery(deviceID))
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            Log.info("pairing: keychain delete failed (\(status))")
+            return false
+        }
+        return true
     }
 }
 
@@ -686,7 +757,7 @@ enum PairingClient {
                             let expect = PairingCrypto.commitment(
                                 role: "device", installID: peer.installID, name: peer.name,
                                 pub: devicePub, nonce: deviceNonce)
-                            guard expect == deviceCommit else {
+                            guard SessionCrypto.constantTimeEqual(expect, deviceCommit) else {
                                 return fail(.rejected("Pairing failed — the device's commitment did not match (possible tampering on the network)."))
                             }
                             // The receiver must be the device we targeted.

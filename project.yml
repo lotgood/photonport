@@ -17,6 +17,15 @@ schemes:
     build:
       targets:
         OpenSidecarMac: all
+  OpenSidecarMacAudit:
+    build:
+      targets:
+        OpenSidecarMac: all
+        OpenSidecarMacAudit: [test]
+    test:
+      config: Debug
+      targets:
+        - OpenSidecarMacAudit
   OpenSidecariOS:
     build:
       targets:
@@ -86,6 +95,20 @@ targets:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: dev.hyupji.photonport.mac.debug
           BUNDLE_DISPLAY_NAME: PhotonPort Dev
+  OpenSidecarMacAudit:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - Tests/Audit/Mac
+    dependencies:
+      - target: OpenSidecarMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.hyupji.photonport.mac.audit
+        CODE_SIGNING_ALLOWED: NO
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/PhotonPort.app/Contents/MacOS/PhotonPort"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   OpenSidecariOS:
     type: application
     platform: iOS

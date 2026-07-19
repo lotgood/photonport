@@ -151,6 +151,33 @@ enum ConnectionTarget: Hashable {
     }
 }
 
+enum SessionLifecyclePresentation: Equatable {
+    case connected, starting, failed, stopping, stopped, idle
+
+    init(lifecycle: SessionLifecycleState?) {
+        guard let lifecycle else {
+            self = .idle
+            return
+        }
+        switch lifecycle {
+        case .connected: self = .connected
+        case .starting: self = .starting
+        case .failed: self = .failed
+        case .stopping: self = .stopping
+        case .stopped: self = .stopped
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .connected: return .green
+        case .starting, .stopping: return .orange
+        case .failed: return .red
+        case .stopped, .idle: return .secondary.opacity(0.5)
+        }
+    }
+}
+
 /// One connected (or connecting) device: its target, its sender pipeline,
 /// and the per-device status the UI shows. Each session owns a full pipeline
 /// — virtual display, capture, encoder, socket — so devices are independent:
@@ -160,7 +187,7 @@ final class DeviceSession: ObservableObject, Identifiable {
     nonisolated let id: String
     let target: ConnectionTarget
     let name: String
-    let sender: MacSender
+    let sender: any SenderLifecycleSender
 
     @Published var status = "Starting…"
     @Published var framesSent = 0
@@ -171,18 +198,50 @@ final class DeviceSession: ObservableObject, Identifiable {
     // "iPhone" / "iPad" from hello — naming fallback while (or in case)
     // lockdown hasn't resolved the device's real name.
     var deviceKind: String?
+    @Published private(set) var lifecycle: SessionLifecycleState
 
     var transportLabel: String {
         if case .usb = target { return "USB" }
         return "WiFi"
     }
 
-    init(id: String, target: ConnectionTarget, name: String, sender: MacSender) {
+    init(id: String, target: ConnectionTarget, name: String,
+         sender: any SenderLifecycleSender, generation: UInt64) {
+        self.lifecycle = .starting(generation)
         self.id = id
         self.target = target
         self.name = name
         self.sender = sender
     }
+
+    func transition(to next: SessionLifecycleState) -> Bool {
+        guard SessionLifecycleState.mayTransition(from: lifecycle, to: next) else { return false }
+        lifecycle = next
+        return true
+    }
+}
+
+protocol DiscoveryBrowser: AnyObject {
+    var browseResultsChangedHandler: (@Sendable (Set<NWBrowser.Result>, Set<NWBrowser.Result.Change>) -> Void)? { get set }
+    var stateUpdateHandler: (@Sendable (NWBrowser.State) -> Void)? { get set }
+    func start(queue: DispatchQueue)
+    func cancel()
+}
+
+final class NetworkDiscoveryBrowser: DiscoveryBrowser {
+    private let browser = NWBrowser(
+        for: .bonjourWithTXTRecord(type: "_photonport._tcp", domain: nil),
+        using: .tcp)
+
+    var browseResultsChangedHandler: (@Sendable (Set<NWBrowser.Result>, Set<NWBrowser.Result.Change>) -> Void)? {
+        didSet { browser.browseResultsChangedHandler = browseResultsChangedHandler }
+    }
+    var stateUpdateHandler: (@Sendable (NWBrowser.State) -> Void)? {
+        didSet { browser.stateUpdateHandler = stateUpdateHandler }
+    }
+
+    func start(queue: DispatchQueue) { browser.start(queue: queue) }
+    func cancel() { browser.cancel() }
 }
 
 @MainActor
@@ -207,8 +266,20 @@ final class SenderController: ObservableObject {
     // (debugging escape hatch, e.g. an iproxy or SSH tunnel).
     @Published var host = UserDefaults.standard.string(forKey: "host") ?? "127.0.0.1"
     @Published var port = UserDefaults.standard.string(forKey: "port") ?? "9000"
-    // `-mode mirror` / `-mode extend` launch argument also works.
-    @Published var mode = CaptureMode(rawValue: UserDefaults.standard.string(forKey: "mode") ?? "") ?? .extend
+    // `-mode mirror` / `-mode extend` is an explicit process-lifetime override.
+    // Without it, the controller owns the persisted selection.
+    @Published var mode: CaptureMode {
+        didSet {
+            if let commandLineMode {
+                if mode != commandLineMode { mode = commandLineMode }
+            } else {
+                defaults.set(mode.rawValue, forKey: Self.modeDefaultsKey)
+            }
+        }
+    }
+    private static let modeDefaultsKey = "mode"
+    private let defaults: UserDefaults
+    private let commandLineMode: CaptureMode?
     @Published var quality = StreamQuality(rawValue: UserDefaults.standard.string(forKey: "quality") ?? "") ?? .best {
         didSet { UserDefaults.standard.set(quality.rawValue, forKey: "quality") }
     }
@@ -226,9 +297,33 @@ final class SenderController: ObservableObject {
         didSet { UserDefaults.standard.set(audio, forKey: "audio") }
     }
 
-    var running: Bool { !sessions.isEmpty }
+    /// Global streaming indicators reflect only fully connected pipelines.
+    var running: Bool { connectedSessionCount > 0 }
+    var connectedSessionCount: Int {
+        sessions.count { Self.isConnected($0.lifecycle) }
+    }
+    /// Retained sessions may still be starting, stopping, or expose an error.
+    /// Keep this separate from the connected indicator.
+    var hasSessionActivity: Bool { !sessions.isEmpty }
+    var globalLifecyclePresentation: SessionLifecyclePresentation {
+        let priority: [SessionLifecyclePresentation] = [.connected, .starting, .failed, .stopping]
+        for presentation in priority {
+            if let session = sessions.first(where: {
+                SessionLifecyclePresentation(lifecycle: $0.lifecycle) == presentation
+            }) {
+                return SessionLifecyclePresentation(lifecycle: session.lifecycle)
+            }
+        }
+        return SessionLifecyclePresentation(lifecycle: sessions.first?.lifecycle)
+    }
 
-    private var browser: NWBrowser?
+    private var browser: (any DiscoveryBrowser)?
+    private let makeBrowser: () -> any DiscoveryBrowser
+    private let scheduleRestart: (TimeInterval, @escaping @Sendable () -> Void) -> Void
+    private let senderFactory: any SenderFactory
+    private var nextSessionGeneration: UInt64 = 0
+    private var browserGeneration = 0
+    private var browserRestartAttempt = 0
     private var usbWatcher: UsbmuxDeviceWatcher?
 
     // Connection policy — deliberately simple, no automatic transport
@@ -269,7 +364,23 @@ final class SenderController: ObservableObject {
     private var wifiAutoConnectArmed = false
     private let wifiAutoConnectDeadline = Date().addingTimeInterval(12)
 
-    init() {
+    init(
+        makeBrowser: @escaping () -> any DiscoveryBrowser = { NetworkDiscoveryBrowser() },
+        senderFactory: any SenderFactory = DefaultSenderFactory(),
+        scheduleRestart: @escaping (TimeInterval, @escaping @Sendable () -> Void) -> Void = {
+            delay, work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        },
+        defaults: UserDefaults = .standard,
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) {
+        self.defaults = defaults
+        commandLineMode = Self.captureModeOverride(arguments: arguments)
+        _mode = Published(initialValue: commandLineMode
+            ?? CaptureMode(rawValue: defaults.string(forKey: Self.modeDefaultsKey) ?? "") ?? .extend)
+        self.makeBrowser = makeBrowser
+        self.senderFactory = senderFactory
+        self.scheduleRestart = scheduleRestart
         startBrowsing()
         usbWatcher = UsbmuxDeviceWatcher { [weak self] devices in
             guard let self else { return }
@@ -283,12 +394,39 @@ final class SenderController: ObservableObject {
         }
     }
 
+    static func discoveryRestartDelay(for attempt: Int) -> TimeInterval {
+        min(30, pow(2, Double(min(attempt, 5))))
+    }
+
+    static func discoveryCallbackMayApply(callbackGeneration: Int,
+                                          currentGeneration: Int) -> Bool {
+        callbackGeneration == currentGeneration
+    }
+    static func captureModeOverride(arguments: [String]) -> CaptureMode? {
+        guard let index = arguments.firstIndex(of: "-mode"),
+              arguments.indices.contains(arguments.index(after: index))
+        else { return nil }
+        return CaptureMode(rawValue: arguments[arguments.index(after: index)])
+    }
+    static func isConnected(_ lifecycle: SessionLifecycleState) -> Bool {
+        if case .connected = lifecycle { return true }
+        return false
+    }
+
+
     private func startBrowsing() {
-        // TXT records carry the receiver's install id (new receivers).
-        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_photonport._tcp", domain: nil), using: .tcp)
+        browserGeneration += 1
+        let generation = browserGeneration
+        browser?.cancel()
+
+        let browser = makeBrowser()
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self,
+                      Self.discoveryCallbackMayApply(
+                        callbackGeneration: generation,
+                        currentGeneration: self.browserGeneration)
+                else { return }
                 Log.info("video browse: \(results.count) result(s)")
                 // A device showing its pairing screen advertises a second
                 // instance of this type with pair=1 — that's the pairing
@@ -301,16 +439,52 @@ final class SenderController: ObservableObject {
                 self.autoConnect()
             }
         }
-        browser.stateUpdateHandler = { state in
-            switch state {
-            case .failed(let error): Log.info("video browse: FAILED \(error)")
-            case .waiting(let error): Log.info("video browse: waiting \(error)")
-            case .ready: Log.info("video browse: ready")
-            default: break
+        browser.stateUpdateHandler = { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self,
+                      Self.discoveryCallbackMayApply(
+                        callbackGeneration: generation,
+                        currentGeneration: self.browserGeneration)
+                else { return }
+
+                switch state {
+                case .failed(let error):
+                    Log.info("video browse: FAILED \(error)")
+                    self.restartBrowsing(afterFailureAt: generation)
+                case .waiting(let error): Log.info("video browse: waiting \(error)")
+                case .ready:
+                    self.browserRestartAttempt = 0
+                    Log.info("video browse: ready")
+                default: break
+                }
             }
         }
-        browser.start(queue: .main)
         self.browser = browser
+        browser.start(queue: .main)
+    }
+
+    private func restartBrowsing(afterFailureAt generation: Int) {
+        guard Self.discoveryCallbackMayApply(
+            callbackGeneration: generation, currentGeneration: browserGeneration)
+        else { return }
+
+        browserGeneration += 1 // invalidate callbacks before waiting to restart
+        browser?.cancel()
+        browser = nil
+
+        let delay = Self.discoveryRestartDelay(for: browserRestartAttempt)
+        browserRestartAttempt += 1
+        let restartGeneration = browserGeneration
+        scheduleRestart(delay) { [weak self] in
+            DispatchQueue.main.async {
+                guard let self,
+                      Self.discoveryCallbackMayApply(
+                        callbackGeneration: restartGeneration,
+                        currentGeneration: self.browserGeneration)
+                else { return }
+                self.startBrowsing()
+            }
+        }
     }
 
     // MARK: - Physical-device identity
@@ -324,6 +498,21 @@ final class SenderController: ObservableObject {
         if case .bonjour(let txt) = result.metadata { return txt["id"] }
         return nil
     }
+    /// Stable identifiers are authoritative. Names identify a device only
+    /// when neither transport has supplied a stable identifier.
+    static func samePhysicalDevice(wifiID: String?, usbID: String?,
+                                   wifiName: String?, usbName: String?) -> Bool {
+        switch (wifiID, usbID) {
+        case let (.some(wifiID), .some(usbID)):
+            return wifiID == usbID
+        case (.none, .none):
+            guard let wifiName, let usbName else { return false }
+            return wifiName == usbName
+        default:
+            return false
+        }
+    }
+
 
     // MARK: - Pairing
 
@@ -364,21 +553,16 @@ final class SenderController: ObservableObject {
         connect(to: .wifi(result), userInitiated: true)
     }
 
-    /// Forget a device's pairing (the receiver keeps its side until removed
-    /// there too — reconnecting just requires pairing again).
-    func unpair(_ result: NWBrowser.Result) {
-        guard let deviceID = txtID(of: result) else { return }
-        PairingStore.removePSK(for: deviceID)
-    }
 
     /// Same hardware? Strong match: the service's install id equals the id
     /// this USB device announced in a (past or present) hello. Fallback for
     /// old receivers: lockdown device name equals the service name.
     private func sameDevice(_ result: NWBrowser.Result, _ device: UsbmuxDevice) -> Bool {
-        if let id = txtID(of: result), installIDByUDID[device.udid] == id { return true }
-        if let name = serviceName(of: result), let usbName = device.name,
-           usbName == name { return true }
-        return false
+        Self.samePhysicalDevice(
+            wifiID: txtID(of: result),
+            usbID: installIDByUDID[device.udid],
+            wifiName: serviceName(of: result),
+            usbName: device.name)
     }
 
     /// The session (over either transport) already serving this USB device.
@@ -386,9 +570,11 @@ final class SenderController: ObservableObject {
         if let direct = session(for: "usb:\(device.udid)") { return direct }
         return sessions.first { s in
             guard case .wifi(let result) = s.target else { return false }
-            if let id = installIDByUDID[device.udid],
-               s.deviceID == id || txtID(of: result) == id { return true }
-            return serviceName(of: result) != nil && device.name == serviceName(of: result)
+            return Self.samePhysicalDevice(
+                wifiID: s.deviceID ?? txtID(of: result),
+                usbID: installIDByUDID[device.udid],
+                wifiName: serviceName(of: result),
+                usbName: device.name)
         }
     }
 
@@ -398,11 +584,15 @@ final class SenderController: ObservableObject {
             return direct
         }
         return sessions.first { s in
-            guard case .usb(let udid) = s.target else { return false }
-            if let id = txtID(of: result), s.deviceID == id { return true }
-            guard let udid, let device = usbDevices.first(where: { $0.udid == udid })
+            guard case .usb(let udid) = s.target,
+                  let udid,
+                  let device = usbDevices.first(where: { $0.udid == udid })
             else { return false }
-            return sameDevice(result, device)
+            return Self.samePhysicalDevice(
+                wifiID: txtID(of: result),
+                usbID: s.deviceID ?? installIDByUDID[udid],
+                wifiName: serviceName(of: result),
+                usbName: device.name)
         }
     }
 
@@ -446,21 +636,22 @@ final class SenderController: ObservableObject {
     /// sessions, the transports steal the receiver's single connection from
     /// each other forever. Keep the cable, drop the WiFi twin.
     private func dedupeSessions() {
-        let usbSessionIDs = Set(sessions.compactMap { s -> String? in
-            if case .usb = s.target { return s.deviceID }
-            return nil
-        })
-        let cabledNames = Set(usbDevices.compactMap { device in
-            session(for: "usb:\(device.udid)") != nil ? device.name : nil
-        })
-        for s in sessions {
-            guard case .wifi(let result) = s.target else { continue }
-            let duplicate = (s.deviceID.map { usbSessionIDs.contains($0) } ?? false)
-                || (txtID(of: result).map { usbSessionIDs.contains($0) } ?? false)
-                || (serviceName(of: result).map { cabledNames.contains($0) } ?? false)
+        for wifiSession in sessions {
+            guard case .wifi(let result) = wifiSession.target else { continue }
+            let duplicate = sessions.contains { usbSession in
+                guard case .usb(let udid) = usbSession.target,
+                      let udid
+                else { return false }
+                let device = usbDevices.first { $0.udid == udid }
+                return Self.samePhysicalDevice(
+                    wifiID: wifiSession.deviceID ?? txtID(of: result),
+                    usbID: usbSession.deviceID ?? installIDByUDID[udid],
+                    wifiName: serviceName(of: result),
+                    usbName: device?.name)
+            }
             if duplicate {
-                Log.info("two sessions for one device — keeping the cable, dropping \(s.id)")
-                end(s)
+                Log.info("two sessions for one device — keeping the cable, dropping \(wifiSession.id)")
+                end(wifiSession)
             }
         }
     }
@@ -514,7 +705,10 @@ final class SenderController: ObservableObject {
         if let covering {
             guard userInitiated else { return }
             Log.info("user chose \(id) — taking over from \(covering.id)")
-            end(covering)
+            end(covering) { [weak self] in
+                self?.connect(to: target, userInitiated: true)
+            }
+            return
         }
 
         // Connecting a device clears its "don't auto-connect" state.
@@ -524,14 +718,15 @@ final class SenderController: ObservableObject {
         }
 
         let transport: SenderTransport
-        var wifiPSK: (identity: String, key: Data)?
         switch target {
         case .usb(let udid):
             guard let portNum = UInt16(port) else { return }
             if UserDefaults.standard.object(forKey: "host") != nil, udid == nil {
-                // Manual override: dial a plain TCP endpoint instead of usbmuxd.
+                // Manual overrides are deliberately plaintext, and admission
+                // accepts them only for a local iproxy/SSH loopback tunnel.
                 transport = .tcp(.hostPort(host: NWEndpoint.Host(host),
-                                           port: NWEndpoint.Port(rawValue: portNum)!))
+                                           port: NWEndpoint.Port(rawValue: portNum)!),
+                                 security: .plaintext)
             } else {
                 transport = .usb(udid: udid, port: portNum)
             }
@@ -547,16 +742,18 @@ final class SenderController: ObservableObject {
                 wifiRemembered.remove(id)
                 return
             }
-            wifiPSK = (identity: PairingStore.macInstallID, key: key)
-            transport = .tcp(result.endpoint)
+            transport = .tcp(result.endpoint,
+                             security: .pairedTLS(identity: PairingStore.macInstallID, key: key))
         }
 
         let name = label(for: target)
-        let sender = MacSender(transport: transport, name: name, mode: mode,
-                               quality: quality, hdrAllowed: hdr, audioEnabled: audio,
-                               displaySerial: Self.displaySerial(for: id),
-                               wifiPSK: wifiPSK)
-        let session = DeviceSession(id: id, target: target, name: name, sender: sender)
+        nextSessionGeneration &+= 1
+        let generation = nextSessionGeneration
+        let sender = senderFactory.makeSender(configuration: SenderConfiguration(
+            transport: transport, name: name, mode: mode, quality: quality,
+            hdrAllowed: hdr, audioEnabled: audio, displaySerial: Self.displaySerial(for: id)))
+        let session = DeviceSession(id: id, target: target, name: name, sender: sender,
+                                    generation: generation)
         sender.onStatus = { [weak session] text in
             session?.status = text
             Log.info("status[\(id)]: \(text)")
@@ -583,14 +780,19 @@ final class SenderController: ObservableObject {
             self.end(session)
         }
         sessions.append(session)
-        Task {
+        Task { [weak self, weak session] in
+            guard let self, let session else { return }
             do {
                 try await sender.start()
+                guard self.owns(session, generation: generation) else { return }
+                _ = session.transition(to: .connected(generation))
             } catch is CancellationError {
-                // stopped by the user while waiting — nothing to report
+                // Stopping owns the completion; cancellation is not a failure.
             } catch {
+                guard self.owns(session, generation: generation) else { return }
                 Log.info("sender failed to start: \(error)")
                 session.status = "Failed: \(error.localizedDescription)"
+                _ = session.transition(to: .failed(generation, error.localizedDescription))
             }
         }
     }
@@ -608,18 +810,35 @@ final class SenderController: ObservableObject {
         sessions.forEach { disconnect($0) }
     }
 
-    private func end(_ session: DeviceSession) {
-        session.sender.stop()
-        sessions.removeAll { $0.id == session.id }
+    private func owns(_ session: DeviceSession, generation: UInt64) -> Bool {
+        self.session(for: session.id) === session && session.lifecycle.generation == generation
+    }
+
+    private func end(_ session: DeviceSession, completion: (() -> Void)? = nil) {
+        let generation = session.lifecycle.generation
+        guard session.transition(to: .stopping(generation)) else { return }
+        Task { [weak self, weak session] in
+            guard let session else { return }
+            await session.sender.stop()
+            guard let self, self.owns(session, generation: generation) else { return }
+            guard session.transition(to: .stopped(generation)) else { return }
+            self.sessions.removeAll { $0 === session }
+            completion?()
+        }
     }
 
     /// Mode/quality apply per-pipeline at construction — rebuild every session.
     func restartAll() {
-        guard running else { return }
+        guard hasSessionActivity else { return }
         let targets = sessions.map(\.target)
-        sessions.forEach { $0.sender.stop() }
-        sessions.removeAll()
-        targets.forEach { connect(to: $0) }
+        var remaining = targets.count
+        for session in sessions {
+            end(session) { [weak self] in
+                remaining -= 1
+                guard remaining == 0, let self else { return }
+                targets.forEach { self.connect(to: $0) }
+            }
+        }
     }
 
     // MARK: - Device list (one row per physical device)
@@ -696,22 +915,61 @@ final class SenderController: ObservableObject {
 
 /// Polls the permission states the app depends on so the UI can surface
 /// exactly what's missing instead of failing silently.
+protocol PermissionMonitorObservation: AnyObject {
+    func cancel()
+}
+
+private final class TimerPermissionMonitorObservation: PermissionMonitorObservation {
+    private var timer: Timer?
+
+    init(interval: TimeInterval, refresh: @escaping () -> Void) {
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in refresh() }
+    }
+
+    func cancel() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
+
 @MainActor
 final class PermissionMonitor: ObservableObject {
     @Published var screenRecording = false
     @Published var accessibility = false
-    private var timer: Timer?
+    private let readPermissionState: () -> (screenRecording: Bool, accessibility: Bool)
+    private var observation: (any PermissionMonitorObservation)?
+    private var isObserving = true
 
-    init() {
+    init(
+        readPermissionState: @escaping () -> (screenRecording: Bool, accessibility: Bool) = {
+            (CGPreflightScreenCaptureAccess(), AXIsProcessTrusted())
+        },
+        scheduleRefresh: @escaping (TimeInterval, @escaping () -> Void) -> any PermissionMonitorObservation = {
+            interval, refresh in TimerPermissionMonitorObservation(interval: interval, refresh: refresh)
+        }
+    ) {
+        self.readPermissionState = readPermissionState
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-            Task { @MainActor in self.refresh() }
+        observation = scheduleRefresh(3) { [weak self] in
+            guard let self, self.isObserving else { return }
+            self.refresh()
         }
     }
 
+    deinit {
+        observation?.cancel()
+    }
+
+    func stop() {
+        isObserving = false
+        observation?.cancel()
+        observation = nil
+    }
+
     func refresh() {
-        screenRecording = CGPreflightScreenCaptureAccess()
-        accessibility = AXIsProcessTrusted()
+        let state = readPermissionState()
+        screenRecording = state.screenRecording
+        accessibility = state.accessibility
     }
 
     /// Fire the system permission dialog on demand. macOS only shows each
@@ -757,7 +1015,7 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if controller.running {
+                if controller.hasSessionActivity {
                     Button("Disconnect All") { controller.disconnectAll() }
                         .controlSize(.large)
                 }
@@ -926,11 +1184,11 @@ struct ContentView: View {
             // Status bar
             HStack(spacing: 8) {
                 Circle()
-                    .fill(controller.running ? .green : .secondary.opacity(0.5))
+                    .fill(controller.globalLifecyclePresentation.color)
                     .frame(width: 9, height: 9)
                 Text(controller.running
-                     ? "\(controller.sessions.count) device\(controller.sessions.count == 1 ? "" : "s") connected"
-                     : "Idle")
+                     ? "\(controller.connectedSessionCount) device\(controller.connectedSessionCount == 1 ? "" : "s") connected"
+                     : controller.hasSessionActivity ? "No connected devices" : "Idle")
                     .font(.callout)
                     .lineLimit(1)
                 Spacer()
@@ -1099,21 +1357,18 @@ struct CheckForUpdatesView: View {
     }
 }
 
-/// One connected device: live status, throughput, reconnect + disconnect.
+/// One device session: live descriptive status, throughput, reconnect + disconnect.
 struct SessionRow: View {
     let title: String
     @ObservedObject var session: DeviceSession
     let controller: SenderController
 
+    var lifecyclePresentation: SessionLifecyclePresentation {
+        SessionLifecyclePresentation(lifecycle: session.lifecycle)
+    }
+
     private var statusColor: Color {
-        if session.status.hasPrefix("Extending") || session.status.hasPrefix("Mirroring")
-            || session.status.hasPrefix("Connected") {
-            return .green
-        }
-        if session.status.hasPrefix("Failed") || session.status.contains("stopped") {
-            return .red
-        }
-        return .orange
+        lifecyclePresentation.color
     }
 
     var body: some View {
