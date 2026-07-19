@@ -1,149 +1,269 @@
 #!/usr/bin/env python3
-"""Validate R01-06 runtime rollback evidence; this never performs device actions."""
+"""Validate typed, immutable R01 runtime rollback evidence."""
 from __future__ import annotations
-import argparse, hashlib, json, os, stat, subprocess, sys, tempfile
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-HEX = set("0123456789abcdef")
-TUPLE_FIELDS = ("macCommit", "iosCommit", "protocolCommit", "compatibilityDigest", "normativeManifestDigest")
-ARTIFACT_FIELDS = ("path", "sha256", "size")
-STATUS = {"passed", "failed", "blocked", "not_run"}
+MAX_BYTES = 1_048_576
+HEX40 = re.compile(r"^[0-9a-f]{40}$")
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
+ARTIFACT_TYPES = (
+    "runtime-rollback-command", "watchdog-observation",
+    "strict-parser-observation", "ping-observation",
+)
+EXPECTED = {
+    "runtime-rollback-command": ("command", "runtime-rollback", "completed"),
+    "watchdog-observation": ("observation", "watchdog", "stopped"),
+    "strict-parser-observation": ("observation", "strict-parser", "rejected"),
+    "ping-observation": ("observation", "ping", "received"),
+}
 
-class EvidenceError(Exception): pass
+class EvidenceError(Exception):
+    pass
 
-def digest(data): return hashlib.sha256(data).hexdigest()
-def exact(value, fields, label):
-    if not isinstance(value, dict) or set(value) != set(fields): raise EvidenceError(label + " fields are not exact")
-def sha256(value): return isinstance(value, str) and len(value) == 64 and set(value) <= HEX
-def commit(value): return isinstance(value, str) and len(value) == 40 and set(value) <= HEX
-def safe_relative(value):
-    return isinstance(value, str) and value and not Path(value).is_absolute() and all(part not in ("", ".", "..") for part in Path(value).parts)
+def reject_duplicates(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise EvidenceError("duplicate JSON key: " + key)
+        value[key] = item
+    return value
+
+def exact(value, keys, label):
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise EvidenceError(label + " fields are not exact")
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
 def parse_json(data, label):
-    def unique(items):
-        out = {}
-        for key, value in items:
-            if key in out: raise ValueError("duplicate key " + key)
-            out[key] = value
-        return out
-    try: return json.loads(data.decode("utf-8"), object_pairs_hook=unique)
-    except (UnicodeDecodeError, ValueError) as exc: raise EvidenceError(label + " is malformed: " + str(exc))
-def open_directory(path, label):
     try:
-        before = Path(path).lstat()
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=reject_duplicates)
+    except (UnicodeDecodeError, json.JSONDecodeError, EvidenceError) as exc:
+        raise EvidenceError(label + " is not valid UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise EvidenceError(label + " must be a JSON object")
+    return value
+
+def read_path(path, label):
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise EvidenceError(label + " is unavailable: " + str(exc)) from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_BYTES:
+            raise EvidenceError(label + " must be a bounded regular file")
+        data = os.read(fd, info.st_size + 1)
+        if len(data) != info.st_size or os.fstat(fd).st_size != info.st_size:
+            raise EvidenceError(label + " changed while reading")
+        return data
+    finally:
+        os.close(fd)
+
+def open_root(path):
+    root = Path(path)
+    try:
+        before = root.lstat()
+        fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
         after = os.fstat(fd)
-    except OSError as exc: raise EvidenceError(label + " is unavailable: " + str(exc))
+    except OSError as exc:
+        raise EvidenceError("approved evidence root is unavailable: " + str(exc)) from exc
     if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode) or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
-        os.close(fd); raise EvidenceError(label + " is unstable")
+        os.close(fd)
+        raise EvidenceError("approved evidence root must be a stable non-symlink directory")
     return fd
-def read_at(rootfd, relative, label):
-    if not safe_relative(relative): raise EvidenceError(label + " path is invalid")
+
+def read_rooted(rootfd, relative, label):
+    path = Path(relative)
+    if (not isinstance(relative, str) or not relative or path.is_absolute() or
+            any(part in ("", ".", "..") for part in path.parts)):
+        raise EvidenceError(label + " path is not relative to approved evidence root")
     fd = os.dup(rootfd)
     try:
-        for part in Path(relative).parts[:-1]:
-            child = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
-            os.close(fd); fd = child
-        leaf = os.open(Path(relative).name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+        for component in path.parts[:-1]:
+            nextfd = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+            os.close(fd)
+            fd = nextfd
+        leaf = os.open(path.parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
         try:
             info = os.fstat(leaf)
-            if not stat.S_ISREG(info.st_mode): raise EvidenceError(label + " is not a regular file")
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_BYTES:
+                raise EvidenceError(label + " is not a bounded regular evidence file")
             data = os.read(leaf, info.st_size + 1)
-            if len(data) != info.st_size or os.fstat(leaf).st_size != info.st_size: raise EvidenceError(label + " changed while reading")
+            if len(data) != info.st_size or os.fstat(leaf).st_size != info.st_size:
+                raise EvidenceError(label + " changed while reading")
             return data
-        finally: os.close(leaf)
-    except OSError as exc: raise EvidenceError(label + " is unavailable: " + str(exc))
-    finally: os.close(fd)
-def relative_to(root, path, label):
-    try: return Path(path).resolve(strict=True).relative_to(root.resolve(strict=True)).as_posix()
-    except (OSError, ValueError): raise EvidenceError(label + " is outside evidence root")
-def artifact(value, rootfd, label):
-    exact(value, ARTIFACT_FIELDS, label)
-    if not safe_relative(value["path"]) or not sha256(value["sha256"]) or not isinstance(value["size"], int) or isinstance(value["size"], bool) or value["size"] < 0: raise EvidenceError(label + " is invalid")
-    data = read_at(rootfd, value["path"], label)
-    if len(data) != value["size"] or digest(data) != value["sha256"]: raise EvidenceError(label + " hash mismatch")
+        finally:
+            os.close(leaf)
+    except OSError as exc:
+        raise EvidenceError(label + " is unavailable: " + str(exc)) from exc
+    finally:
+        os.close(fd)
+
 def validate_tuple(value):
-    exact(value, TUPLE_FIELDS, "source tuple")
-    if not all(commit(value[key]) for key in TUPLE_FIELDS[:3]) or not all(sha256(value[key]) for key in TUPLE_FIELDS[3:]): raise EvidenceError("source tuple is invalid")
-def git_value(root, args, label):
-    try: return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, text=True).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc: raise EvidenceError(label + " is unavailable: " + str(exc))
-def validate_source_root(path, expected, label):
-    fd = open_directory(path, label)
-    os.close(fd)
-    root = Path(path).resolve(strict=True)
-    if git_value(root, ["rev-parse", "HEAD"], label + " head") != expected: raise EvidenceError(label + " commit does not match tuple")
-    if git_value(root, ["status", "--porcelain"], label + " status"): raise EvidenceError(label + " is dirty")
-def validate_request(request, rootfd, evidence_dir):
-    exact(request, ("schemaVersion", "kind", "sourceTuple", "host", "device", "build", "install", "observations"), "request")
-    if request["schemaVersion"] != 1 or request["kind"] != "photonport.r01-runtime-rollback-request.v1": raise EvidenceError("request version or kind is invalid")
-    validate_tuple(request["sourceTuple"])
-    for name, family in (("host", "macOS"), ("device", "iOS")):
-        value = request[name]; exact(value, ("family", "majorVersion", "identitySha256"), name)
-        if value["family"] != family or value["majorVersion"] != 27 or not sha256(value["identitySha256"]): raise EvidenceError(name + " is not an OS27 provenance record")
-    for name in ("build", "install"):
-        artifact(request[name], rootfd, name)
-        if Path(request[name]["path"]).parts[:len(Path(evidence_dir).parts)] != Path(evidence_dir).parts: raise EvidenceError(name + " is outside evidence directory")
-    observations = request["observations"]
-    if not isinstance(observations, list): raise EvidenceError("observations are invalid")
-    seen = set(); validated = []
-    for observation in observations:
-        exact(observation, ("transport", "observer", "recordedAt", "watchdogLog", "strictParserLog", "ping"), "observation")
-        transport = observation["transport"]
-        if transport not in {"usb", "wifi"} or transport in seen or not isinstance(observation["observer"], str) or not observation["observer"] or not isinstance(observation["recordedAt"], str) or not observation["recordedAt"]: raise EvidenceError("observation provenance is invalid")
-        exact(observation["ping"], ("deviceIdentitySha256", "result"), "ping")
-        if observation["ping"]["deviceIdentitySha256"] != request["device"]["identitySha256"] or observation["ping"]["result"] != "id-bearing-ping-passed": raise EvidenceError("ping does not bind the declared device identity")
-        for field, label in (("watchdogLog", "watchdog log"), ("strictParserLog", "strict parser log")):
-            artifact(observation[field], rootfd, transport + " " + label)
-            if Path(observation[field]["path"]).parts[:len(Path(evidence_dir).parts)] != Path(evidence_dir).parts: raise EvidenceError(transport + " " + label + " is outside evidence directory")
-        seen.add(transport); validated.append(observation)
-    return validated
-def atomic_write(root, output, value):
-    output_path = Path(output)
-    if not output_path.name or output_path.name in (".", ".."): raise EvidenceError("output path is invalid")
+    exact(value, ("macCommit", "iosCommit", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"), "sourceTuple")
+    for name in ("macCommit", "iosCommit", "protocolCommit"):
+        if not isinstance(value[name], str) or not HEX40.fullmatch(value[name]):
+            raise EvidenceError("sourceTuple " + name + " is invalid")
+    for name in ("compatibilityDigest", "normativeManifestDigest"):
+        if not isinstance(value[name], str) or not HEX64.fullmatch(value[name]):
+            raise EvidenceError("sourceTuple " + name + " is invalid")
+
+def validate_binding(value, request):
+    if value != request:
+        raise EvidenceError("record does not exactly bind the requested runtime tuple, device, and transport")
+
+def validate_timestamp(value):
+    if not isinstance(value, str) or not ISO_UTC.fullmatch(value):
+        raise EvidenceError("record observedAt is not a UTC ISO-8601 timestamp")
     try:
-        parent = output_path.parent.resolve(strict=True)
-        parent.relative_to(root.resolve(strict=True))
-    except (OSError, ValueError): raise EvidenceError("output is outside evidence root")
-    pfd = open_directory(parent, "output directory")
-    try:
-        name = output_path.name
-        try:
-            info = os.stat(name, dir_fd=pfd, follow_symlinks=False)
-            if stat.S_ISLNK(info.st_mode): raise EvidenceError("output is a symlink")
-        except FileNotFoundError: pass
-        raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
-        tmp = ".r01-runtime-rollback-" + next(tempfile._get_candidate_names())
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=pfd)
-        try:
-            os.write(fd, raw); os.fsync(fd)
-        finally: os.close(fd)
-        os.replace(tmp, name, src_dir_fd=pfd, dst_dir_fd=pfd); os.fsync(pfd)
-    finally: os.close(pfd)
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise EvidenceError("record observedAt is not a valid ISO-8601 timestamp") from exc
+    if parsed.tzinfo != timezone.utc:
+        raise EvidenceError("record observedAt is not UTC")
+
+def validate_request(value):
+    exact(value, ("schemaVersion", "kind", "status", "sourceTuple", "device", "transport", "artifacts"), "request")
+    if value["schemaVersion"] != 1 or value["kind"] != "photonport.r01-runtime-rollback-request.v1":
+        raise EvidenceError("unsupported request schema")
+    if value["status"] not in ("executed", "not_run"):
+        raise EvidenceError("request status is invalid")
+    validate_tuple(value["sourceTuple"])
+    exact(value["device"], ("id",), "device")
+    exact(value["transport"], ("kind", "id"), "transport")
+    if not isinstance(value["device"]["id"], str) or not IDENT.fullmatch(value["device"]["id"]):
+        raise EvidenceError("device id is invalid")
+    if value["transport"]["kind"] not in ("usb", "wifi") or not isinstance(value["transport"]["id"], str) or not IDENT.fullmatch(value["transport"]["id"]):
+        raise EvidenceError("transport is invalid")
+    artifacts = value["artifacts"]
+    if value["status"] == "not_run":
+        if artifacts != []:
+            raise EvidenceError("not_run request must not claim executable proof artifacts")
+        return {}
+    if not isinstance(artifacts, list) or len(artifacts) != len(ARTIFACT_TYPES):
+        raise EvidenceError("executed request must provide exactly four typed artifacts")
+    indexed = {}
+    for artifact in artifacts:
+        exact(artifact, ("artifactType", "path", "sha256", "size"), "artifact descriptor")
+        kind = artifact["artifactType"]
+        if kind not in ARTIFACT_TYPES or kind in indexed:
+            raise EvidenceError("artifact types must be unique and complete")
+        if (not isinstance(artifact["path"], str) or not artifact["path"] or
+                not isinstance(artifact["sha256"], str) or not HEX64.fullmatch(artifact["sha256"]) or
+                not isinstance(artifact["size"], int) or isinstance(artifact["size"], bool) or artifact["size"] < 0):
+            raise EvidenceError("artifact descriptor is malformed")
+        indexed[kind] = artifact
+    if set(indexed) != set(ARTIFACT_TYPES):
+        raise EvidenceError("request is missing a required artifact type")
+    return indexed
+
+def validate_observation_proof(raw, descriptor, request, expected_kind):
+    if sha256(raw) != descriptor["sha256"]:
+        raise EvidenceError(expected_kind + " hash mismatch")
+    record = parse_json(raw, expected_kind)
+    exact(record, ("schemaVersion", "kind", "sourceTuple", "transport", "deviceIdentitySha256", "command", "outcome"), expected_kind + " record")
+    if record["schemaVersion"] != 1 or record["kind"] != expected_kind or record["sourceTuple"] != request["sourceTuple"]:
+        raise EvidenceError(expected_kind + " record is not bound to the requested schema, kind, and tuple")
+    exact(record["transport"], ("kind", "id"), expected_kind + " transport")
+    if record["transport"] != request["transport"]:
+        raise EvidenceError(expected_kind + " record transport does not match the request")
+    device_identity = request["device"].get("identitySha256", request["device"].get("id"))
+    if record["deviceIdentitySha256"] != device_identity:
+        raise EvidenceError(expected_kind + " record device identity does not match the request")
+    exact(record["command"], ("exitCode",), expected_kind + " command")
+    if record["command"]["exitCode"] != 0 or record["outcome"] != "passed":
+        raise EvidenceError(expected_kind + " record is not a successful typed observation")
+def validate_record(raw, descriptor, request):
+    if descriptor["artifactType"] in ("watchdog-observation", "strict-parser-observation"):
+        validate_observation_proof(raw, descriptor, request, descriptor["artifactType"])
+        return
+    if sha256(raw) != descriptor["sha256"]:
+        raise EvidenceError(descriptor["artifactType"] + " hash mismatch")
+    record = parse_json(raw, descriptor["artifactType"])
+    kind = descriptor["artifactType"]
+    record_type, operation, outcome = EXPECTED[kind]
+    required = {"schemaVersion", "kind", "recordType", "operation", "observedAt", "sourceTuple", "device", "transport", "exitStatus", "outcome"}
+    if kind == "ping-observation":
+        required.add("ping")
+    exact(record, required, kind + " record")
+    if (record["schemaVersion"] != 1 or record["kind"] != "photonport.r01-runtime-observation.v1" or
+            record["recordType"] != record_type or record["operation"] != operation or record["outcome"] != outcome or
+            record["exitStatus"] != 0):
+        raise EvidenceError(kind + " record is not a successful typed observation")
+    validate_timestamp(record["observedAt"])
+    validate_binding(record["sourceTuple"], request["sourceTuple"])
+    validate_binding(record["device"], request["device"])
+    validate_binding(record["transport"], request["transport"])
+    if kind == "ping-observation":
+        exact(record["ping"], ("requestId", "responseId", "deviceId"), "ping proof")
+        ping = record["ping"]
+        if (any(not isinstance(ping[key], str) or not IDENT.fullmatch(ping[key]) for key in ping) or
+                ping["requestId"] != ping["responseId"] or ping["deviceId"] != request["device"]["id"]):
+            raise EvidenceError("ping proof is not an id-bearing response for the requested device")
+
+def result(request, status, artifacts, failures):
+    return {"schemaVersion": 1, "kind": "photonport.r01-runtime-rollback-result.v1", "status": status,
+            "sourceTuple": request["sourceTuple"], "device": request["device"], "transport": request["transport"],
+            "artifacts": artifacts, "failures": sorted(set(failures))}
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--request", required=True); parser.add_argument("--evidence-root", required=True); parser.add_argument("--evidence-dir", required=True)
-    parser.add_argument("--mac-root", required=True); parser.add_argument("--ios-root", required=True); parser.add_argument("--protocol-root", required=True); parser.add_argument("--output", required=True)
+    parser.add_argument("--request", required=True)
+    parser.add_argument("--evidence-root", required=True)
+    parser.add_argument("--evidence-dir")
+    parser.add_argument("--mac-root")
+    parser.add_argument("--ios-root")
+    parser.add_argument("--protocol-root")
+    parser.add_argument("--result", "--output", dest="result", required=True)
     args = parser.parse_args()
     try:
-        root = Path(args.evidence_root).resolve(strict=True); rootfd = open_directory(root, "evidence root")
-        try:
-            request_path = relative_to(root, args.request, "request")
-            evidence_dir = relative_to(root, args.evidence_dir, "evidence directory")
-            if not safe_relative(evidence_dir): raise EvidenceError("evidence directory path is invalid")
-            request_raw = read_at(rootfd, request_path, "request")
-            request = parse_json(request_raw, "request")
-            observations = validate_request(request, rootfd, evidence_dir)
-            validate_source_root(args.mac_root, request["sourceTuple"]["macCommit"], "mac root")
-            validate_source_root(args.ios_root, request["sourceTuple"]["iosCommit"], "ios root")
-            validate_source_root(args.protocol_root, request["sourceTuple"]["protocolCommit"], "protocol root")
-            # A valid request may intentionally omit external human observations; CI does not infer them.
-            supplied = {item["transport"] for item in observations}
-            status = "passed" if supplied == {"usb", "wifi"} else "blocked"
-            result_observations = [{"transport": item["transport"], "status": "passed", "watchdogLog": item["watchdogLog"], "strictParserLog": item["strictParserLog"], "ping": item["ping"]} for item in observations]
-            result = {"schemaVersion": 1, "kind": "photonport.r01-runtime-rollback-result.v1", "status": status, "sourceTuple": request["sourceTuple"], "request": {"path": request_path, "sha256": digest(request_raw), "size": len(request_raw)}, "observations": result_observations, "retirementEligible": False, "deletionAuthorized": False}
-        finally: os.close(rootfd)
-        atomic_write(root, args.output, result)
-        print(json.dumps({"status": result["status"], "retirementEligible": False, "deletionAuthorized": False}, sort_keys=True)); return 0
+        request = parse_json(read_path(args.request, "request"), "request")
+        descriptors = validate_request(request)
     except EvidenceError as exc:
-        print("validate-r01-runtime-rollback.py: FAIL_CLOSED: " + str(exc), file=sys.stderr); return 2
-if __name__ == "__main__": sys.exit(main())
+        raise SystemExit("FAIL_CLOSED: " + str(exc))
+    if request["status"] == "not_run":
+        output = result(request, "blocked", [], ["runtime observation explicitly not_run"])
+        encoded = json.dumps(output, sort_keys=True, separators=(",", ":")) + "\n"
+        Path(args.result).write_text(encoded, encoding="utf-8")
+        print(encoded, end="")
+        return 0
+    artifacts, failures = [], []
+    try:
+        rootfd = open_root(args.evidence_root)
+    except EvidenceError as exc:
+        rootfd = None
+        failures.append(str(exc))
+    if rootfd is not None:
+        try:
+            for artifact_type in ARTIFACT_TYPES:
+                descriptor = descriptors[artifact_type]
+                try:
+                    raw = read_rooted(rootfd, descriptor["path"], artifact_type)
+                    if len(raw) != descriptor["size"]:
+                        raise EvidenceError(artifact_type + " durable bytes do not match descriptor size")
+                    validate_record(raw, descriptor, request)
+                    artifacts.append(dict(descriptor))
+                except EvidenceError as exc:
+                    failures.append(str(exc))
+        finally:
+            os.close(rootfd)
+    output = result(request, "passed" if not failures else "blocked", artifacts, failures)
+    encoded = json.dumps(output, sort_keys=True, separators=(",", ":")) + "\n"
+    Path(args.result).write_text(encoded, encoding="utf-8")
+    print(encoded, end="")
+    return 0 if not failures else 1
+
+if __name__ == "__main__":
+    sys.exit(main())

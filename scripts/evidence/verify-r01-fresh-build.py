@@ -1,133 +1,214 @@
 #!/usr/bin/env python3
-"""Fail-closed verifier for R01 fresh iOS build evidence; it grants no release authority."""
-from __future__ import annotations
-import argparse, hashlib, json, os, stat, subprocess, sys, tempfile
+"""Fail-closed verifier for R01 fresh Xcode generation/build evidence."""
+import argparse, hashlib, json, os, plistlib, stat, subprocess, sys
 from pathlib import Path
 
 HEX = set("0123456789abcdef")
-STATUSES = {"passed", "failed", "blocked", "not_run"}
-TUPLE_KEYS = ("macCommit", "iosCommit", "protocolCommit", "compatibilityDigest", "normativeManifestDigest")
+IDS = ("mac", "ios", "protocol")
+TUPLE = ("macCommit", "iosCommit", "protocolCommit", "compatibilityDigest", "normativeManifestDigest")
 
-class EvidenceError(Exception): pass
-
-def digest(data: bytes) -> str: return hashlib.sha256(data).hexdigest()
-def canonical(value: object) -> bytes: return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-def exact(value: object, fields: set[str], label: str) -> dict:
-    if not isinstance(value, dict) or set(value) != fields: raise EvidenceError(f"{label} fields are not exact")
+def die(message): raise SystemExit("FAIL_CLOSED: " + message)
+def canonical(value): return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def sha(data): return hashlib.sha256(data).hexdigest()
+def hex64(value): return isinstance(value, str) and len(value) == 64 and set(value) <= HEX
+def exact(value, fields, label):
+    if not isinstance(value, dict) or set(value) != set(fields): die(label + " fields are not exact")
+def relpath(value, label):
+    if not isinstance(value, str) or not value or Path(value).is_absolute() or any(x in ("", ".", "..") for x in Path(value).parts): die(label + " path is invalid")
     return value
-def hex_value(value: object, length: int, label: str) -> str:
-    if not isinstance(value, str) or len(value) != length or set(value) - HEX: raise EvidenceError(f"{label} is invalid")
-    return value
-def relative(value: object, label: str) -> str:
-    if not isinstance(value, str) or not value: raise EvidenceError(f"{label} path is invalid")
-    parts = Path(value).parts
-    if Path(value).is_absolute() or any(p in ("", ".", "..") for p in parts): raise EvidenceError(f"{label} path escapes clone root")
-    return value
-def parse(raw: bytes, label: str) -> dict:
-    def reject(pairs):
-        out = {}
-        for key, value in pairs:
-            if key in out: raise EvidenceError(f"{label} has duplicate key {key}")
-            out[key] = value
-        return out
-    try: value = json.loads(raw.decode("utf-8"), object_pairs_hook=reject)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc: raise EvidenceError(f"{label} is malformed JSON") from exc
-    if not isinstance(value, dict): raise EvidenceError(f"{label} must be an object")
-    return value
-def regular_at(rootfd: int, path: str, label: str) -> bytes:
-    path = relative(path, label); fd = os.dup(rootfd)
+def parse(raw, label):
     try:
-        for part in Path(path).parts[:-1]:
-            nextfd = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
-            os.close(fd); fd = nextfd
-        leaf = os.open(Path(path).parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+        def pairs(items):
+            out = {}
+            for key, value in items:
+                if key in out: raise ValueError("duplicate key " + key)
+                out[key] = value
+            return out
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=pairs)
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc: die(label + " is malformed: " + str(exc))
+def open_root(path):
+    try:
+        before = Path(path).lstat(); fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)); after = os.fstat(fd)
+    except OSError as exc: die("evidence root unavailable: " + str(exc))
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode) or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino): os.close(fd); die("evidence root identity is unstable")
+    return fd
+def read_at(rootfd, relative, label):
+    parts = Path(relpath(relative, label)).parts; fd = os.dup(rootfd)
+    try:
+        for part in parts[:-1]:
+            nxt = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd); os.close(fd); fd = nxt
+        leaf = os.open(parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
         try:
             info = os.fstat(leaf)
-            if not stat.S_ISREG(info.st_mode): raise EvidenceError(f"{label} is not a regular file")
-            data = os.read(leaf, info.st_size + 1)
-            if len(data) != info.st_size or os.fstat(leaf).st_size != info.st_size: raise EvidenceError(f"{label} changed while reading")
-            return data
+            if not stat.S_ISREG(info.st_mode): die(label + " is not regular")
+            raw = os.read(leaf, info.st_size + 1)
+            if len(raw) != info.st_size or os.fstat(leaf).st_size != info.st_size: die(label + " changed while reading")
+            return raw
         finally: os.close(leaf)
-    except OSError as exc: raise EvidenceError(f"{label} is unavailable") from exc
+    except OSError as exc: die(label + " unavailable: " + str(exc))
     finally: os.close(fd)
-def validate_tuple(value: object) -> dict:
-    value = exact(value, set(TUPLE_KEYS), "source tuple")
-    for key in TUPLE_KEYS: hex_value(value[key], 40 if key.endswith("Commit") else 64, key)
+def artifact(rootfd, ref, label):
+    exact(ref, ("path", "sha256", "size"), label)
+    raw = read_at(rootfd, ref["path"], label)
+    if not hex64(ref["sha256"]) or not isinstance(ref["size"], int) or isinstance(ref["size"], bool) or ref["size"] < 0 or len(raw) != ref["size"] or sha(raw) != ref["sha256"]: die(label + " digest mismatch")
+    return raw
+def tree(rootfd, relative, label):
+    """Hash a no-follow directory as sorted canonical file entries."""
+    parts = Path(relpath(relative, label)).parts; fd = os.dup(rootfd); entries = []
+    try:
+        for part in parts:
+            nxt = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd); os.close(fd); fd = nxt
+        def walk(directory, prefix):
+            for name in sorted(os.listdir(directory)):
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False); path = prefix + name
+                if stat.S_ISLNK(info.st_mode) or info.st_nlink != 1: die(label + " contains symlink or hardlink")
+                if stat.S_ISDIR(info.st_mode):
+                    child = os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory)
+                    try:
+                        opened = os.fstat(child)
+                        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino): die(label + " directory changed")
+                        walk(child, path + "/")
+                    finally: os.close(child)
+                elif stat.S_ISREG(info.st_mode):
+                    child = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory)
+                    try:
+                        data = b""
+                        while True:
+                            chunk = os.read(child, 1024 * 1024)
+                            if not chunk: break
+                            data += chunk
+                        if os.fstat(child).st_size != info.st_size: die(label + " file changed")
+                        entries.append({"path": path, "sha256": sha(data), "size": info.st_size})
+                    finally: os.close(child)
+                else: die(label + " contains unsupported entry")
+        walk(fd, "")
+    except OSError as exc: die(label + " unavailable: " + str(exc))
+    finally: os.close(fd)
+    return {"sha256": sha(canonical(entries)), "entries": entries}
+def tuple_ok(value): return isinstance(value, dict) and set(value) == set(TUPLE) and all(hex64(value[k]) if k.endswith("Digest") else isinstance(value[k], str) and len(value[k]) == 40 and set(value[k]) <= HEX for k in TUPLE)
+def command(rootfd, ref, expected, tuple_):
+    raw = artifact(rootfd, ref, expected + " command record")
+    if raw != canonical(parse(raw, expected + " command record")) + b"\n": die(expected + " command record is not canonical JSON")
+    value = parse(raw, expected + " command record")
+    exact(value, ("schemaVersion", "kind", "label", "sourceTuple", "argv", "cwd", "exitCode", "startedAt", "finishedAt", "stdout", "stderr", "observations"), expected + " command record")
+    if (value["schemaVersion"] != 1 or value["kind"] != "photonport.sealed-command-record.v1"
+            or value["label"] != expected or value["sourceTuple"] != tuple_ or value["exitCode"] != 0
+            or not isinstance(value["argv"], list) or not value["argv"] or any(not isinstance(x, str) or not x for x in value["argv"])
+            or not isinstance(value["cwd"], str) or not value["cwd"]
+            or not isinstance(value["startedAt"], str) or not value["startedAt"]
+            or not isinstance(value["finishedAt"], str) or not value["finishedAt"]):
+        die(expected + " command record is not a passing sealed command")
+    artifact(rootfd, value["stdout"], expected + " stdout")
+    artifact(rootfd, value["stderr"], expected + " stderr")
     return value
-def validate_digest_file(value: object, label: str) -> dict:
-    value = exact(value, {"path", "sha256"}, label); relative(value["path"], label); hex_value(value["sha256"], 64, label + " digest"); return value
-def validate_request(request: dict) -> None:
-    exact(request, {"schemaVersion", "kind", "sourceTuple", "generator", "project", "sourceManifest", "products"}, "request")
-    if request["schemaVersion"] != 1 or request["kind"] != "photonport.r01-fresh-build-request.v1": raise EvidenceError("request identity is invalid")
-    validate_tuple(request["sourceTuple"])
-    for key in ("generator", "project", "sourceManifest"): validate_digest_file(request[key], "request " + key)
-    products = exact(request["products"], {"Debug", "Release"}, "request products")
-    for name in products: relative(products[name], "request product " + name)
-def validate_result(result: dict, request: dict, request_raw: bytes, rootfd: int, root: Path) -> None:
-    allowed = {"schemaVersion", "kind", "status", "requestSha256", "reason", "cleanClone", "generation", "products"}
-    if set(result) - allowed or not {"schemaVersion", "kind", "status", "requestSha256"} <= set(result): raise EvidenceError("result fields are invalid")
-    if result["schemaVersion"] != 1 or result["kind"] != "photonport.r01-fresh-build-result.v1" or result["status"] not in STATUSES: raise EvidenceError("result identity is invalid")
-    if result["requestSha256"] != digest(request_raw): raise EvidenceError("result does not bind exact request bytes")
-    passed = result["status"] == "passed"
-    evidence = {"cleanClone", "generation", "products"}
-    if passed and not evidence <= set(result): raise EvidenceError("passing result lacks fresh build evidence")
-    if not passed:
-        if set(result) & evidence or not isinstance(result.get("reason"), str) or not result["reason"]: raise EvidenceError("non-passing result has invalid evidence")
+def manifest_paths(raw, label):
+    value = parse(raw, label)
+    exact(value, ("entries",), label)
+    if not isinstance(value["entries"], list): die(label + " entries are invalid")
+    paths = []
+    for entry in value["entries"]:
+        exact(entry, ("path", "sha256", "size"), label + " entry")
+        paths.append(relpath(entry["path"], label + " entry"))
+        if not hex64(entry["sha256"]) or not isinstance(entry["size"], int) or isinstance(entry["size"], bool) or entry["size"] < 0: die(label + " entry is invalid")
+    if paths != sorted(paths) or len(paths) != len(set(paths)): die(label + " entries are not canonical")
+    return paths
+def reject_build_artifacts(rootfd):
+    def walk(fd, prefix):
+        for name in os.listdir(fd):
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            path = prefix + name
+            if name.endswith((".xcodeproj", ".app")): die("not_run request has stale generated or bundle output: " + path)
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+                try: walk(child, path + "/")
+                finally: os.close(child)
+            elif not stat.S_ISREG(info.st_mode): die("not_run evidence contains unsupported entry")
+    fd = os.dup(rootfd)
+    try: walk(fd, "")
+    finally: os.close(fd)
+def git(root, args):
+    result = subprocess.run(["git", "-C", str(root), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode: die("source tuple query failed for " + str(root))
+    return result.stdout.decode("ascii", "strict").strip()
+def roots_ok(values, tuple_):
+    exact(values, IDS, "source roots")
+    for ident in IDS:
+        root = Path(values[ident]).resolve()
+        if root.is_symlink() or not root.is_dir() or git(root, ["rev-parse", "HEAD"]) != tuple_[ident + "Commit"]: die(ident + " root is not exact tuple")
+        clean = subprocess.run(["git", "-C", str(root), "diff-index", "--quiet", "HEAD", "--"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        unstaged = subprocess.run(["git", "-C", str(root), "diff-files", "--quiet"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        untracked = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if clean.returncode or unstaged.returncode or untracked.stdout: die(ident + " root is dirty")
+    return Path(values["ios"]).resolve()
+def main():
+    p = argparse.ArgumentParser(); p.add_argument("--evidence-root", required=True); p.add_argument("--request", default="r01-fresh-build-request.json"); p.add_argument("--result", default="r01-fresh-build-result.json"); a = p.parse_args()
+    rootfd = open_root(a.evidence_root); request_raw = read_at(rootfd, a.request, "request"); request = parse(request_raw, "request")
+    exact_keys = {"schemaVersion", "kind", "sourceTuple", "sourceRoots", "commandRecords"}
+    not_run_keys = {"schemaVersion", "kind", "sourceTuple", "sourceRoots", "result"}
+    if set(request) == not_run_keys:
+        if request["schemaVersion"] != 1 or request["kind"] != "photonport.r01-fresh-build-request.v1" or request["result"] != "not_run" or not tuple_ok(request["sourceTuple"]): die("not_run request contract is invalid")
+        ios_root = roots_ok(request["sourceRoots"], request["sourceTuple"])
+        reject_build_artifacts(rootfd)
+        sourcefd = open_root(ios_root)
+        try: reject_build_artifacts(sourcefd)
+        finally: os.close(sourcefd)
+        result = {"schemaVersion": 1, "kind": "photonport.r01-fresh-build-result.v1", "result": "not_run", "requestSha256": sha(request_raw), "sourceTuple": request["sourceTuple"]}
+        out = canonical(result) + b"\n"; parts = Path(relpath(a.result, "result")).parts
+        fd = os.dup(rootfd)
+        try:
+            for part in parts[:-1]:
+                fd2 = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd); os.close(fd); fd = fd2
+            leaf = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd)
+            try: os.write(leaf, out); os.fsync(leaf)
+            finally: os.close(leaf)
+        except FileExistsError: die("refusing to overwrite result")
+        finally: os.close(fd); os.close(rootfd)
         return
-    if "reason" in result: raise EvidenceError("passing result must not contain a reason")
-    clean = exact(result["cleanClone"], {"gitHead", "gitStatusPorcelain", "projectAbsentBeforeGeneration"}, "clean clone")
-    if clean["gitHead"] != request["sourceTuple"]["iosCommit"] or clean["gitStatusPorcelain"] != "" or clean["projectAbsentBeforeGeneration"] is not True: raise EvidenceError("clean clone evidence is invalid")
+    if set(request) != exact_keys or request["schemaVersion"] != 1 or request["kind"] != "photonport.r01-fresh-build-request.v1" or not tuple_ok(request["sourceTuple"]): die("request contract is invalid")
+    exact(request["commandRecords"], ("before", "generation", "debugBuild", "releaseBuild"), "commandRecords")
+    ios_root = roots_ok(request["sourceRoots"], request["sourceTuple"])
+    records = {name: command(rootfd, request["commandRecords"][key], name, request["sourceTuple"]) for key, name in (("before", "before"), ("generation", "generation"), ("debugBuild", "debugBuild"), ("releaseBuild", "releaseBuild"))}
+    before, generation, debug, release = (records[k] for k in ("before", "generation", "debugBuild", "releaseBuild"))
+    exact(before["observations"], ("generatedProjectPath", "generatedProjectAbsent", "sourceManifest"), "before observations")
+    project = relpath(before["observations"]["generatedProjectPath"], "generated project")
+    if before["observations"]["generatedProjectAbsent"] is not True: die("before record does not observe generated project absent")
+    before_manifest = artifact(rootfd, before["observations"]["sourceManifest"], "before manifest")
+    before_paths = manifest_paths(before_manifest, "before manifest")
+    if any(path == project or path.startswith(project + "/") for path in before_paths): die("before manifest proves generated project was present")
+    if Path(generation["argv"][0]).name not in ("xcodegen", "XcodeGen"): die("generation was not an observed generator command")
+    exact(generation["observations"], ("generatedProjectPath", "generatedProject", "sourceManifest"), "generation observations")
+    if generation["observations"]["generatedProjectPath"] != project: die("generation project path differs")
+    generated = tree(rootfd, project, "generated project")
+    exact(generation["observations"]["generatedProject"], ("sha256", "entries"), "generated project observation")
+    if generation["observations"]["generatedProject"] != generated: die("generated project digest mismatch")
+    source_manifest = artifact(rootfd, generation["observations"]["sourceManifest"], "generation source manifest")
+    if source_manifest != before_manifest: die("source changed between before and generation")
+    tracked = subprocess.run(["git", "-C", str(ios_root), "ls-files", "--error-unmatch", "--", project], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if tracked.returncode == 0: die("generated project is a tracked fixture")
+    bundle_results = {}
+    for label, record in (("debug", debug), ("release", release)):
+        if Path(record["argv"][0]).name != "xcodebuild" or label.capitalize() not in record["argv"]: die(label + " was not an observed xcodebuild configuration")
+        exact(record["observations"], ("generatedProject", "sourceManifest", "bundlePath", "bundleIdentity"), label + " observations")
+        if record["observations"]["generatedProject"] != generation["observations"]["generatedProject"] or artifact(rootfd, record["observations"]["sourceManifest"], label + " source manifest") != source_manifest: die(label + " is not bound to generation source")
+        actual = tree(rootfd, record["observations"]["bundlePath"], label + " bundle")
+        info_raw = read_at(rootfd, relpath(record["observations"]["bundlePath"], label + " bundle") + "/Info.plist", label + " Info.plist")
+        try: info = plistlib.loads(info_raw)
+        except Exception as exc: die(label + " Info.plist malformed: " + str(exc))
+        executable = info.get("CFBundleExecutable")
+        if not isinstance(executable, str) or not executable: die(label + " bundle has no executable identity")
+        exe_raw = read_at(rootfd, record["observations"]["bundlePath"] + "/" + executable, label + " executable")
+        identity = {"bundleSha256": actual["sha256"], "bundleIdentifier": info.get("CFBundleIdentifier"), "bundleVersion": info.get("CFBundleShortVersionString"), "buildVersion": info.get("CFBundleVersion"), "executableSha256": sha(exe_raw)}
+        if record["observations"]["bundleIdentity"] != identity or not all(isinstance(identity[k], str) and identity[k] for k in ("bundleIdentifier", "bundleVersion", "buildVersion")): die(label + " actual bundle identity mismatch")
+        bundle_results[label] = identity
+    result = {"schemaVersion": 1, "kind": "photonport.r01-fresh-build-result.v1", "result": "passed", "requestSha256": sha(request_raw), "sourceTuple": request["sourceTuple"], "commandRecords": request["commandRecords"], "generatedProject": generation["observations"]["generatedProject"], "bundles": bundle_results}
+    out = canonical(result) + b"\n"; parts = Path(relpath(a.result, "result")).parts
+    fd = os.dup(rootfd)
     try:
-        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
-        status = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--ignored"], check=True, text=True, capture_output=True).stdout
-    except (OSError, subprocess.CalledProcessError) as exc: raise EvidenceError("clone root is not a readable git clone") from exc
-    if head != clean["gitHead"] or status != "": raise EvidenceError("clone root is not clean or contains ignored stale project evidence")
-    generation = exact(result["generation"], {"generator", "project", "sourceManifest"}, "generation")
-    for key in generation:
-        actual = validate_digest_file(generation[key], "generation " + key)
-        expected = request[key]
-        if actual != expected or digest(regular_at(rootfd, actual["path"], "generation " + key)) != actual["sha256"]: raise EvidenceError("generation digest does not bind requested fresh input")
-    products = exact(result["products"], {"Debug", "Release"}, "products")
-    for name in products:
-        item = validate_digest_file(products[name], "product " + name)
-        if item["path"] != request["products"][name] or digest(regular_at(rootfd, item["path"], "product " + name)) != item["sha256"]: raise EvidenceError("product digest does not bind requested product")
-def read_input(path: Path, label: str) -> bytes:
-    try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode): raise EvidenceError(f"{label} is not a regular file")
-            data = os.read(fd, info.st_size + 1)
-            if len(data) != info.st_size or os.fstat(fd).st_size != info.st_size: raise EvidenceError(f"{label} changed while reading")
-            return data
-        finally: os.close(fd)
-    except OSError as exc: raise EvidenceError(f"{label} is unavailable") from exc
-def atomic_write(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".verify-r01-fresh-build.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "wb") as file:
-            file.write(canonical(value) + b"\n"); file.flush(); os.fsync(file.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)); os.fsync(directory); os.close(directory)
-    except Exception:
-        try: os.unlink(temporary)
-        except FileNotFoundError: pass
-        raise
-def main() -> int:
-    parser = argparse.ArgumentParser(); parser.add_argument("--clone-root", required=True, type=Path); parser.add_argument("--request", required=True, type=Path); parser.add_argument("--result", required=True, type=Path); parser.add_argument("--output", required=True, type=Path); args = parser.parse_args()
-    try:
-        original_root = args.clone_root
-        root_info = original_root.lstat()
-        if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode): raise EvidenceError("clone root is not a real directory")
-        root = original_root.resolve(strict=True)
-        rootfd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
-        try:
-            request_raw = read_input(args.request, "request"); result_raw = read_input(args.result, "result")
-            request = parse(request_raw, "request"); result = parse(result_raw, "result"); validate_request(request); validate_result(result, request, request_raw, rootfd, root)
-        finally: os.close(rootfd)
-        atomic_write(args.output, {"kind":"photonport.r01-fresh-build-verdict.v1", "requestSha256":digest(request_raw), "resultSha256":digest(result_raw), "status":result["status"], "verification":"passed"})
-        print(json.dumps({"status":result["status"], "verification":"passed"}, sort_keys=True)); return 0
-    except Exception as exc:
-        print("verify-r01-fresh-build.py: FAIL_CLOSED: " + str(exc), file=sys.stderr); return 2
-if __name__ == "__main__": sys.exit(main())
+        for part in parts[:-1]:
+            fd2 = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd); os.close(fd); fd = fd2
+        leaf = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd)
+        try: os.write(leaf, out); os.fsync(leaf)
+        finally: os.close(leaf)
+    except FileExistsError: die("refusing to overwrite result")
+    finally: os.close(fd); os.close(rootfd)
+if __name__ == "__main__": main()

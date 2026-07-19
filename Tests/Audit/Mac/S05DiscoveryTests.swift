@@ -17,13 +17,6 @@ final class S05DiscoveryTests: XCTestCase {
             stateUpdateHandler?(.failed(NWError.posix(.ECONNABORTED)))
         }
 
-        func publish(_ results: Set<NWBrowser.Result>) {
-            browseResultsChangedHandler?(results, [])
-        }
-    }
-
-    private func publishableResultSet() -> Set<NWBrowser.Result> {
-        []
     }
 
     func testStableIdentityTable() {
@@ -58,14 +51,21 @@ final class S05DiscoveryTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(20))
         XCTAssertTrue(second.started)
 
-        first.publish(publishableResultSet())
+        let stale = DiscoveryResultView(
+            stableID: "stale-install", serviceName: "Stale Device")
+        let current = DiscoveryResultView(
+            stableID: "current-install", serviceName: "Current Device")
+        controller.publishDiscoveryResults([stale], callbackGeneration: 1)
         XCTAssertFalse(SenderController.discoveryCallbackMayApply(
             callbackGeneration: 1, currentGeneration: 3))
         XCTAssertTrue(controller.discovered.isEmpty)
-        second.publish(publishableResultSet())
-        try await Task.sleep(for: .milliseconds(20))
+
+        controller.publishDiscoveryResults([current], callbackGeneration: 3)
         XCTAssertTrue(SenderController.discoveryCallbackMayApply(
             callbackGeneration: 3, currentGeneration: 3))
+        XCTAssertEqual(controller.discovered.count, 1)
+        XCTAssertEqual(controller.discovered.first?.stableID, "current-install")
+        XCTAssertEqual(controller.discovered.first?.serviceName, "Current Device")
         XCTAssertTrue(second.started)
     }
 }

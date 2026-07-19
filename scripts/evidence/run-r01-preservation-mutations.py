@@ -1,301 +1,181 @@
 #!/usr/bin/env python3
-"""Exercise an R01 preservation closure only inside a registered throwaway clone."""
-from __future__ import annotations
+"""Exercise preservation deletion/rename negatives only in an allocated clone.
 
-import argparse
-import hashlib
-import json
-import os
-import stat
-import sys
-from pathlib import Path, PurePosixPath
+This is deliberately not a retirement tool: its only side effect is against the
+registered disposable worktree and it emits evidence describing that exercise.
+"""
+from __future__ import annotations
+import argparse, hashlib, json, os, stat, subprocess, sys
+from pathlib import Path
 
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
-HEX = set("0123456789abcdef")
-
-
-def fail(message):
-    raise RuntimeError(message)
-
-
-def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def sha256(data):
-    return hashlib.sha256(data).hexdigest()
-
-
-def reject_duplicates(items):
-    result = {}
+def fail(message): raise RuntimeError(message)
+def canon(v): return json.dumps(v, sort_keys=True, separators=(",", ":")).encode()
+def digest(v): return hashlib.sha256(canon(v)).hexdigest()
+def pairs(items):
+    out = {}
     for key, value in items:
-        if key in result:
-            fail("duplicate JSON key")
-        result[key] = value
-    return result
-
-
+        if key in out: fail("duplicate JSON key")
+        out[key] = value
+    return out
 def read_regular(path, label):
     named = path.lstat()
-    if stat.S_ISLNK(named.st_mode) or not stat.S_ISREG(named.st_mode):
-        fail(f"{label} is not a regular non-symlink file")
+    if stat.S_ISLNK(named.st_mode) or not stat.S_ISREG(named.st_mode): fail(f"{label} must be a regular non-symlink file")
     fd = os.open(path, os.O_RDONLY | NOFOLLOW)
     try:
         opened = os.fstat(fd)
-        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
-            fail(f"{label} changed while opening")
-        chunks = []
-        remaining = opened.st_size + 1
-        while remaining:
-            chunk = os.read(fd, remaining)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        data = b"".join(chunks)
-        if len(data) != opened.st_size or os.fstat(fd).st_size != opened.st_size:
-            fail(f"{label} changed while reading")
+        if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino): fail(f"{label} changed while opening")
+        data = os.read(fd, opened.st_size + 1)
+        if len(data) != opened.st_size or os.fstat(fd).st_size != opened.st_size: fail(f"{label} changed while reading")
         return data
-    finally:
-        os.close(fd)
-
-
-def open_directory(path, label):
+    finally: os.close(fd)
+def load(path, label):
+    try: value = json.loads(read_regular(path, label), object_pairs_hook=pairs)
+    except (ValueError, UnicodeDecodeError) as exc: raise RuntimeError(f"invalid {label} JSON") from exc
+    if not isinstance(value, dict): fail(f"{label} must be an object")
+    return value
+def stable_dir(path, label):
     named = path.lstat()
-    if stat.S_ISLNK(named.st_mode) or not stat.S_ISDIR(named.st_mode):
-        fail(f"{label} is not a non-symlink directory")
+    if stat.S_ISLNK(named.st_mode) or not stat.S_ISDIR(named.st_mode): fail(f"{label} must be a non-symlink directory")
     fd = os.open(path, os.O_RDONLY | DIRECTORY | NOFOLLOW)
     opened = os.fstat(fd)
-    if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
-        os.close(fd)
-        fail(f"{label} changed while opening")
+    if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino): os.close(fd); fail(f"{label} changed while opening")
     return fd, opened
-
-
-def check_directory(fd, identity, label):
-    current = os.fstat(fd)
-    if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
-        fail(f"{label} changed")
-
-
-def member_parts(path):
-    if not isinstance(path, str) or not path or "\x00" in path:
-        fail("member path is invalid")
-    candidate = PurePosixPath(path)
-    if candidate.is_absolute() or any(part in ("", ".", "..") for part in candidate.parts):
-        fail("member path escapes the registered clone")
-    return candidate.parts
-
-
-def open_member_parent(root_fd, root_identity, parts):
-    current_fd = os.dup(root_fd)
-    current_identity = os.fstat(current_fd)
+def absolute(value, label):
+    if not isinstance(value, str) or not Path(value).is_absolute() or Path(os.path.realpath(value)) != Path(value): fail(f"{label} must be canonical absolute")
+def root(value, label):
+    if not isinstance(value, dict) or set(value) != {"canonicalPath", "dev", "ino"}: fail(f"{label} invalid")
+    absolute(value["canonicalPath"], label)
+    if not isinstance(value["dev"], int) or not isinstance(value["ino"], int): fail(f"{label} identity invalid")
+def member(value):
+    if not isinstance(value, str) or not value or value.startswith("/") or "\\" in value: fail("invalid manifest member")
+    parts = value.split("/")
+    if any(not p or p in (".", "..") for p in parts): fail("invalid manifest member")
+    return parts
+def common_git_dir(root_path):
+    run = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=root_path, text=True, capture_output=True)
+    if run.returncode: fail("registered root is not a Git worktree")
+    value = run.stdout.strip(); absolute(value, "common Git directory")
+    fd, info = stable_dir(Path(value), "common Git directory")
+    os.close(fd)
+    return value, info.st_dev, info.st_ino
+def checked_child(rootfd, rel):
+    fd = os.dup(rootfd)
     try:
-        for part in parts[:-1]:
-            check_directory(current_fd, current_identity, "member parent")
-            named = os.stat(part, dir_fd=current_fd, follow_symlinks=False)
-            if stat.S_ISLNK(named.st_mode) or not stat.S_ISDIR(named.st_mode):
-                fail("member parent is unsafe")
-            child_fd = os.open(part, os.O_RDONLY | DIRECTORY | NOFOLLOW, dir_fd=current_fd)
-            opened = os.fstat(child_fd)
-            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
-                os.close(child_fd)
-                fail("member parent changed while opening")
-            os.close(current_fd)
-            current_fd, current_identity = child_fd, opened
-        check_directory(root_fd, root_identity, "registered clone root")
-        check_directory(current_fd, current_identity, "member parent")
-        return current_fd, current_identity, parts[-1]
+        for part in member(rel)[:-1]:
+            info = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode): fail("manifest ancestor is unsafe")
+            nxt = os.open(part, os.O_RDONLY | DIRECTORY | NOFOLLOW, dir_fd=fd); os.close(fd); fd = nxt
+        name = member(rel)[-1]
+        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        if stat.S_ISLNK(info.st_mode): fail("manifest member is a symlink")
+        return fd, name, info
     except Exception:
-        os.close(current_fd)
-        raise
-
-
-def member_data(root_fd, root_identity, member, require_present=True):
-    parts = member_parts(member["path"])
-    parent_fd, parent_identity, name = open_member_parent(root_fd, root_identity, parts)
-    try:
-        try:
-            named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            if require_present:
-                fail(f"manifest member is absent: {member['path']}")
-            return None
-        if stat.S_ISLNK(named.st_mode) or not stat.S_ISREG(named.st_mode):
-            fail(f"manifest member is unsafe: {member['path']}")
-        fd = os.open(name, os.O_RDONLY | NOFOLLOW, dir_fd=parent_fd)
-        try:
-            opened = os.fstat(fd)
-            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
-                fail("manifest member changed while opening")
-            data = b""
-            while len(data) <= opened.st_size:
-                chunk = os.read(fd, opened.st_size + 1 - len(data))
-                if not chunk:
-                    break
-                data += chunk
-            if len(data) != opened.st_size or os.fstat(fd).st_size != opened.st_size:
-                fail("manifest member changed while reading")
-        finally:
-            os.close(fd)
-        check_directory(parent_fd, parent_identity, "member parent")
-        check_directory(root_fd, root_identity, "registered clone root")
-        if len(data) != member["size"] or sha256(data) != member["sha256"]:
-            fail(f"manifest member does not match its digest: {member['path']}")
-        return data, stat.S_IMODE(opened.st_mode)
-    finally:
-        os.close(parent_fd)
-
-
-def closure_status(root_fd, root_identity, members):
-    """Return failed for a missing member; unsafe or changed inputs remain fatal."""
-    for member in members:
-        data = member_data(root_fd, root_identity, member, require_present=False)
-        if data is None:
-            return "failed"
-    return "passed"
-
-
-def restore(parent_fd, parent_identity, name, data, mode):
-    check_directory(parent_fd, parent_identity, "member parent")
-    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, mode, dir_fd=parent_fd)
-    try:
-        offset = 0
-        while offset < len(data):
-            offset += os.write(fd, data[offset:])
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    check_directory(parent_fd, parent_identity, "member parent")
-
-
-def validate_manifest(value):
-    required = {"schemaVersion", "kind", "registeredCloneRoot", "members"}
-    if not isinstance(value, dict) or set(value) != required:
-        fail("manifest has missing or unexpected keys")
-    if value["schemaVersion"] != 1 or value["kind"] != "photonport.r01-preservation-closure-manifest.v1":
-        fail("unsupported preservation manifest")
-    root = value["registeredCloneRoot"]
-    root_keys = {"canonicalPath", "dev", "ino", "registrationId", "purpose"}
-    if not isinstance(root, dict) or set(root) != root_keys:
-        fail("registered clone root is malformed")
-    if (not isinstance(root["canonicalPath"], str) or not root["canonicalPath"].startswith("/")
-            or "\x00" in root["canonicalPath"] or root["purpose"] != "throwaway-clone"):
-        fail("registered clone root is invalid")
-    if any(not isinstance(root[key], int) or isinstance(root[key], bool) or root[key] < 0 for key in ("dev", "ino")):
-        fail("registered clone root identity is invalid")
-    if (not isinstance(root["registrationId"], str) or len(root["registrationId"]) != 64
-            or any(ch not in HEX for ch in root["registrationId"])):
-        fail("registered clone registration is invalid")
-    members = value["members"]
-    if not isinstance(members, list) or not members:
-        fail("manifest has no members")
-    seen = set()
-    for member in members:
-        if not isinstance(member, dict) or set(member) != {"path", "sha256", "size"}:
-            fail("manifest member is malformed")
-        parts = member_parts(member["path"])
-        normalized = "/".join(parts)
-        if member["path"] != normalized or normalized in seen:
-            fail("manifest member path is non-canonical or duplicated")
-        seen.add(normalized)
-        if (not isinstance(member["sha256"], str) or len(member["sha256"]) != 64
-                or any(ch not in HEX for ch in member["sha256"])):
-            fail("manifest member digest is invalid")
-        if not isinstance(member["size"], int) or isinstance(member["size"], bool) or member["size"] < 0:
-            fail("manifest member size is invalid")
-    return root, members
-
-
-def atomic_output(path, data):
-    if not path.is_absolute():
-        fail("output path must be absolute")
-    parent_fd, parent_identity = open_directory(path.parent, "output parent")
-    try:
-        try:
-            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
-            fail("output already exists")
-        except FileNotFoundError:
-            pass
-        fd = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600, dir_fd=parent_fd)
-        try:
-            offset = 0
-            while offset < len(data):
-                offset += os.write(fd, data[offset:])
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        check_directory(parent_fd, parent_identity, "output parent")
-        os.fsync(parent_fd)
-    finally:
-        os.close(parent_fd)
-
-
+        os.close(fd); raise
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--clone-root", required=True)
-    parser.add_argument("--registration-id", required=True)
-    parser.add_argument("--output", required=True)
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--registration", "--allocator-registration", dest="registration", type=Path, required=True)
+    p.add_argument("--lifecycle-state", type=Path, required=True)
+    p.add_argument("--lifecycle-directory", type=Path, required=True)
+    p.add_argument("--manifest", "--closure-manifest", dest="manifest", type=Path, required=True)
+    p.add_argument("--inventory", "--target-inventory", dest="inventory", type=Path, required=True)
+    p.add_argument("--root", "--clone-root", dest="root", type=Path, required=True)
+    p.add_argument("--operation", choices=("delete", "rename"), required=True)
+    p.add_argument("--result", "--output", dest="result", type=Path, required=True)
+    a = p.parse_args()
+    registration_raw = read_regular(a.registration, "allocator registration"); registration = load(a.registration, "allocator registration")
+    state = load(a.lifecycle_state, "lifecycle state"); manifest = load(a.manifest, "closure manifest"); inventory = load(a.inventory, "target inventory")
+    lifecycle_fd, lifecycle_info = stable_dir(a.lifecycle_directory, "lifecycle directory")
     try:
-        manifest_path = Path(args.manifest)
-        manifest_raw = read_regular(manifest_path, "manifest")
-        manifest = json.loads(manifest_raw, object_pairs_hook=reject_duplicates)
-        if manifest_raw != canonical(manifest) + b"\n":
-            fail("manifest is not canonical JSON")
-        registered, members = validate_manifest(manifest)
-        clone_path = Path(args.clone_root)
-        if not clone_path.is_absolute() or str(clone_path) != registered["canonicalPath"]:
-            fail("clone root does not exactly match the registered throwaway clone")
-        if args.registration_id != registered["registrationId"]:
-            fail("registration id does not match the registered throwaway clone")
-        root_fd, root_identity = open_directory(clone_path, "registered clone root")
+        if Path(os.path.realpath(a.lifecycle_state)) != Path(os.path.realpath(a.lifecycle_directory / "010-source-active.json")):
+            fail("lifecycle state must be the immutable source-active lifecycle entry")
+        allocated_raw = read_regular(a.lifecycle_directory / "000-allocated.json", "allocated lifecycle state")
+        allocated = load(a.lifecycle_directory / "000-allocated.json", "allocated lifecycle state")
+        # Only an immutable allocator registration can authorize a throwaway clone.
+        registration_keys = {"schemaVersion", "kind", "canonicalPath", "dev", "ino", "registrationId", "purpose", "lifecycleId", "commonDir", "authoritativeInventory", "authoritativeInventorySha256"}
+        if (set(registration) != registration_keys or registration.get("schemaVersion") != 1
+                or registration.get("kind") != "disposable-worktree-registration"):
+            fail("registration is not an allocator-issued disposable-worktree registration")
+        root({"canonicalPath": registration["canonicalPath"], "dev": registration["dev"], "ino": registration["ino"]}, "registration root")
+        absolute(registration["commonDir"], "registration common directory")
+        if (not isinstance(registration["registrationId"], str) or not registration["registrationId"]
+                or not isinstance(registration["purpose"], str) or not registration["purpose"]
+                or not isinstance(registration["lifecycleId"], str) or not registration["lifecycleId"]
+                or not isinstance(registration["authoritativeInventorySha256"], str)
+                or len(registration["authoritativeInventorySha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in registration["authoritativeInventorySha256"])
+                or not isinstance(registration["authoritativeInventory"], dict)
+                or set(registration["authoritativeInventory"]) != {"members"}
+                or not isinstance(registration["authoritativeInventory"]["members"], list)
+                or digest(registration["authoritativeInventory"]) != registration["authoritativeInventorySha256"]):
+            fail("allocator registration fields are invalid")
+        required_state = {"schemaVersion","kind","lifecycleId","rootId","tuple","allocation","authority","state","predecessorSha256","allocationReleaseSha256"}
+        if (set(allocated) != required_state - {"allocationReleaseSha256"} or allocated.get("schemaVersion") != 1
+                or allocated.get("kind") != "photonport.lifecycle-state.v1" or allocated.get("state") != "allocated"
+                or allocated.get("predecessorSha256") is not None):
+            fail("immutable allocated lifecycle state required")
+        if set(state) != required_state or state.get("schemaVersion") != 1 or state.get("kind") != "photonport.lifecycle-state.v1" or state.get("state") != "source-active": fail("immutable source-active lifecycle state required")
+        if (state.get("predecessorSha256") != hashlib.sha256(allocated_raw).hexdigest()
+                or any(state.get(key) != allocated.get(key) for key in ("lifecycleId", "rootId", "tuple", "allocation", "authority"))):
+            fail("lifecycle allocation chain is not immutable")
+        if registration["lifecycleId"] != state["lifecycleId"]: fail("registration lifecycle differs from source-active lifecycle")
+        authority = state["authority"]
+        if not isinstance(authority, dict) or set(authority) != {"approvedSequence","root","supervisor","command","allocationNonce","mutexNonce","lockAPath","lockBPath","registryPath","commonGitDir"}: fail("lifecycle authority invalid")
+        root(authority["root"], "authority root")
+        absolute(authority["registryPath"], "allocator registry")
+        absolute(authority["commonGitDir"], "lifecycle common Git directory")
+    finally:
+        if (os.fstat(lifecycle_fd).st_dev, os.fstat(lifecycle_fd).st_ino) != (lifecycle_info.st_dev, lifecycle_info.st_ino):
+            os.close(lifecycle_fd); fail("lifecycle directory changed while reading")
+        os.close(lifecycle_fd)
+    rootfd, rootinfo = stable_dir(a.root, "mutation root")
+    try:
+        actual = {"canonicalPath": str(Path(os.path.realpath(a.root))), "dev": rootinfo.st_dev, "ino": rootinfo.st_ino}
+        if (actual != authority["root"] or actual != {"canonicalPath": registration["canonicalPath"], "dev": registration["dev"], "ino": registration["ino"]}):
+            fail("root is not the registered allocated clone")
+        # Issuer and all non-clone evidence must remain outside the clone.
+        for path, label in ((a.registration,"registration"),(a.lifecycle_directory,"lifecycle directory"),(a.lifecycle_state,"lifecycle state"),(a.manifest,"manifest"),(a.inventory,"inventory"),(a.result,"result")):
+            if os.path.commonpath((str(Path(os.path.realpath(path))), actual["canonicalPath"])) == actual["canonicalPath"]: fail(f"{label} must be outside clone")
+        registry_fd, registry_info = stable_dir(Path(authority["registryPath"]), "allocator registry")
         try:
-            if (root_identity.st_dev, root_identity.st_ino) != (registered["dev"], registered["ino"]):
-                fail("clone root identity does not match registration")
-            if os.path.realpath(clone_path) != registered["canonicalPath"]:
-                fail("clone root canonical path is uncertain")
-            if closure_status(root_fd, root_identity, members) != "passed":
-                fail("incomplete preservation manifest closure")
-            results = []
-            for member in members:
-                data, mode = member_data(root_fd, root_identity, member)
-                parts = member_parts(member["path"])
-                parent_fd, parent_identity, name = open_member_parent(root_fd, root_identity, parts)
-                try:
-                    os.unlink(name, dir_fd=parent_fd)
-                    if closure_status(root_fd, root_identity, members) != "failed":
-                        fail("delete mutation did not fail closure")
-                    restore(parent_fd, parent_identity, name, data, mode)
-                    if closure_status(root_fd, root_identity, members) != "passed":
-                        fail("delete mutation restoration did not restore closure")
-                    results.append({"operation": "delete", "path": member["path"], "closure": "failed", "restored": True})
-                    renamed = "." + name + ".r01-preservation-mutation"
-                    try:
-                        os.stat(renamed, dir_fd=parent_fd, follow_symlinks=False)
-                        fail("rename mutation destination already exists")
-                    except FileNotFoundError:
-                        pass
-                    os.rename(name, renamed, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                    if closure_status(root_fd, root_identity, members) != "failed":
-                        fail("rename mutation did not fail closure")
-                    os.rename(renamed, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-                    if closure_status(root_fd, root_identity, members) != "passed":
-                        fail("rename mutation restoration did not restore closure")
-                    results.append({"operation": "rename", "path": member["path"], "closure": "failed", "restored": True})
-                finally:
-                    os.close(parent_fd)
+            if Path(os.path.realpath(a.registration.parent)) != Path(authority["registryPath"]):
+                fail("registration is not located in the allocator registry")
         finally:
-            os.close(root_fd)
-        result = {"schemaVersion": 1, "kind": "photonport.r01-preservation-mutation-result.v1", "result": "passed", "manifestSha256": sha256(manifest_raw), "registeredCloneRoot": registered, "baselineClosure": "passed", "mutations": results}
-        atomic_output(Path(args.output), canonical(result) + b"\n")
-        return 0
-    except Exception as exc:
-        print(f"run-r01-preservation-mutations.py: error: {exc}", file=sys.stderr)
-        return 2
-
-
+            os.close(registry_fd)
+        common, common_dev, common_ino = common_git_dir(a.root)
+        if common != authority["commonGitDir"] or common != registration["commonDir"]: fail("common Git directory does not match immutable registration")
+        registration_sha256 = hashlib.sha256(registration_raw).hexdigest()
+        expected_keys = {"schemaVersion","kind","lifecycleId","rootId","root","commonGitDir","commonGitDirDev","commonGitDirIno","registrationSha256","registrationId","authoritativeInventorySha256","members"}
+        if set(inventory) != expected_keys or inventory.get("schemaVersion") != 1 or inventory.get("kind") != "photonport.r01-preservation-target-inventory.v1": fail("authoritative inventory descriptor invalid")
+        if set(manifest) != expected_keys | {"inventorySha256"} or manifest.get("schemaVersion") != 1 or manifest.get("kind") != "photonport.r01-preservation-closure-manifest.v1": fail("closure manifest invalid")
+        for record in (inventory, manifest):
+            if (record.get("lifecycleId") != state["lifecycleId"] or record.get("rootId") != state["rootId"]
+                    or record.get("root") != actual or record.get("commonGitDir") != common
+                    or record.get("commonGitDirDev") != common_dev or record.get("commonGitDirIno") != common_ino
+                    or record.get("registrationSha256") != registration_sha256
+                    or record.get("registrationId") != registration["registrationId"]
+                    or record.get("authoritativeInventorySha256") != registration["authoritativeInventorySha256"]):
+                fail("preservation evidence identity mismatch")
+        if inventory["members"] != registration["authoritativeInventory"]["members"]:
+            fail("inventory is not the allocator-authoritative inventory descriptor")
+        if manifest["inventorySha256"] != digest(inventory): fail("manifest is not bound to authoritative inventory")
+        targets = inventory.get("members"); claimed = manifest.get("members")
+        if not isinstance(targets, list) or not targets or len(set(targets)) != len(targets) or any(member(x) is None for x in targets): fail("inventory members invalid")
+        if not isinstance(claimed, list) or len(set(claimed)) != len(claimed) or any(member(x) is None for x in claimed) or set(claimed) != set(targets): fail("manifest members omit or add authoritative targets")
+        for target in sorted(targets, key=lambda x: (x.count('/'), x), reverse=True):
+            parent, name, info = checked_child(rootfd, target)
+            try:
+                if a.operation == "delete":
+                    if stat.S_ISDIR(info.st_mode): os.rmdir(name, dir_fd=parent)
+                    else: os.unlink(name, dir_fd=parent)
+                else: os.rename(name, name + ".r01-preservation-renamed", src_dir_fd=parent, dst_dir_fd=parent)
+            finally: os.close(parent)
+        result = {"schemaVersion":1,"kind":"photonport.r01-preservation-mutation-result.v1","lifecycleId":state["lifecycleId"],"rootId":state["rootId"],"root":actual,"commonGitDir":common,"commonGitDirDev":common_dev,"commonGitDirIno":common_ino,"registrationSha256":registration_sha256,"registrationId":registration["registrationId"],"authoritativeInventorySha256":registration["authoritativeInventorySha256"],"manifestSha256":digest(manifest),"inventorySha256":digest(inventory),"operation":a.operation,"members":sorted(targets)}
+        fd = os.open(a.result, os.O_WRONLY|os.O_CREAT|os.O_EXCL|NOFOLLOW, 0o600)
+        try: os.write(fd, canon(result)+b"\n"); os.fsync(fd)
+        finally: os.close(fd)
+    finally: os.close(rootfd)
 if __name__ == "__main__":
-    sys.exit(main())
+    try: main()
+    except Exception as exc: print(f"run-r01-preservation-mutations.py: error: {exc}", file=sys.stderr); sys.exit(2)

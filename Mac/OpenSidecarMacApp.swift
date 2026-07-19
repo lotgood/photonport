@@ -243,6 +243,46 @@ final class NetworkDiscoveryBrowser: DiscoveryBrowser {
     func start(queue: DispatchQueue) { browser.start(queue: queue) }
     func cancel() { browser.cancel() }
 }
+/// Constructible boundary model for Bonjour discovery. Network.framework results
+/// remain opaque runtime values; this view carries only the identity data needed
+/// to publish and reconcile them.
+struct DiscoveryResultView: Identifiable {
+    let result: NWBrowser.Result?
+    let stableID: String?
+    let serviceName: String?
+    let displayName: String?
+    let isPairingService: Bool
+
+    var id: String {
+        stableID ?? serviceName ?? displayName ?? "unknown"
+    }
+
+    init(result: NWBrowser.Result) {
+        self.result = result
+        if case .service(let name, _, _, _) = result.endpoint {
+            serviceName = name
+        } else {
+            serviceName = nil
+        }
+        if case .bonjour(let txt) = result.metadata {
+            stableID = txt["id"]
+            isPairingService = txt[PairingCrypto.pairTXTKey] == "1"
+        } else {
+            stableID = nil
+            isPairingService = false
+        }
+        displayName = serviceName
+    }
+
+    init(stableID: String?, serviceName: String?, displayName: String? = nil,
+         isPairingService: Bool = false) {
+        result = nil
+        self.stableID = stableID
+        self.serviceName = serviceName
+        self.displayName = displayName ?? serviceName
+        self.isPairingService = isPairingService
+    }
+}
 
 @MainActor
 final class SenderController: ObservableObject {
@@ -260,7 +300,7 @@ final class SenderController: ObservableObject {
     }
 
     @Published var sessions: [DeviceSession] = []
-    @Published var discovered: [NWBrowser.Result] = []
+    @Published var discovered: [DiscoveryResultView] = []
     @Published var usbDevices: [UsbmuxDevice] = []
     // `-host x.x.x.x` / `-port n` bypass usbmuxd with a manual TCP endpoint
     // (debugging escape hatch, e.g. an iproxy or SSH tunnel).
@@ -427,16 +467,9 @@ final class SenderController: ObservableObject {
                         callbackGeneration: generation,
                         currentGeneration: self.browserGeneration)
                 else { return }
-                Log.info("video browse: \(results.count) result(s)")
-                // A device showing its pairing screen advertises a second
-                // instance of this type with pair=1 — that's the pairing
-                // endpoint, not a streamable device, so keep it out of the list.
-                self.discovered = results.filter { result in
-                    if case .bonjour(let txt) = result.metadata,
-                       txt[PairingCrypto.pairTXTKey] == "1" { return false }
-                    return true
-                }
-                self.autoConnect()
+                self.publishDiscoveryResults(
+                    results.map { DiscoveryResultView(result: $0) },
+                    callbackGeneration: generation)
             }
         }
         browser.stateUpdateHandler = { [weak self] state in
@@ -462,6 +495,19 @@ final class SenderController: ObservableObject {
         self.browser = browser
         browser.start(queue: .main)
     }
+    func publishDiscoveryResults(_ results: [DiscoveryResultView],
+                                 callbackGeneration: Int) {
+        guard Self.discoveryCallbackMayApply(
+            callbackGeneration: callbackGeneration, currentGeneration: browserGeneration)
+        else { return }
+        Log.info("video browse: \(results.count) result(s)")
+        // A device showing its pairing screen advertises a second instance of
+        // this type with pair=1 — that's the pairing endpoint, not a streamable
+        // device, so keep it out of the list.
+        discovered = results.filter { !$0.isPairingService }
+        autoConnect()
+    }
+
 
     private func restartBrowsing(afterFailureAt generation: Int) {
         guard Self.discoveryCallbackMayApply(
@@ -557,11 +603,11 @@ final class SenderController: ObservableObject {
     /// Same hardware? Strong match: the service's install id equals the id
     /// this USB device announced in a (past or present) hello. Fallback for
     /// old receivers: lockdown device name equals the service name.
-    private func sameDevice(_ result: NWBrowser.Result, _ device: UsbmuxDevice) -> Bool {
+    private func sameDevice(_ result: DiscoveryResultView, _ device: UsbmuxDevice) -> Bool {
         Self.samePhysicalDevice(
-            wifiID: txtID(of: result),
+            wifiID: result.stableID,
             usbID: installIDByUDID[device.udid],
-            wifiName: serviceName(of: result),
+            wifiName: result.serviceName,
             usbName: device.name)
     }
 
@@ -613,7 +659,8 @@ final class SenderController: ObservableObject {
             connect(to: .usb(udid: device.udid))
         }
         guard wifiAutoConnectArmed, Date() < wifiAutoConnectDeadline else { return }
-        for result in discovered {
+        for view in discovered {
+            guard let result = view.result else { continue }
             let target = ConnectionTarget.wifi(result)
             if wifiRemembered.contains(target.sessionID),
                activeSession(coveringWiFi: result) == nil,
@@ -627,7 +674,8 @@ final class SenderController: ObservableObject {
     /// the cable — its WiFi service must not be grabbed in the launch race.
     private func cabled(_ result: NWBrowser.Result) -> Bool {
         usbDevices.contains {
-            sameDevice(result, $0) && !usbDisabled.contains("usb:\($0.udid)")
+            sameDevice(DiscoveryResultView(result: result), $0)
+                && !usbDisabled.contains("usb:\($0.udid)")
         }
     }
 
@@ -870,18 +918,20 @@ final class SenderController: ObservableObject {
             // A discovered WiFi service for the same hardware folds into
             // this row instead of appearing as a second device.
             let twin = discovered.first { sameDevice($0, device) }
-            if let twin, let name = serviceName(of: twin) { mergedServices.insert(name) }
+            if let twin, let name = twin.serviceName { mergedServices.insert(name) }
             let usbTarget = ConnectionTarget.usb(udid: device.udid)
             coveredSessionIDs.insert(usbTarget.sessionID)
-            if let twin { coveredSessionIDs.insert(ConnectionTarget.wifi(twin).sessionID) }
+            if let result = twin?.result {
+                coveredSessionIDs.insert(ConnectionTarget.wifi(result).sessionID)
+            }
             entries.append(DeviceEntry(
                 id: "device:\(device.udid)",
                 name: device.name
-                    ?? twin.flatMap(serviceName)
+                    ?? twin?.displayName
                     ?? session(for: usbTarget.sessionID)?.deviceKind
                     ?? "iPhone / iPad",
                 usbTarget: usbTarget,
-                wifiTarget: twin.map { .wifi($0) }))
+                wifiTarget: twin?.result.map { .wifi($0) }))
         }
         if UserDefaults.standard.object(forKey: "host") != nil {
             let target = ConnectionTarget.usb(udid: nil)
@@ -889,12 +939,14 @@ final class SenderController: ObservableObject {
             entries.append(DeviceEntry(id: target.sessionID, name: label(for: target),
                                        usbTarget: target, wifiTarget: nil))
         }
-        for result in discovered {
-            guard let name = serviceName(of: result), !mergedServices.contains(name)
+        for view in discovered {
+            guard let name = view.serviceName,
+                  let result = view.result,
+                  !mergedServices.contains(name)
             else { continue }
             let target = ConnectionTarget.wifi(result)
             coveredSessionIDs.insert(target.sessionID)
-            entries.append(DeviceEntry(id: "service:\(name)", name: name,
+            entries.append(DeviceEntry(id: "service:\(name)", name: view.displayName ?? name,
                                        usbTarget: nil, wifiTarget: target))
         }
         // Sessions whose device vanished from discovery (e.g. Bonjour record
