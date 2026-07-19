@@ -5,7 +5,7 @@ This is deliberately not a retirement tool: its only side effect is against the
 registered disposable worktree and it emits evidence describing that exercise.
 """
 from __future__ import annotations
-import argparse, hashlib, json, os, stat, subprocess, sys
+import argparse, hashlib, importlib.util, json, os, stat, subprocess, sys
 from pathlib import Path
 
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -73,6 +73,55 @@ def checked_child(rootfd, rel):
         return fd, name, info
     except Exception:
         os.close(fd); raise
+def git_value(root_path, expression, label):
+    run = subprocess.run(["git", "rev-parse", "--verify", expression], cwd=root_path, text=True, capture_output=True)
+    if run.returncode: fail(f"registered root has no {label}")
+    value = run.stdout.strip()
+    if len(value) != 40 or any(c not in "0123456789abcdef" for c in value): fail(f"registered root {label} is invalid")
+    return value
+def receipt_module():
+    module_path = Path(__file__).with_name("verify_receipt.py")
+    spec = importlib.util.spec_from_file_location("r01_receipt_verifier", module_path)
+    if spec is None or spec.loader is None: fail("cannot load receipt verifier")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+def attestation(path, label, trust_policy, trust_mode, tuple_value, bindings):
+    raw = read_regular(path, label)
+    module = receipt_module()
+    roots = list({path.parent.resolve(), trust_policy.parent.resolve()})
+    try:
+        _, payload, _, _, _ = module._decode_envelope(path.resolve(), roots)
+    except Exception as exc:
+        fail(f"{label} is not a valid DSSE receipt: {exc}")
+    expected = {
+        "gateId": "g004.automated",
+        "kind": "photonport.gate.g004-automated.v2",
+        "sourceTuple": payload.get("sourceTuple"),
+        "verifier": {
+            "scriptSha256": hashlib.sha256(read_regular(Path(module.__file__), "receipt verifier")).hexdigest(),
+            "schemaSha256": hashlib.sha256(read_regular(Path(__file__).parents[2] / "artifacts/schemas/receipt-envelope-v2.schema.json", "receipt envelope schema")).hexdigest(),
+            "trustPolicySha256": hashlib.sha256(read_regular(trust_policy, "trust policy")).hexdigest(),
+            "ed25519ModuleSha256": hashlib.sha256(read_regular(Path(module.__file__).with_name("ed25519_rfc8032.py"), "Ed25519 verifier")).hexdigest(),
+        },
+    }
+    checked = module.verify_envelope(path.resolve(), expected=expected, trust_policy_path=trust_policy.resolve(), trust_mode=trust_mode, allowed_roots=roots)
+    if checked.get("exitCode") != 0 or not checked.get("trusted") or checked.get("status") != "passed":
+        fail(f"{label} is not a trusted passing receipt: {checked.get('reasonCode')}")
+    envelope = load(path, label)
+    signatures = envelope.get("signatures")
+    if not isinstance(signatures, list) or len(signatures) != 1 or signatures[0].get("alg") != "ED25519-DSSE":
+        fail(f"{label} must use an Ed25519 DSSE signature")
+    source = payload.get("sourceTuple")
+    if not isinstance(source, dict) or source.get("macCommit") != tuple_value["macCommit"] or source.get("iosCommit") != tuple_value["iosCommit"] or source.get("protocolCommit") != tuple_value["protocolCommit"]:
+        fail(f"{label} source tuple does not match clone base tuple")
+    for raw_value, binding_label in bindings:
+        expected_artifact = {"sha256": hashlib.sha256(raw_value).hexdigest(), "size": len(raw_value)}
+        artifacts = payload.get("artifacts", {})
+        entries = artifacts.get("inputs", []) + artifacts.get("outputs", []) if isinstance(artifacts, dict) else []
+        if not any(isinstance(entry, dict) and entry.get("sha256") == expected_artifact["sha256"] and entry.get("size") == expected_artifact["size"] for entry in entries):
+            fail(f"{label} does not bind {binding_label}")
+    return {"path": path.name, "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)}, source
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--registration", "--allocator-registration", dest="registration", type=Path, required=True)
@@ -81,11 +130,16 @@ def main():
     p.add_argument("--manifest", "--closure-manifest", dest="manifest", type=Path, required=True)
     p.add_argument("--inventory", "--target-inventory", dest="inventory", type=Path, required=True)
     p.add_argument("--root", "--clone-root", dest="root", type=Path, required=True)
+    p.add_argument("--allocator-attestation", type=Path, required=True)
+    p.add_argument("--inventory-attestation", type=Path, required=True)
+    p.add_argument("--trust-policy", type=Path, required=True)
+    p.add_argument("--trust-mode", choices=("test", "production"), required=True)
     p.add_argument("--operation", choices=("delete", "rename"), required=True)
     p.add_argument("--result", "--output", dest="result", type=Path, required=True)
     a = p.parse_args()
     registration_raw = read_regular(a.registration, "allocator registration"); registration = load(a.registration, "allocator registration")
-    state = load(a.lifecycle_state, "lifecycle state"); manifest = load(a.manifest, "closure manifest"); inventory = load(a.inventory, "target inventory")
+    state_raw = read_regular(a.lifecycle_state, "lifecycle state"); state = load(a.lifecycle_state, "lifecycle state")
+    manifest = load(a.manifest, "closure manifest"); inventory_raw = read_regular(a.inventory, "target inventory"); inventory = load(a.inventory, "target inventory")
     lifecycle_fd, lifecycle_info = stable_dir(a.lifecycle_directory, "lifecycle directory")
     try:
         if Path(os.path.realpath(a.lifecycle_state)) != Path(os.path.realpath(a.lifecycle_directory / "010-source-active.json")):
@@ -135,7 +189,7 @@ def main():
         if (actual != authority["root"] or actual != {"canonicalPath": registration["canonicalPath"], "dev": registration["dev"], "ino": registration["ino"]}):
             fail("root is not the registered allocated clone")
         # Issuer and all non-clone evidence must remain outside the clone.
-        for path, label in ((a.registration,"registration"),(a.lifecycle_directory,"lifecycle directory"),(a.lifecycle_state,"lifecycle state"),(a.manifest,"manifest"),(a.inventory,"inventory"),(a.result,"result")):
+        for path, label in ((a.registration,"registration"),(a.lifecycle_directory,"lifecycle directory"),(a.lifecycle_state,"lifecycle state"),(a.manifest,"manifest"),(a.inventory,"inventory"),(a.allocator_attestation,"allocator attestation"),(a.inventory_attestation,"inventory attestation"),(a.trust_policy,"trust policy"),(a.result,"result")):
             if os.path.commonpath((str(Path(os.path.realpath(path))), actual["canonicalPath"])) == actual["canonicalPath"]: fail(f"{label} must be outside clone")
         registry_fd, registry_info = stable_dir(Path(authority["registryPath"]), "allocator registry")
         try:
@@ -148,7 +202,8 @@ def main():
         registration_sha256 = hashlib.sha256(registration_raw).hexdigest()
         expected_keys = {"schemaVersion","kind","lifecycleId","rootId","root","commonGitDir","commonGitDirDev","commonGitDirIno","registrationSha256","registrationId","authoritativeInventorySha256","members"}
         if set(inventory) != expected_keys or inventory.get("schemaVersion") != 1 or inventory.get("kind") != "photonport.r01-preservation-target-inventory.v1": fail("authoritative inventory descriptor invalid")
-        if set(manifest) != expected_keys | {"inventorySha256"} or manifest.get("schemaVersion") != 1 or manifest.get("kind") != "photonport.r01-preservation-closure-manifest.v1": fail("closure manifest invalid")
+        manifest_keys = expected_keys | {"inventorySha256", "allocatorAttestation", "inventoryAttestation"}
+        if set(manifest) != manifest_keys or manifest.get("schemaVersion") != 1 or manifest.get("kind") != "photonport.r01-preservation-closure-manifest.v1": fail("closure manifest invalid")
         for record in (inventory, manifest):
             if (record.get("lifecycleId") != state["lifecycleId"] or record.get("rootId") != state["rootId"]
                     or record.get("root") != actual or record.get("commonGitDir") != common
@@ -163,6 +218,16 @@ def main():
         targets = inventory.get("members"); claimed = manifest.get("members")
         if not isinstance(targets, list) or not targets or len(set(targets)) != len(targets) or any(member(x) is None for x in targets): fail("inventory members invalid")
         if not isinstance(claimed, list) or len(set(claimed)) != len(claimed) or any(member(x) is None for x in claimed) or set(claimed) != set(targets): fail("manifest members omit or add authoritative targets")
+        base_commit = git_value(a.root, "HEAD", "base commit")
+        base_tree = git_value(a.root, "HEAD^{tree}", "base tree")
+        if base_commit != state["tuple"]["macCommit"]: fail("clone base commit differs from lifecycle tuple")
+        bindings = ((registration_raw, "external allocator registration"), (state_raw, "immutable lifecycle state"), (inventory_raw, "authoritative target inventory"))
+        allocator_attestation, allocator_source = attestation(a.allocator_attestation, "allocator attestation", a.trust_policy, a.trust_mode, state["tuple"], bindings)
+        inventory_attestation, inventory_source = attestation(a.inventory_attestation, "inventory attestation", a.trust_policy, a.trust_mode, state["tuple"], bindings)
+        if allocator_source != inventory_source or allocator_source.get("macTree") != base_tree:
+            fail("trusted attestations do not bind the clone base tree")
+        if manifest["allocatorAttestation"] != allocator_attestation or manifest["inventoryAttestation"] != inventory_attestation:
+            fail("closure manifest attestation bindings differ from trusted attestations")
         for target in sorted(targets, key=lambda x: (x.count('/'), x), reverse=True):
             parent, name, info = checked_child(rootfd, target)
             try:
@@ -171,7 +236,7 @@ def main():
                     else: os.unlink(name, dir_fd=parent)
                 else: os.rename(name, name + ".r01-preservation-renamed", src_dir_fd=parent, dst_dir_fd=parent)
             finally: os.close(parent)
-        result = {"schemaVersion":1,"kind":"photonport.r01-preservation-mutation-result.v1","lifecycleId":state["lifecycleId"],"rootId":state["rootId"],"root":actual,"commonGitDir":common,"commonGitDirDev":common_dev,"commonGitDirIno":common_ino,"registrationSha256":registration_sha256,"registrationId":registration["registrationId"],"authoritativeInventorySha256":registration["authoritativeInventorySha256"],"manifestSha256":digest(manifest),"inventorySha256":digest(inventory),"operation":a.operation,"members":sorted(targets)}
+        result = {"schemaVersion":1,"kind":"photonport.r01-preservation-mutation-result.v1","lifecycleId":state["lifecycleId"],"rootId":state["rootId"],"root":actual,"commonGitDir":common,"commonGitDirDev":common_dev,"commonGitDirIno":common_ino,"registrationSha256":registration_sha256,"registrationId":registration["registrationId"],"authoritativeInventorySha256":registration["authoritativeInventorySha256"],"allocatorAttestation":allocator_attestation,"inventoryAttestation":inventory_attestation,"manifestSha256":digest(manifest),"inventorySha256":digest(inventory),"operation":a.operation,"members":sorted(targets)}
         fd = os.open(a.result, os.O_WRONLY|os.O_CREAT|os.O_EXCL|NOFOLLOW, 0o600)
         try: os.write(fd, canon(result)+b"\n"); os.fsync(fd)
         finally: os.close(fd)

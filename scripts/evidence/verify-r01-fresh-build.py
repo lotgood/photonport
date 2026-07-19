@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed verifier for R01 fresh Xcode generation/build evidence."""
-import argparse, hashlib, json, os, plistlib, stat, subprocess, sys
+import argparse, hashlib, importlib.util, json, os, plistlib, stat, subprocess, sys
 from pathlib import Path
 
 HEX = set("0123456789abcdef")
@@ -140,10 +140,51 @@ def roots_ok(values, tuple_):
         untracked = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if clean.returncode or unstaged.returncode or untracked.stdout: die(ident + " root is dirty")
     return Path(values["ios"]).resolve()
+def trusted_attestation(root, rootfd, ref, tuple_, records):
+    envelope_raw = artifact(rootfd, ref, "attestation receipt")
+    receipt_path = root / relpath(ref["path"], "attestation receipt")
+    verifier_path = Path(__file__).with_name("verify_receipt.py")
+    spec = importlib.util.spec_from_file_location("r01_receipt_verifier", verifier_path)
+    if spec is None or spec.loader is None: die("receipt verifier is unavailable")
+    api = importlib.util.module_from_spec(spec); spec.loader.exec_module(api)
+    try:
+        _, payload, _, _, _ = api._decode_envelope(receipt_path, [root])
+        verifier = {
+            "scriptSha256": sha(verifier_path.read_bytes()),
+            "schemaSha256": sha((Path(__file__).parents[2] / "artifacts/schemas/receipt-envelope-v2.schema.json").read_bytes()),
+            "trustPolicySha256": sha((Path(__file__).with_name("trust-policy.json")).read_bytes()),
+            "ed25519ModuleSha256": sha((Path(__file__).with_name("ed25519_rfc8032.py")).read_bytes()),
+        }
+        verified = api.verify_envelope(receipt_path, expected={
+            "releaseAttemptId": payload.get("releaseAttemptId"), "gateId": "g004.automated",
+            "kind": "photonport.gate.g004-automated.v2", "sourceTuple": payload.get("sourceTuple"),
+            "verifier": verifier,
+        }, trust_policy_path=Path(__file__).with_name("trust-policy.json"), trust_mode="production", allowed_roots=[root, Path(__file__).parent])
+    except Exception as exc:
+        die("attestation receipt is unverifiable: " + str(exc))
+    if verified.get("exitCode") != 0 or verified.get("trusted") is not True:
+        die("attestation receipt is not trusted and passed")
+    if artifact(rootfd, ref, "attestation receipt") != envelope_raw:
+        die("attestation receipt changed while verifying")
+    outputs = payload.get("artifacts", {}).get("outputs")
+    if not isinstance(outputs, list) or len(outputs) != 1:
+        die("attestation receipt must bind exactly one attestation artifact")
+    binding_raw = artifact(rootfd, outputs[0], "signed fresh-build attestation")
+    if binding_raw != canonical(parse(binding_raw, "signed fresh-build attestation")) + b"\n":
+        die("signed fresh-build attestation is not canonical JSON")
+    binding = parse(binding_raw, "signed fresh-build attestation")
+    exact(binding, ("schemaVersion", "kind", "sourceTuple", "commandRecords", "before", "generation", "debug", "release"), "signed fresh-build attestation")
+    if binding["schemaVersion"] != 1 or binding["kind"] != "photonport.r01-fresh-build-attestation.v1" or binding["sourceTuple"] != tuple_:
+        die("signed fresh-build attestation does not bind source tuple")
+    exact(binding["commandRecords"], ("before", "generation", "debugBuild", "releaseBuild"), "attestation command records")
+    for key, label in (("before", "before"), ("generation", "generation"), ("debugBuild", "debug"), ("releaseBuild", "release")):
+        if binding["commandRecords"][key] != records[key if key in records else key + "Build"]:
+            die("signed fresh-build attestation command record differs")
+    return binding
 def main():
     p = argparse.ArgumentParser(); p.add_argument("--evidence-root", required=True); p.add_argument("--request", default="r01-fresh-build-request.json"); p.add_argument("--result", default="r01-fresh-build-result.json"); a = p.parse_args()
     rootfd = open_root(a.evidence_root); request_raw = read_at(rootfd, a.request, "request"); request = parse(request_raw, "request")
-    exact_keys = {"schemaVersion", "kind", "sourceTuple", "sourceRoots", "commandRecords"}
+    exact_keys = {"schemaVersion", "kind", "sourceTuple", "sourceRoots", "commandRecords", "attestation"}
     not_run_keys = {"schemaVersion", "kind", "sourceTuple", "sourceRoots", "result"}
     if set(request) == not_run_keys:
         if request["schemaVersion"] != 1 or request["kind"] != "photonport.r01-fresh-build-request.v1" or request["result"] != "not_run" or not tuple_ok(request["sourceTuple"]): die("not_run request contract is invalid")
@@ -200,7 +241,23 @@ def main():
         identity = {"bundleSha256": actual["sha256"], "bundleIdentifier": info.get("CFBundleIdentifier"), "bundleVersion": info.get("CFBundleShortVersionString"), "buildVersion": info.get("CFBundleVersion"), "executableSha256": sha(exe_raw)}
         if record["observations"]["bundleIdentity"] != identity or not all(isinstance(identity[k], str) and identity[k] for k in ("bundleIdentifier", "bundleVersion", "buildVersion")): die(label + " actual bundle identity mismatch")
         bundle_results[label] = identity
-    result = {"schemaVersion": 1, "kind": "photonport.r01-fresh-build-result.v1", "result": "passed", "requestSha256": sha(request_raw), "sourceTuple": request["sourceTuple"], "commandRecords": request["commandRecords"], "generatedProject": generation["observations"]["generatedProject"], "bundles": bundle_results}
+    binding = trusted_attestation(Path(a.evidence_root).resolve(), rootfd, request["attestation"], request["sourceTuple"], request["commandRecords"])
+    def check_bound_command(label, record, extra):
+        exact(binding[label], ("command", *extra), "attestation " + label)
+        exact(binding[label]["command"], ("argv", "cwd", "exitCode", "stdout", "stderr"), "attestation " + label + " command")
+        if binding[label]["command"] != {key: record[key] for key in ("argv", "cwd", "exitCode", "stdout", "stderr")}:
+            die("signed fresh-build attestation " + label + " command details differ")
+    check_bound_command("before", before, ("generatedProjectPath", "generatedProjectAbsent", "sourceManifest"))
+    if binding["before"] != {"command": binding["before"]["command"], "generatedProjectPath": project, "generatedProjectAbsent": True, "sourceManifest": before["observations"]["sourceManifest"]}:
+        die("signed fresh-build attestation before observations differ")
+    check_bound_command("generation", generation, ("generatedProjectPath", "generatedProject", "sourceManifest"))
+    if binding["generation"] != {"command": binding["generation"]["command"], "generatedProjectPath": project, "generatedProject": generation["observations"]["generatedProject"], "sourceManifest": generation["observations"]["sourceManifest"]}:
+        die("signed fresh-build attestation generation observations differ")
+    for label, record in (("debug", debug), ("release", release)):
+        check_bound_command(label, record, ("generatedProject", "sourceManifest", "bundleIdentity"))
+        if binding[label] != {"command": binding[label]["command"], "generatedProject": generation["observations"]["generatedProject"], "sourceManifest": generation["observations"]["sourceManifest"], "bundleIdentity": bundle_results[label]}:
+            die("signed fresh-build attestation " + label + " observations differ")
+    result = {"schemaVersion": 1, "kind": "photonport.r01-fresh-build-result.v1", "result": "passed", "requestSha256": sha(request_raw), "sourceTuple": request["sourceTuple"], "commandRecords": request["commandRecords"], "attestation": request["attestation"], "generatedProject": generation["observations"]["generatedProject"], "bundles": bundle_results}
     out = canonical(result) + b"\n"; parts = Path(relpath(a.result, "result")).parts
     fd = os.dup(rootfd)
     try:

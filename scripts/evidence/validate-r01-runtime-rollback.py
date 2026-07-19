@@ -10,6 +10,7 @@ import re
 import stat
 import sys
 from datetime import datetime, timezone
+import importlib.util
 from pathlib import Path
 
 MAX_BYTES = 1_048_576
@@ -27,6 +28,8 @@ EXPECTED = {
     "strict-parser-observation": ("observation", "strict-parser", "rejected"),
     "ping-observation": ("observation", "ping", "received"),
 }
+RUNTIME_OBSERVATION_KIND = "photonport.r01-runtime-observation.v1"
+TRUST_POLICY_PATH = Path(__file__).with_name("trust-policy.json")
 
 class EvidenceError(Exception):
     pass
@@ -135,7 +138,7 @@ def validate_timestamp(value):
         raise EvidenceError("record observedAt is not UTC")
 
 def validate_request(value):
-    exact(value, ("schemaVersion", "kind", "status", "sourceTuple", "device", "transport", "artifacts"), "request")
+    exact(value, ("schemaVersion", "kind", "status", "sourceTuple", "device", "transport", "artifacts", "attestation", "trustPolicy"), "request")
     if value["schemaVersion"] != 1 or value["kind"] != "photonport.r01-runtime-rollback-request.v1":
         raise EvidenceError("unsupported request schema")
     if value["status"] not in ("executed", "not_run"):
@@ -147,6 +150,13 @@ def validate_request(value):
         raise EvidenceError("device id is invalid")
     if value["transport"]["kind"] not in ("usb", "wifi") or not isinstance(value["transport"]["id"], str) or not IDENT.fullmatch(value["transport"]["id"]):
         raise EvidenceError("transport is invalid")
+    exact(value["trustPolicy"], ("mode",), "trustPolicy")
+    if value["trustPolicy"]["mode"] != "production":
+        raise EvidenceError("only the canonical production trust policy is permitted")
+    exact(value["attestation"], ("receiptPath", "expectedKind"), "attestation")
+    if (not isinstance(value["attestation"]["receiptPath"], str) or
+            value["attestation"]["expectedKind"] != RUNTIME_OBSERVATION_KIND):
+        raise EvidenceError("attestation is malformed")
     artifacts = value["artifacts"]
     if value["status"] == "not_run":
         if artifacts != []:
@@ -169,53 +179,80 @@ def validate_request(value):
         raise EvidenceError("request is missing a required artifact type")
     return indexed
 
-def validate_observation_proof(raw, descriptor, request, expected_kind):
-    if sha256(raw) != descriptor["sha256"]:
-        raise EvidenceError(expected_kind + " hash mismatch")
-    record = parse_json(raw, expected_kind)
-    exact(record, ("schemaVersion", "kind", "sourceTuple", "transport", "deviceIdentitySha256", "command", "outcome"), expected_kind + " record")
-    if record["schemaVersion"] != 1 or record["kind"] != expected_kind or record["sourceTuple"] != request["sourceTuple"]:
-        raise EvidenceError(expected_kind + " record is not bound to the requested schema, kind, and tuple")
-    exact(record["transport"], ("kind", "id"), expected_kind + " transport")
-    if record["transport"] != request["transport"]:
-        raise EvidenceError(expected_kind + " record transport does not match the request")
-    device_identity = request["device"].get("identitySha256", request["device"].get("id"))
-    if record["deviceIdentitySha256"] != device_identity:
-        raise EvidenceError(expected_kind + " record device identity does not match the request")
-    exact(record["command"], ("exitCode",), expected_kind + " command")
-    if record["command"]["exitCode"] != 0 or record["outcome"] != "passed":
-        raise EvidenceError(expected_kind + " record is not a successful typed observation")
-def validate_record(raw, descriptor, request):
-    if descriptor["artifactType"] in ("watchdog-observation", "strict-parser-observation"):
-        validate_observation_proof(raw, descriptor, request, descriptor["artifactType"])
-        return
-    if sha256(raw) != descriptor["sha256"]:
-        raise EvidenceError(descriptor["artifactType"] + " hash mismatch")
-    record = parse_json(raw, descriptor["artifactType"])
-    kind = descriptor["artifactType"]
-    record_type, operation, outcome = EXPECTED[kind]
-    required = {"schemaVersion", "kind", "recordType", "operation", "observedAt", "sourceTuple", "device", "transport", "exitStatus", "outcome"}
-    if kind == "ping-observation":
-        required.add("ping")
-    exact(record, required, kind + " record")
-    if (record["schemaVersion"] != 1 or record["kind"] != "photonport.r01-runtime-observation.v1" or
-            record["recordType"] != record_type or record["operation"] != operation or record["outcome"] != outcome or
-            record["exitStatus"] != 0):
-        raise EvidenceError(kind + " record is not a successful typed observation")
-    validate_timestamp(record["observedAt"])
-    validate_binding(record["sourceTuple"], request["sourceTuple"])
-    validate_binding(record["device"], request["device"])
-    validate_binding(record["transport"], request["transport"])
-    if kind == "ping-observation":
-        exact(record["ping"], ("requestId", "responseId", "deviceId"), "ping proof")
-        ping = record["ping"]
-        if (any(not isinstance(ping[key], str) or not IDENT.fullmatch(ping[key]) for key in ping) or
-                ping["requestId"] != ping["responseId"] or ping["deviceId"] != request["device"]["id"]):
-            raise EvidenceError("ping proof is not an id-bearing response for the requested device")
+def receipt_module():
+    module_path = Path(__file__).with_name("verify_receipt.py")
+    spec = importlib.util.spec_from_file_location("photonport_r01_receipt", module_path)
+    if spec is None or spec.loader is None:
+        raise EvidenceError("receipt verifier is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+def signed_observation(request, root: Path):
+    receipt = root / request["attestation"]["receiptPath"]
+    verifier = receipt_module()
+    try:
+        _, unsigned_payload, _, _, _ = verifier._decode_envelope(receipt.resolve(), [root, TRUST_POLICY_PATH.parent])
+    except Exception as exc:
+        raise EvidenceError("attestation receipt cannot be decoded") from exc
+    expected_verifier = unsigned_payload.get("verifier") if isinstance(unsigned_payload, dict) else None
+    if not isinstance(expected_verifier, dict):
+        raise EvidenceError("attestation receipt lacks verifier digests")
+    verified = verifier.verify_envelope(
+        receipt, expected={"verifier": expected_verifier}, trust_policy_path=TRUST_POLICY_PATH,
+        trust_mode=request["trustPolicy"]["mode"], allowed_roots=[root, TRUST_POLICY_PATH.parent])
+    if verified.get("exitCode") != 0 or not verified.get("trusted"):
+        raise EvidenceError("attestation receipt is not a valid trusted DSSE/Ed25519 signature")
+    _, payload, _, _, _ = verifier._decode_envelope(receipt.resolve(), [root, TRUST_POLICY_PATH.parent])
+    invocation = payload.get("invocation")
+    if not isinstance(invocation, dict) or invocation.get("tool") != request["attestation"]["expectedKind"]:
+        raise EvidenceError("signed receipt does not carry the required runtime observation kind")
+    argv = invocation.get("argv")
+    if not isinstance(argv, list) or len(argv) != 1 or not isinstance(argv[0], str):
+        raise EvidenceError("signed runtime observation argv is malformed")
+    raw = argv[0].encode("utf-8")
+    observation = parse_json(raw, "signed runtime observation")
+    if raw != verifier.canonical_json(observation):
+        raise EvidenceError("signed runtime observation is not canonical JSON")
+    exact(observation, ("schemaVersion", "kind", "sourceTuple", "device", "transport", "hostIdentitySha256", "observedAt", "command", "watchdog", "strictParser", "ping", "artifactSha256"), "signed runtime observation")
+    if observation["schemaVersion"] != 1 or observation["kind"] != request["attestation"]["expectedKind"]:
+        raise EvidenceError("signed runtime observation schema is invalid")
+    validate_tuple(observation["sourceTuple"])
+    validate_binding(observation["sourceTuple"], request["sourceTuple"])
+    validate_binding(observation["device"], request["device"])
+    validate_binding(observation["transport"], request["transport"])
+    if not isinstance(observation["hostIdentitySha256"], str) or not HEX64.fullmatch(observation["hostIdentitySha256"]):
+        raise EvidenceError("signed runtime observation host identity is invalid")
+    validate_timestamp(observation["observedAt"])
+    exact(observation["command"], ("argv", "exitCode", "stdoutSha256", "stderrSha256"), "signed command")
+    command = observation["command"]
+    if (not isinstance(command["argv"], list) or not command["argv"] or not all(isinstance(arg, str) for arg in command["argv"]) or
+            command["exitCode"] != 0 or any(not isinstance(command[key], str) or not HEX64.fullmatch(command[key]) for key in ("stdoutSha256", "stderrSha256"))):
+        raise EvidenceError("signed command execution is invalid")
+    exact(observation["watchdog"], ("outcome", "exitCode"), "signed watchdog")
+    if observation["watchdog"] != {"outcome": "stopped", "exitCode": 0}:
+        raise EvidenceError("signed watchdog was not stopped")
+    exact(observation["strictParser"], ("malformedInputSha256", "outcome", "exitCode"), "signed strict parser")
+    strict = observation["strictParser"]
+    if strict["outcome"] != "rejected" or strict["exitCode"] != 0 or not isinstance(strict["malformedInputSha256"], str) or not HEX64.fullmatch(strict["malformedInputSha256"]):
+        raise EvidenceError("signed strict parser did not reject malformed input")
+    exact(observation["ping"], ("requestId", "responseId", "deviceId"), "signed ping")
+    ping = observation["ping"]
+    if (any(not isinstance(ping[key], str) or not IDENT.fullmatch(ping[key]) for key in ping) or
+            ping["requestId"] != ping["responseId"] or ping["deviceId"] != request["device"]["id"]):
+        raise EvidenceError("signed ping is not id-bearing for the requested device")
+    exact(observation["artifactSha256"], ARTIFACT_TYPES, "signed artifact hashes")
+    if any(not isinstance(observation["artifactSha256"][key], str) or not HEX64.fullmatch(observation["artifactSha256"][key]) for key in ARTIFACT_TYPES):
+        raise EvidenceError("signed artifact hashes are invalid")
+    return observation
+def validate_record(raw, descriptor, request, observation):
+    if sha256(raw) != descriptor["sha256"] or sha256(raw) != observation["artifactSha256"][descriptor["artifactType"]]:
+        raise EvidenceError(descriptor["artifactType"] + " hash is not bound by the signed observation")
 
 def result(request, status, artifacts, failures):
     return {"schemaVersion": 1, "kind": "photonport.r01-runtime-rollback-result.v1", "status": status,
             "sourceTuple": request["sourceTuple"], "device": request["device"], "transport": request["transport"],
+            "attestation": request["attestation"], "trustPolicy": request["trustPolicy"],
             "artifacts": artifacts, "failures": sorted(set(failures))}
 
 def main():
@@ -247,16 +284,22 @@ def main():
         failures.append(str(exc))
     if rootfd is not None:
         try:
-            for artifact_type in ARTIFACT_TYPES:
-                descriptor = descriptors[artifact_type]
-                try:
-                    raw = read_rooted(rootfd, descriptor["path"], artifact_type)
-                    if len(raw) != descriptor["size"]:
-                        raise EvidenceError(artifact_type + " durable bytes do not match descriptor size")
-                    validate_record(raw, descriptor, request)
-                    artifacts.append(dict(descriptor))
-                except EvidenceError as exc:
-                    failures.append(str(exc))
+            try:
+                observation = signed_observation(request, Path(args.evidence_root).resolve())
+            except EvidenceError as exc:
+                observation = None
+                failures.append(str(exc))
+            if observation is not None:
+                for artifact_type in ARTIFACT_TYPES:
+                    descriptor = descriptors[artifact_type]
+                    try:
+                        raw = read_rooted(rootfd, descriptor["path"], artifact_type)
+                        if len(raw) != descriptor["size"]:
+                            raise EvidenceError(artifact_type + " durable bytes do not match descriptor size")
+                        validate_record(raw, descriptor, request, observation)
+                        artifacts.append(dict(descriptor))
+                    except EvidenceError as exc:
+                        failures.append(str(exc))
         finally:
             os.close(rootfd)
     output = result(request, "passed" if not failures else "blocked", artifacts, failures)

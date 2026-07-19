@@ -4,7 +4,7 @@
   "title": "R01 runtime rollback validation result",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "kind", "status", "sourceTuple", "device", "transport", "artifacts", "failures"],
+  "required": ["schemaVersion", "kind", "status", "sourceTuple", "device", "transport", "attestation", "trustPolicy", "artifacts", "failures"],
   "properties": {
     "schemaVersion": {"const": 1},
     "kind": {"const": "photonport.r01-runtime-rollback-result.v1"},
@@ -12,6 +12,19 @@
     "sourceTuple": {"$ref": "r01-runtime-rollback-request-v1.schema.json#/$defs/sourceTuple"},
     "device": {"$ref": "r01-runtime-rollback-request-v1.schema.json#/$defs/device"},
     "transport": {"$ref": "r01-runtime-rollback-request-v1.schema.json#/$defs/transport"},
+    "attestation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["receiptPath", "expectedKind"],
+      "properties": {
+        "receiptPath": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"},
+        "expectedKind": {"const": "photonport.r01-runtime-observation.v1"}
+      }
+    },
+    "trustPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {"mode": {"const": "production"}}
+    },
     "artifacts": {
       "type": "array", "minItems": 0, "maxItems": 4,
       "items": {

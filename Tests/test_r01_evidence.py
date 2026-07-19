@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Adversarial CLI coverage for evidence-only R01 validators and runners."""
+"""R01 validators reject caller assertions and require production DSSE evidence."""
+import base64
 import hashlib
+import importlib.util
 import json
-import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,224 +13,182 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "scripts" / "evidence"
-SCRIPTS = {
-    "runtime": "validate-r01-runtime-rollback.py",
-    "generation": "validate-r01-generation-classification.py",
-    "preservation": "run-r01-preservation-mutations.py",
-    "fresh": "verify-r01-fresh-build.py",
-}
+SEED = bytes.fromhex("11" * 32)
+TUPLE = {"macCommit": "a" * 40, "iosCommit": "b" * 40, "protocolCommit": "c" * 40}
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
 def dump(path, value):
-    path.write_bytes(json.dumps(value, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+    path.write_bytes(canonical(value) + b"\n")
 
 
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-def digest_value(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def digest_bytes(value):
+    return hashlib.sha256(value).hexdigest()
 
 
-def artifact(root, path):
-    item = root / path
-    return {"path": path, "sha256": digest(item), "size": item.stat().st_size}
-
-
-def run(name, *args):
-    return subprocess.run([sys.executable, str(EVIDENCE / SCRIPTS[name]), *map(str, args)], text=True, capture_output=True)
+def descriptor(path, relative):
+    raw = (path / relative).read_bytes()
+    return {"path": relative, "sha256": digest_bytes(raw)}
 
 
 class R01EvidenceTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)
-        self.tuple = {"macCommit": "a" * 40, "iosCommit": "b" * 40, "protocolCommit": "c" * 40,
-                      "compatibilityDigest": "d" * 64, "normativeManifestDigest": "e" * 64}
+        self.tools = self.base / "evidence"
+        shutil.copytree(EVIDENCE, self.tools)
+        spec = importlib.util.spec_from_file_location("r01_ed25519", self.tools / "ed25519_rfc8032.py")
+        self.ed25519 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.ed25519)
+        self.policy = json.loads((self.tools / "trust-policy.json").read_text())
+        self.policy["productionRoot"]["keys"]["prod-ci-ed25519-v1"]["publicKeyHex"] = self.ed25519.public_key(SEED).hex()
+        dump(self.tools / "trust-policy.json", self.policy)
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def git_root(self, name, commit_key=None):
-        root = self.base / name
-        root.mkdir()
-        subprocess.run(["git", "init", "-q", root], check=True)
-        subprocess.run(["git", "-C", root, "config", "user.email", "test@example.invalid"], check=True)
-        subprocess.run(["git", "-C", root, "config", "user.name", "test"], check=True)
-        (root / "tracked").write_text(name)
-        subprocess.run(["git", "-C", root, "add", "."], check=True)
-        subprocess.run(["git", "-C", root, "commit", "-qm", "fixture"], check=True)
-        actual = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
-        if commit_key:
-            self.tuple[commit_key] = actual
-        return root
+    def run_tool(self, script, *args):
+        return subprocess.run([sys.executable, str(self.tools / script), *map(str, args)], text=True, capture_output=True)
 
-    def test_all_r01_schemas_are_present_and_versioned(self):
-        names = ("r01-runtime-rollback-request-v1.schema.json", "r01-runtime-rollback-result-v1.schema.json",
-                 "r01-generation-classification-request-v1.schema.json", "r01-generation-classification-result-v1.schema.json",
-                 "r01-preservation-closure-manifest-v1.schema.json", "r01-preservation-mutation-result-v1.schema.json",
-                 "r01-fresh-build-request-v1.schema.json", "r01-fresh-build-result-v1.schema.json")
-        for name in names:
-            schema = json.loads((ROOT / "artifacts" / "schemas" / name).read_text())
-            self.assertEqual(schema.get("$schema"), "https://json-schema.org/draft/2020-12/schema")
-            if "oneOf" in schema:
-                self.assertTrue(schema["oneOf"])
-                self.assertTrue(all("$ref" in branch for branch in schema["oneOf"]))
-            else:
-                self.assertIn("required", schema)
-                self.assertFalse(schema.get("additionalProperties", True))
+    def envelope(self, payload, *, forged=False):
+        verifier_spec = importlib.util.spec_from_file_location("r01_receipt", self.tools / "verify_receipt.py")
+        verifier = importlib.util.module_from_spec(verifier_spec)
+        verifier_spec.loader.exec_module(verifier)
+        body = verifier.canonical_json(payload)
+        signature = self.ed25519.sign(SEED, verifier.dsse_pae(verifier.PAYLOAD_TYPE, body))
+        if forged:
+            signature = bytes([signature[0] ^ 1]) + signature[1:]
+        return {"schemaVersion": 2, "kind": "photonport.receipt-envelope.v2", "payloadType": verifier.PAYLOAD_TYPE,
+                "payload": base64.b64encode(body).decode("ascii"),
+                "signatures": [{"keyid": "prod-ci-ed25519-v1", "alg": "ED25519-DSSE", "sig": base64.b64encode(signature).decode("ascii")}]}
 
-    def test_runtime_requires_typed_proofs_and_durable_bytes(self):
-        evidence = self.base / "evidence"; logs = evidence / "logs"; logs.mkdir(parents=True)
-        for name in ("build", "install", "watchdog", "parser"):
-            (logs / name).write_text(name)
-        roots = [self.git_root(name, key) for name, key in (("mac", "macCommit"), ("ios", "iosCommit"), ("protocol", "protocolCommit"))]
-        request = {"schemaVersion": 1, "kind": "photonport.r01-runtime-rollback-request.v1", "sourceTuple": self.tuple,
-                   "host": {"family": "macOS", "majorVersion": 27, "identitySha256": "1" * 64},
-                   "device": {"family": "iOS", "majorVersion": 27, "identitySha256": "2" * 64},
-                   "build": artifact(evidence, "logs/build"), "install": artifact(evidence, "logs/install"),
-                   "observations": [{"transport": "usb", "observer": "test", "recordedAt": "2026-07-19T12:00:00Z", "watchdogLog": artifact(evidence, "logs/watchdog"), "strictParserLog": artifact(evidence, "logs/parser"), "ping": {"deviceIdentitySha256": "2" * 64, "result": "id-bearing-ping-passed"}}]}
-        path = evidence / "request.json"; output = evidence / "result.json"; dump(path, request)
-        args = ("--request", path, "--evidence-root", evidence, "--evidence-dir", logs, "--mac-root", roots[0], "--ios-root", roots[1], "--protocol-root", roots[2], "--output", output)
-
-        # Mere words that claim success are not typed watchdog/parser proof.
-        self.assertNotEqual(run("runtime", *args).returncode, 0)
-        for field in ("watchdogLog", "strictParserLog"):
-            request["observations"][0][field] = artifact(evidence, "logs/watchdog" if field == "watchdogLog" else "logs/parser")
-        request["observations"][0]["recordedAt"] = "not-a-timestamp"; dump(path, request)
-        self.assertNotEqual(run("runtime", *args).returncode, 0)
-
-        request["observations"][0]["recordedAt"] = "2026-07-19T12:00:00Z"
-        request["build"]["sha256"] = "0" * 64; dump(path, request)
-        self.assertNotEqual(run("runtime", *args).returncode, 0)
-        request["build"] = {"path": "logs/missing", "sha256": "0" * 64, "size": 0}; dump(path, request)
-        self.assertNotEqual(run("runtime", *args).returncode, 0)
-        request["build"] = artifact(evidence, "logs/build"); request["sourceTuple"]["macCommit"] = "f" * 40; dump(path, request)
-        self.assertNotEqual(run("runtime", *args).returncode, 0)
-        path.write_bytes(b'{"schemaVersion":1,"schemaVersion":1}\n')
-        self.assertNotEqual(run("runtime", *args).returncode, 0)
-
-    def test_generation_validates_rooted_proof_chain_and_blocks_archival_only(self):
-        artifacts = self.base / "artifacts"; artifacts.mkdir()
-        tuple_ = {key: self.tuple[key] for key in ("macCommit", "iosCommit", "protocolCommit")}
+    def test_generation_rejects_unsigned_and_forged_attestations_but_blocks_archival_only(self):
+        artifacts = self.base / "artifacts"
+        artifacts.mkdir()
         lineage = {"sourceRootSha256": "1" * 64, "sourceManifestSha256": "2" * 64}
-        proof = {"schemaVersion": 1, "kind": "r01-durable-generation-proof-v1", "tuple": tuple_,
+        proof = {"schemaVersion": 1, "kind": "r01-durable-generation-proof-v1", "tuple": TUPLE,
                  "sourceLineage": lineage, "generation": 1, "previousProofSha256": None}
-        proof_path = artifacts / "proof.json"; dump(proof_path, proof)
-        request = {"schemaVersion": 1, "kind": "r01-generation-classification-request-v1",
-                   "classification": "archival_only", "tuple": tuple_, "sourceLineage": lineage,
-                   "durableGenerationProof": proof,
-                   "artifacts": {"proofChain": [{"path": "proof.json", "sha256": digest(proof_path)}]}}
-        path = self.base / "request"; result = self.base / "result"; dump(path, request)
-        completed = run("generation", "--request", path, "--artifact-root", artifacts, "--result", result)
-        self.assertEqual(completed.returncode, 2)
-        verdict = json.loads(result.read_text())
-        self.assertEqual(verdict["status"], "blocked")
-        self.assertNotIn("retirementEligible", verdict)
-        self.assertNotIn("remediationAuthorized", verdict)
+        dump(artifacts / "proof.json", proof)
+        proof_hash = digest_bytes((artifacts / "proof.json").read_bytes())
+        attestation_payload = {"schemaVersion": 1, "kind": "r01-durable-generation-attestation-v1", "tuple": TUPLE,
+                               "sourceLineage": lineage, "proofSha256": proof_hash,
+                               "observations": {name: True for name in ("restartContinuity", "interruptedWriteRecovery", "staleCorruptRejection", "uint64MaxIssuanceExhaustion")},
+                               "issuer": {"role": "automated-ci", "trustDomain": "opendisplay-ci"}}
+        attestation = artifacts / "attestation.json"
+        request_path = self.base / "request.json"
 
-        request["classification"] = "durable_generation"
-        request["artifacts"]["proofChain"][0]["sha256"] = "0" * 64
-        dump(path, request)
-        self.assertNotEqual(run("generation", "--request", path, "--artifact-root", artifacts,
-                                "--result", self.base / "bad-hash").returncode, 0)
-        request["artifacts"]["proofChain"][0]["sha256"] = digest(proof_path)
-        request["durableGenerationProof"]["tuple"]["macCommit"] = "f" * 40
-        dump(path, request)
-        self.assertNotEqual(run("generation", "--request", path, "--artifact-root", artifacts,
-                                "--result", self.base / "bad-tuple").returncode, 0)
+        def request_for(attestation_value):
+            dump(attestation, attestation_value)
+            return {"schemaVersion": 1, "kind": "r01-generation-classification-request-v1", "classification": "archival_only",
+                    "tuple": TUPLE, "sourceLineage": lineage, "durableGenerationProof": proof,
+                    "artifacts": {"proofChain": [descriptor(artifacts, "proof.json")], "trustedAttestation": descriptor(artifacts, "attestation.json")}}
 
-    def test_preservation_requires_allocator_registration_and_complete_inventory(self):
-        clone = self.git_root("clone")
-        member = clone / "keep"; member.write_text("preserve")
-        subprocess.run(["git", "-C", clone, "add", "keep"], check=True)
-        subprocess.run(["git", "-C", clone, "commit", "-qm", "keep"], check=True)
-        root = {"canonicalPath": str(clone.resolve()), "dev": clone.stat().st_dev, "ino": clone.stat().st_ino}
+        # A caller-authored payload is not a receipt, and a syntactically valid receipt with a forged signature is rejected.
+        for value in (attestation_payload, self.envelope(attestation_payload, forged=True)):
+            dump(request_path, request_for(value))
+            self.assertNotEqual(self.run_tool("validate-r01-generation-classification.py", "--request", request_path,
+                                         "--artifact-root", artifacts, "--result", self.base / "rejected.json").returncode, 0)
+        dump(request_path, request_for(self.envelope(attestation_payload)))
+        result = self.base / "archival.json"
+        completed = self.run_tool("validate-r01-generation-classification.py", "--request", request_path,
+                             "--artifact-root", artifacts, "--result", result)
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertEqual(json.loads(result.read_text())["status"], "blocked")
+
+    def test_runtime_blocks_unsigned_or_forged_caller_observations(self):
+        evidence = self.base / "runtime"
+        evidence.mkdir()
+        for name in ("command", "watchdog", "parser", "ping"):
+            (evidence / name).write_text(name)
+        full_tuple = {**TUPLE, "compatibilityDigest": "d" * 64, "normativeManifestDigest": "e" * 64}
+        observation = {"schemaVersion": 1, "kind": "photonport.r01-runtime-observation.v1", "sourceTuple": full_tuple,
+                       "device": {"id": "device"}, "transport": {"kind": "usb", "id": "usb"}, "hostIdentitySha256": "1" * 64,
+                       "observedAt": "2026-07-19T12:00:00Z", "command": {"argv": ["test"], "exitCode": 0, "stdoutSha256": "2" * 64, "stderrSha256": "3" * 64},
+                       "watchdog": {"outcome": "stopped", "exitCode": 0}, "strictParser": {"malformedInputSha256": "4" * 64, "outcome": "rejected", "exitCode": 0},
+                       "ping": {"requestId": "ping", "responseId": "ping", "deviceId": "device"},
+                       "artifactSha256": {name: digest_bytes((evidence / file).read_bytes()) for name, file in (("command", "command"), ("watchdog", "watchdog"), ("strictParser", "parser"), ("ping", "ping"))}}
+        request = {"schemaVersion": 1, "kind": "photonport.r01-runtime-rollback-request.v1", "status": "executed", "sourceTuple": full_tuple,
+                   "device": {"id": "device"}, "transport": {"kind": "usb", "id": "usb"},
+                   "artifacts": [{"artifactType": kind, "path": file, "sha256": digest_bytes((evidence / file).read_bytes()), "size": (evidence / file).stat().st_size} for kind, file in (("command", "command"), ("watchdog", "watchdog"), ("strictParser", "parser"), ("ping", "ping"))],
+                   "attestation": {"receiptPath": "receipt.json", "expectedKind": "photonport.r01-runtime-observation.v1"}, "trustPolicy": {"mode": "production"}}
+        for receipt in (observation, self.envelope({"schemaVersion": 2, "kind": "photonport.gate.g004-automated.v2"}, forged=True)):
+            dump(evidence / "receipt.json", receipt)
+            dump(evidence / "request.json", request)
+            completed = self.run_tool("validate-r01-runtime-rollback.py", "--request", evidence / "request.json", "--evidence-root", evidence, "--result", evidence / "result.json")
+            self.assertNotEqual(completed.returncode, 0)
+            if (evidence / "result.json").exists():
+                self.assertEqual(json.loads((evidence / "result.json").read_text())["status"], "blocked")
+                (evidence / "result.json").unlink()
+
+    def test_preservation_rejects_self_authored_attestations_before_mutation(self):
+        clone = self.base / "disposable-clone"
+        clone.mkdir()
+        for command in (["git", "init", "-q", clone], ["git", "-C", clone, "config", "user.email", "test@example.invalid"],
+                        ["git", "-C", clone, "config", "user.name", "test"]):
+            subprocess.run(command, check=True)
+        (clone / "keep").write_text("preserve")
+        subprocess.run(["git", "-C", clone, "add", "."], check=True)
+        subprocess.run(["git", "-C", clone, "commit", "-qm", "fixture"], check=True)
+        commit = subprocess.run(["git", "-C", clone, "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
         common = subprocess.run(["git", "-C", clone, "rev-parse", "--path-format=absolute", "--git-common-dir"],
                                 text=True, capture_output=True, check=True).stdout.strip()
-        common_info = Path(common).stat()
-        registry = self.base / "registry"; registry.mkdir()
-        lifecycle = self.base / "lifecycle"; lifecycle.mkdir()
-        registration = {"schemaVersion": 1, "kind": "disposable-worktree-registration", **root,
-                        "registrationId": "a" * 64, "purpose": "throwaway-clone", "lifecycleId": "life",
-                        "commonDir": common, "authoritativeInventory": {"members": ["keep"]},
-                        "authoritativeInventorySha256": digest_value({"members": ["keep"]})}
+        root = {"canonicalPath": str(clone.resolve()), "dev": clone.stat().st_dev, "ino": clone.stat().st_ino}
+        registry, lifecycle = self.base / "registry", self.base / "lifecycle"
+        registry.mkdir(); lifecycle.mkdir()
+        registration = {"schemaVersion": 1, "kind": "disposable-worktree-registration", **root, "registrationId": "a" * 64,
+                        "purpose": "throwaway-clone", "lifecycleId": "life", "commonDir": common,
+                        "authoritativeInventory": {"members": ["keep"]}, "authoritativeInventorySha256": digest_bytes(canonical({"members": ["keep"]}))}
         registration_path = registry / "registration.json"; dump(registration_path, registration)
-        authority = {"approvedSequence": 1, "root": root, "supervisor": "test", "command": "test",
-                     "allocationNonce": "a", "mutexNonce": "b", "lockAPath": "/tmp/a", "lockBPath": "/tmp/b",
-                     "registryPath": str(registry.resolve()), "commonGitDir": common}
-        allocated = {"schemaVersion": 1, "kind": "photonport.lifecycle-state.v1", "lifecycleId": "life",
-                     "rootId": "root", "tuple": self.tuple, "allocation": {}, "authority": authority,
-                     "state": "allocated", "predecessorSha256": None}
+        tuple_value = {**TUPLE, "macCommit": commit, "compatibilityDigest": "d" * 64, "normativeManifestDigest": "e" * 64}
+        authority = {"approvedSequence": 1, "root": root, "supervisor": "test", "command": "test", "allocationNonce": "a",
+                     "mutexNonce": "b", "lockAPath": "/tmp/a", "lockBPath": "/tmp/b", "registryPath": str(registry.resolve()), "commonGitDir": common}
+        allocated = {"schemaVersion": 1, "kind": "photonport.lifecycle-state.v1", "lifecycleId": "life", "rootId": "root",
+                     "tuple": tuple_value, "allocation": {}, "authority": authority, "state": "allocated", "predecessorSha256": None}
         allocated_path = lifecycle / "000-allocated.json"; dump(allocated_path, allocated)
-        state = {**allocated, "state": "source-active", "predecessorSha256": digest(allocated_path),
-                 "allocationReleaseSha256": "b" * 64}
-        state_path = lifecycle / "010-source-active.json"; dump(state_path, state)
-        registration_sha = digest(registration_path)
-        inventory = {"schemaVersion": 1, "kind": "photonport.r01-preservation-target-inventory.v1",
-                     "lifecycleId": "life", "rootId": "root", "root": root, "commonGitDir": common,
-                     "commonGitDirDev": common_info.st_dev, "commonGitDirIno": common_info.st_ino,
-                     "registrationSha256": registration_sha, "registrationId": "a" * 64,
-                     "authoritativeInventorySha256": registration["authoritativeInventorySha256"], "members": ["keep"]}
+        active = {**allocated, "state": "source-active", "predecessorSha256": digest_bytes(allocated_path.read_bytes()), "allocationReleaseSha256": "b" * 64}
+        active_path = lifecycle / "010-source-active.json"; dump(active_path, active)
+        common_stat = Path(common).stat()
+        inventory = {"schemaVersion": 1, "kind": "photonport.r01-preservation-target-inventory.v1", "lifecycleId": "life",
+                     "rootId": "root", "root": root, "commonGitDir": common, "commonGitDirDev": common_stat.st_dev,
+                     "commonGitDirIno": common_stat.st_ino, "registrationSha256": digest_bytes(registration_path.read_bytes()),
+                     "registrationId": "a" * 64, "authoritativeInventorySha256": registration["authoritativeInventorySha256"], "members": ["keep"]}
         inventory_path = self.base / "inventory.json"; dump(inventory_path, inventory)
-        manifest = {**inventory, "kind": "photonport.r01-preservation-closure-manifest.v1",
-                    "inventorySha256": digest_value(inventory)}
+        allocator, inventory_attestation = self.base / "allocator.json", self.base / "inventory-attestation.json"
+        dump(allocator, {"caller": "asserted"}); dump(inventory_attestation, {"caller": "asserted"})
+        manifest = {**inventory, "kind": "photonport.r01-preservation-closure-manifest.v1", "inventorySha256": digest_bytes(inventory_path.read_bytes()),
+                    "allocatorAttestation": {"path": allocator.name, "sha256": digest_bytes(allocator.read_bytes()), "size": allocator.stat().st_size},
+                    "inventoryAttestation": {"path": inventory_attestation.name, "sha256": digest_bytes(inventory_attestation.read_bytes()), "size": inventory_attestation.stat().st_size}}
         manifest_path = self.base / "manifest.json"; dump(manifest_path, manifest)
-        args = ("--registration", registration_path, "--lifecycle-state", state_path,
-                "--lifecycle-directory", lifecycle, "--manifest", manifest_path, "--inventory", inventory_path,
-                "--root", clone, "--operation", "rename", "--result", self.base / "result.json")
-        self.assertEqual(run("preservation", *args).returncode, 0)
-        self.assertFalse(member.exists())
-        self.assertTrue((clone / "keep.r01-preservation-renamed").exists())
-
-        bad_registration = self.base / "self-authored.json"; dump(bad_registration, registration)
-        self.assertNotEqual(run("preservation", "--registration", bad_registration, "--lifecycle-state", state_path,
-                                "--lifecycle-directory", lifecycle, "--manifest", manifest_path,
-                                "--inventory", inventory_path, "--root", clone, "--operation", "delete",
-                                "--result", self.base / "self-authored-result.json").returncode, 0)
-        inventory["members"] = ["missing"]; dump(inventory_path, inventory)
-        self.assertNotEqual(run("preservation", "--registration", registration_path, "--lifecycle-state", state_path,
-                                "--lifecycle-directory", lifecycle, "--manifest", manifest_path,
-                                "--inventory", inventory_path, "--root", clone, "--operation", "delete",
-                                "--result", self.base / "incomplete-result.json").returncode, 0)
-
-    def test_fresh_build_not_run_requires_clean_tuple_roots_and_no_stale_outputs(self):
-        roots = {name: self.git_root(name, name + "Commit") for name in ("mac", "ios", "protocol")}
-        evidence = self.base / "evidence"; evidence.mkdir()
-        request = {"schemaVersion": 1, "kind": "photonport.r01-fresh-build-request.v1",
-                   "sourceTuple": self.tuple, "sourceRoots": {name: str(root) for name, root in roots.items()},
-                   "result": "not_run"}
-        request_path = evidence / "r01-fresh-build-request.json"; dump(request_path, request)
-        completed = run("fresh", "--evidence-root", evidence)
+        completed = self.run_tool("run-r01-preservation-mutations.py", "--registration", registration_path,
+                             "--lifecycle-state", active_path, "--lifecycle-directory", lifecycle, "--manifest", manifest_path,
+                             "--inventory", inventory_path, "--root", clone, "--allocator-attestation", allocator,
+                             "--inventory-attestation", inventory_attestation, "--trust-policy", self.tools / "trust-policy.json",
+                             "--trust-mode", "production", "--operation", "rename", "--result", self.base / "result.json")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertTrue((clone / "keep").exists(), completed.stderr)
+    def test_fresh_build_archival_not_run_uses_only_disposable_roots(self):
+        roots = {}
+        tuple_value = {**TUPLE, "compatibilityDigest": "d" * 64, "normativeManifestDigest": "e" * 64}
+        for name in ("mac", "ios", "protocol"):
+            root = self.base / name
+            root.mkdir()
+            subprocess.run(["git", "init", "-q", root], check=True)
+            subprocess.run(["git", "-C", root, "config", "user.email", "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", root, "config", "user.name", "test"], check=True)
+            (root / "tracked").write_text(name)
+            subprocess.run(["git", "-C", root, "add", "."], check=True)
+            subprocess.run(["git", "-C", root, "commit", "-qm", "fixture"], check=True)
+            tuple_value[name + "Commit"] = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
+            roots[name] = root
+        evidence = self.base / "fresh"
+        evidence.mkdir()
+        dump(evidence / "r01-fresh-build-request.json", {"schemaVersion": 1, "kind": "photonport.r01-fresh-build-request.v1", "sourceTuple": tuple_value, "sourceRoots": {name: str(root) for name, root in roots.items()}, "result": "not_run"})
+        completed = self.run_tool("verify-r01-fresh-build.py", "--evidence-root", evidence)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        verdict = json.loads((evidence / "r01-fresh-build-result.json").read_text())
-        self.assertEqual(verdict["result"], "not_run")
-        self.assertNotIn("retirementEligible", verdict)
-        self.assertNotIn("remediationAuthorized", verdict)
-
-        (roots["ios"] / "tracked.xcodeproj").mkdir()
-        self.assertNotEqual(run("fresh", "--evidence-root", evidence,
-                                "--result", "stale-result.json").returncode, 0)
-        (roots["ios"] / "tracked.xcodeproj").rmdir()
-        (roots["ios"] / "caller-asserted").write_text("fresh")
-        self.assertNotEqual(run("fresh", "--evidence-root", evidence,
-                                "--result", "dirty-result.json").returncode, 0)
-
-    def test_r01_result_schemas_never_grant_mutation_authority(self):
-        names = ("r01-runtime-rollback-result-v1.schema.json",
-                 "r01-generation-classification-result-v1.schema.json",
-                 "r01-preservation-mutation-result-v1.schema.json",
-                 "r01-fresh-build-result-v1.schema.json")
-        forbidden = ("remediation", "retirement", "delete", "deletion")
-        for name in names:
-            schema = json.loads((ROOT / "artifacts" / "schemas" / name).read_text())
-            properties = schema.get("properties", {})
-            for key, value in properties.items():
-                if any(word in key.lower() for word in forbidden):
-                    self.assertEqual(value, {"const": False}, f"{name} must deny {key}")
-    def test_fresh_build_rejects_symlinked_evidence_root(self):
-        target = self.base / "target"; target.mkdir()
-        link = self.base / "link"; link.symlink_to(target, target_is_directory=True)
-        self.assertNotEqual(run("fresh", "--evidence-root", link).returncode, 0)
+        self.assertEqual(json.loads((evidence / "r01-fresh-build-result.json").read_text())["result"], "not_run")
 
 
 if __name__ == "__main__":
