@@ -2,6 +2,7 @@
 """R01 validators reject caller assertions and require production DSSE evidence."""
 import base64
 import hashlib
+import hmac
 import importlib.util
 import json
 import shutil
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "scripts" / "evidence"
 SEED = bytes.fromhex("11" * 32)
 TUPLE = {"macCommit": "a" * 40, "iosCommit": "b" * 40, "protocolCommit": "c" * 40}
+ALT_SEED = bytes.fromhex("22" * 32)
 
 
 def canonical(value):
@@ -53,17 +55,43 @@ class R01EvidenceTest(unittest.TestCase):
     def run_tool(self, script, *args):
         return subprocess.run([sys.executable, str(self.tools / script), *map(str, args)], text=True, capture_output=True)
 
-    def envelope(self, payload, *, forged=False):
+    def envelope(self, payload, *, forged=False, seed=SEED, keyid="prod-ci-ed25519-v1", alg="ED25519-DSSE"):
         verifier_spec = importlib.util.spec_from_file_location("r01_receipt", self.tools / "verify_receipt.py")
         verifier = importlib.util.module_from_spec(verifier_spec)
         verifier_spec.loader.exec_module(verifier)
         body = verifier.canonical_json(payload)
-        signature = self.ed25519.sign(SEED, verifier.dsse_pae(verifier.PAYLOAD_TYPE, body))
+        signature = self.ed25519.sign(seed, verifier.dsse_pae(verifier.PAYLOAD_TYPE, body))
         if forged:
             signature = bytes([signature[0] ^ 1]) + signature[1:]
         return {"schemaVersion": 2, "kind": "photonport.receipt-envelope.v2", "payloadType": verifier.PAYLOAD_TYPE,
                 "payload": base64.b64encode(body).decode("ascii"),
-                "signatures": [{"keyid": "prod-ci-ed25519-v1", "alg": "ED25519-DSSE", "sig": base64.b64encode(signature).decode("ascii")}]}
+                "signatures": [{"keyid": keyid, "alg": alg, "sig": base64.b64encode(signature).decode("ascii")}]}
+    def make_test_mode_envelope(self, payload):
+        verifier_spec = importlib.util.spec_from_file_location("r01_test_receipt", self.tools / "verify_receipt.py")
+        verifier = importlib.util.module_from_spec(verifier_spec)
+        verifier_spec.loader.exec_module(verifier)
+        body = verifier.canonical_json(payload)
+        signature = hmac.new(bytes.fromhex(self.policy["testRoot"]["keys"]["test-ci-hmac-v1"]["keyHex"]),
+                             verifier.dsse_pae(verifier.PAYLOAD_TYPE, body), hashlib.sha256).digest()
+        return {"schemaVersion": 2, "kind": "photonport.receipt-envelope.v2", "payloadType": verifier.PAYLOAD_TYPE,
+                "payload": base64.b64encode(body).decode("ascii"),
+                "signatures": [{"keyid": "test-ci-hmac-v1", "alg": "HMAC-SHA256-TEST",
+                                "sig": base64.b64encode(signature).decode("ascii")}]}
+    def production_signature_valid(self, envelope, public_key):
+        verifier_spec = importlib.util.spec_from_file_location("r01_signature_verifier", self.tools / "verify_receipt.py")
+        verifier = importlib.util.module_from_spec(verifier_spec)
+        verifier_spec.loader.exec_module(verifier)
+        return self.ed25519.verify(public_key,
+                                   verifier.dsse_pae(envelope["payloadType"], base64.b64decode(envelope["payload"])),
+                                   base64.b64decode(envelope["signatures"][0]["sig"]))
+    def is_test_mode_signature_valid(self, envelope):
+        verifier_spec = importlib.util.spec_from_file_location("r01_test_signature_verifier", self.tools / "verify_receipt.py")
+        verifier = importlib.util.module_from_spec(verifier_spec)
+        verifier_spec.loader.exec_module(verifier)
+        expected = hmac.new(bytes.fromhex(self.policy["testRoot"]["keys"]["test-ci-hmac-v1"]["keyHex"]),
+                            verifier.dsse_pae(envelope["payloadType"], base64.b64decode(envelope["payload"])),
+                            hashlib.sha256).digest()
+        return hmac.compare_digest(expected, base64.b64decode(envelope["signatures"][0]["sig"]))
 
     def test_generation_rejects_unsigned_and_forged_attestations_but_blocks_archival_only(self):
         artifacts = self.base / "artifacts"
@@ -162,13 +190,36 @@ class R01EvidenceTest(unittest.TestCase):
                     "allocatorAttestation": {"path": allocator.name, "sha256": digest_bytes(allocator.read_bytes()), "size": allocator.stat().st_size},
                     "inventoryAttestation": {"path": inventory_attestation.name, "sha256": digest_bytes(inventory_attestation.read_bytes()), "size": inventory_attestation.stat().st_size}}
         manifest_path = self.base / "manifest.json"; dump(manifest_path, manifest)
-        completed = self.run_tool("run-r01-preservation-mutations.py", "--registration", registration_path,
-                             "--lifecycle-state", active_path, "--lifecycle-directory", lifecycle, "--manifest", manifest_path,
-                             "--inventory", inventory_path, "--root", clone, "--allocator-attestation", allocator,
-                             "--inventory-attestation", inventory_attestation, "--trust-policy", self.tools / "trust-policy.json",
-                             "--trust-mode", "production", "--operation", "rename", "--result", self.base / "result.json")
+        args = ["--registration", registration_path, "--lifecycle-state", active_path, "--lifecycle-directory", lifecycle,
+                "--manifest", manifest_path, "--inventory", inventory_path, "--root", clone,
+                "--allocator-attestation", allocator, "--inventory-attestation", inventory_attestation,
+                "--operation", "rename", "--result", self.base / "result.json"]
+        completed = self.run_tool("run-r01-preservation-mutations.py", *args,
+                                  "--trust-policy", self.tools / "trust-policy.json", "--trust-mode", "production")
         self.assertNotEqual(completed.returncode, 0)
         self.assertTrue((clone / "keep").exists(), completed.stderr)
+        alternate_policy = self.base / "caller-trust-policy.json"
+        alternate = json.loads((self.tools / "trust-policy.json").read_text())
+        alternate["productionRoot"]["keys"]["prod-ci-ed25519-v1"]["publicKeyHex"] = self.ed25519.public_key(ALT_SEED).hex()
+        dump(alternate_policy, alternate)
+        signed = self.envelope({"caller": "asserted"}, seed=ALT_SEED)
+        self.assertTrue(self.production_signature_valid(signed, self.ed25519.public_key(ALT_SEED)))
+        dump(allocator, signed)
+        dump(inventory_attestation, signed)
+        alternate_attempt = self.run_tool("run-r01-preservation-mutations.py", *args,
+                                          "--trust-policy", alternate_policy, "--trust-mode", "production")
+        self.assertNotEqual(alternate_attempt.returncode, 0)
+        self.assertIn("caller-selected trust policy is not authorized", alternate_attempt.stderr)
+        self.assertTrue((clone / "keep").exists(), alternate_attempt.stderr)
+        test_receipt = self.make_test_mode_envelope({"caller": "asserted"})
+        self.assertTrue(self.is_test_mode_signature_valid(test_receipt))
+        dump(allocator, test_receipt)
+        dump(inventory_attestation, test_receipt)
+        test_attempt = self.run_tool("run-r01-preservation-mutations.py", *args,
+                                     "--trust-mode", "test")
+        self.assertNotEqual(test_attempt.returncode, 0)
+        self.assertIn("test trust mode is not authorized", test_attempt.stderr)
+        self.assertTrue((clone / "keep").exists(), test_attempt.stderr)
     def test_fresh_build_archival_not_run_uses_only_disposable_roots(self):
         roots = {}
         tuple_value = {**TUPLE, "compatibilityDigest": "d" * 64, "normativeManifestDigest": "e" * 64}

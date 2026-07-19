@@ -86,7 +86,22 @@ def receipt_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-def attestation(path, label, trust_policy, trust_mode, tuple_value, bindings):
+CANONICAL_KEY_ID = "prod-ci-ed25519-v1"
+CANONICAL_ALGORITHM = "ED25519-DSSE"
+CANONICAL_TRUST_DOMAIN = "opendisplay-ci"
+CANONICAL_ROLE = "automated-ci"
+def canonical_trust_policy():
+    path = Path(__file__).with_name("trust-policy.json")
+    policy = load(path, "canonical trust policy")
+    production = policy.get("productionRoot")
+    keys = production.get("keys") if isinstance(production, dict) else None
+    key = keys.get(CANONICAL_KEY_ID) if isinstance(keys, dict) else None
+    if (not isinstance(key, dict) or key.get("alg") != CANONICAL_ALGORITHM
+            or key.get("trustDomain") != CANONICAL_TRUST_DOMAIN
+            or key.get("roles") != [CANONICAL_ROLE]):
+        fail("canonical production trust configuration is invalid")
+    return path.resolve()
+def attestation(path, label, trust_policy, tuple_value, bindings):
     raw = read_regular(path, label)
     module = receipt_module()
     roots = list({path.parent.resolve(), trust_policy.parent.resolve()})
@@ -105,13 +120,19 @@ def attestation(path, label, trust_policy, trust_mode, tuple_value, bindings):
             "ed25519ModuleSha256": hashlib.sha256(read_regular(Path(module.__file__).with_name("ed25519_rfc8032.py"), "Ed25519 verifier")).hexdigest(),
         },
     }
-    checked = module.verify_envelope(path.resolve(), expected=expected, trust_policy_path=trust_policy.resolve(), trust_mode=trust_mode, allowed_roots=roots)
+    checked = module.verify_envelope(path.resolve(), expected=expected, trust_policy_path=trust_policy, trust_mode="production", allowed_roots=roots)
     if checked.get("exitCode") != 0 or not checked.get("trusted") or checked.get("status") != "passed":
         fail(f"{label} is not a trusted passing receipt: {checked.get('reasonCode')}")
     envelope = load(path, label)
     signatures = envelope.get("signatures")
-    if not isinstance(signatures, list) or len(signatures) != 1 or signatures[0].get("alg") != "ED25519-DSSE":
-        fail(f"{label} must use an Ed25519 DSSE signature")
+    if (not isinstance(signatures, list) or len(signatures) != 1
+            or signatures[0].get("keyid") != CANONICAL_KEY_ID
+            or signatures[0].get("alg") != CANONICAL_ALGORITHM):
+        fail(f"{label} must use the canonical production Ed25519 DSSE signature")
+    issuer = payload.get("issuer")
+    if (not isinstance(issuer, dict) or issuer.get("trustDomain") != CANONICAL_TRUST_DOMAIN
+            or issuer.get("role") != CANONICAL_ROLE):
+        fail(f"{label} must use the canonical automated CI issuer")
     source = payload.get("sourceTuple")
     if not isinstance(source, dict) or source.get("macCommit") != tuple_value["macCommit"] or source.get("iosCommit") != tuple_value["iosCommit"] or source.get("protocolCommit") != tuple_value["protocolCommit"]:
         fail(f"{label} source tuple does not match clone base tuple")
@@ -132,11 +153,18 @@ def main():
     p.add_argument("--root", "--clone-root", dest="root", type=Path, required=True)
     p.add_argument("--allocator-attestation", type=Path, required=True)
     p.add_argument("--inventory-attestation", type=Path, required=True)
-    p.add_argument("--trust-policy", type=Path, required=True)
-    p.add_argument("--trust-mode", choices=("test", "production"), required=True)
+    p.add_argument("--trust-policy", type=Path,
+                   help="deprecated; must name the adjacent canonical trust policy")
+    p.add_argument("--trust-mode", choices=("test", "production"),
+                   help="deprecated; production is mandatory")
     p.add_argument("--operation", choices=("delete", "rename"), required=True)
     p.add_argument("--result", "--output", dest="result", type=Path, required=True)
     a = p.parse_args()
+    trust_policy = canonical_trust_policy()
+    if a.trust_policy is not None and Path(os.path.realpath(a.trust_policy)) != trust_policy:
+        fail("caller-selected trust policy is not authorized")
+    if a.trust_mode not in (None, "production"):
+        fail("test trust mode is not authorized for preservation mutations")
     registration_raw = read_regular(a.registration, "allocator registration"); registration = load(a.registration, "allocator registration")
     state_raw = read_regular(a.lifecycle_state, "lifecycle state"); state = load(a.lifecycle_state, "lifecycle state")
     manifest = load(a.manifest, "closure manifest"); inventory_raw = read_regular(a.inventory, "target inventory"); inventory = load(a.inventory, "target inventory")
@@ -189,7 +217,7 @@ def main():
         if (actual != authority["root"] or actual != {"canonicalPath": registration["canonicalPath"], "dev": registration["dev"], "ino": registration["ino"]}):
             fail("root is not the registered allocated clone")
         # Issuer and all non-clone evidence must remain outside the clone.
-        for path, label in ((a.registration,"registration"),(a.lifecycle_directory,"lifecycle directory"),(a.lifecycle_state,"lifecycle state"),(a.manifest,"manifest"),(a.inventory,"inventory"),(a.allocator_attestation,"allocator attestation"),(a.inventory_attestation,"inventory attestation"),(a.trust_policy,"trust policy"),(a.result,"result")):
+        for path, label in ((a.registration,"registration"),(a.lifecycle_directory,"lifecycle directory"),(a.lifecycle_state,"lifecycle state"),(a.manifest,"manifest"),(a.inventory,"inventory"),(a.allocator_attestation,"allocator attestation"),(a.inventory_attestation,"inventory attestation"),(trust_policy,"canonical trust policy"),(a.result,"result")):
             if os.path.commonpath((str(Path(os.path.realpath(path))), actual["canonicalPath"])) == actual["canonicalPath"]: fail(f"{label} must be outside clone")
         registry_fd, registry_info = stable_dir(Path(authority["registryPath"]), "allocator registry")
         try:
@@ -222,8 +250,8 @@ def main():
         base_tree = git_value(a.root, "HEAD^{tree}", "base tree")
         if base_commit != state["tuple"]["macCommit"]: fail("clone base commit differs from lifecycle tuple")
         bindings = ((registration_raw, "external allocator registration"), (state_raw, "immutable lifecycle state"), (inventory_raw, "authoritative target inventory"))
-        allocator_attestation, allocator_source = attestation(a.allocator_attestation, "allocator attestation", a.trust_policy, a.trust_mode, state["tuple"], bindings)
-        inventory_attestation, inventory_source = attestation(a.inventory_attestation, "inventory attestation", a.trust_policy, a.trust_mode, state["tuple"], bindings)
+        allocator_attestation, allocator_source = attestation(a.allocator_attestation, "allocator attestation", trust_policy, state["tuple"], bindings)
+        inventory_attestation, inventory_source = attestation(a.inventory_attestation, "inventory attestation", trust_policy, state["tuple"], bindings)
         if allocator_source != inventory_source or allocator_source.get("macTree") != base_tree:
             fail("trusted attestations do not bind the clone base tree")
         if manifest["allocatorAttestation"] != allocator_attestation or manifest["inventoryAttestation"] != inventory_attestation:
