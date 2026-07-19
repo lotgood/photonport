@@ -5,7 +5,7 @@ import XCTest
 final class S11DeadCodeTests: XCTestCase {
     func testServerHelloUsesStrictProductionParser() throws {
         let payload = Data("""
-        {"type":"server-hello","sessionVersion":3,"deviceNonce":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=","pixelsWide":2732,"pixelsHigh":2048,"scale":2.0,"device":"iPad","id":"device-a","maxFps":120,"hdr":true}
+        {"type":"server-hello","sessionVersion":3,"transport":"wifi","deviceNonce":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=","wifiSessionSeed":"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=","pixelsWide":2732,"pixelsHigh":2048,"scale":2.0,"device":"iPad","id":"device-a","maxFps":120,"hdr":true}
         """.utf8)
 
         let hello = try ProtocolParser.parseServerHello(payload, transport: .wifi)
@@ -14,6 +14,8 @@ final class S11DeadCodeTests: XCTestCase {
         XCTAssertEqual(hello.pixelsHigh, 2048)
         XCTAssertEqual(hello.id, "device-a")
         XCTAssertEqual(hello.deviceNonce.count, 32)
+        XCTAssertEqual(hello.wifiSessionSeed?.count, 32)
+        XCTAssertThrowsError(try ProtocolParser.parseServerHello(payload, transport: .usb))
         XCTAssertThrowsError(try ProtocolParser.parseServerHello(
             Data("{\"type\":\"server-hello\"}".utf8), transport: .wifi))
     }
