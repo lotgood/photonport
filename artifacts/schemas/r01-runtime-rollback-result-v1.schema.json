@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/r01-runtime-rollback-result-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "status", "sourceTuple", "request", "observations", "retirementEligible", "deletionAuthorized"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "photonport.r01-runtime-rollback-result.v1"},
+    "status": {"enum": ["passed", "failed", "blocked", "not_run"]},
+    "sourceTuple": {"$ref": "r01-runtime-rollback-request-v1.schema.json#/$defs/tuple"},
+    "request": {"$ref": "#/$defs/artifact"},
+    "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+    "retirementEligible": {"const": false},
+    "deletionAuthorized": {"const": false}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"], "properties": {"path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)[^\\x00]+$"}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"type": "integer", "minimum": 0}}},
+    "observation": {"type": "object", "additionalProperties": false, "required": ["transport", "status", "watchdogLog", "strictParserLog", "ping"], "properties": {"transport": {"enum": ["usb", "wifi"]}, "status": {"enum": ["passed", "failed", "blocked", "not_run"]}, "watchdogLog": {"$ref": "#/$defs/artifact"}, "strictParserLog": {"$ref": "#/$defs/artifact"}, "ping": {"type": "object", "additionalProperties": false, "required": ["deviceIdentitySha256", "result"], "properties": {"deviceIdentitySha256": {"$ref": "#/$defs/sha256"}, "result": {"type": "string"}}}}}
+  }
+}

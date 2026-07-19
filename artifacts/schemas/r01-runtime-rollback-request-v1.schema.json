@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/r01-runtime-rollback-request-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "sourceTuple", "host", "device", "build", "install", "observations"],
+  "properties": {
+    "schemaVersion": {"const": 1}, "kind": {"const": "photonport.r01-runtime-rollback-request.v1"},
+    "sourceTuple": {"$ref": "#/$defs/tuple"}, "host": {"$ref": "#/$defs/platform"}, "device": {"$ref": "#/$defs/platform"}, "build": {"$ref": "#/$defs/artifact"}, "install": {"$ref": "#/$defs/artifact"},
+    "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}, "minItems": 0, "maxItems": 2}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tuple": {"type": "object", "additionalProperties": false, "required": ["macCommit", "iosCommit", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"], "properties": {"macCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "iosCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "protocolCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "compatibilityDigest": {"$ref": "#/$defs/sha256"}, "normativeManifestDigest": {"$ref": "#/$defs/sha256"}}},
+    "platform": {"type": "object", "additionalProperties": false, "required": ["family", "majorVersion", "identitySha256"], "properties": {"family": {"enum": ["macOS", "iOS"]}, "majorVersion": {"const": 27}, "identitySha256": {"$ref": "#/$defs/sha256"}}},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"], "properties": {"path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)[^\\x00]+$"}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"type": "integer", "minimum": 0}}},
+    "observation": {"type": "object", "additionalProperties": false, "required": ["transport", "observer", "recordedAt", "watchdogLog", "strictParserLog", "ping"], "properties": {"transport": {"enum": ["usb", "wifi"]}, "observer": {"type": "string", "minLength": 1}, "recordedAt": {"type": "string", "format": "date-time"}, "watchdogLog": {"$ref": "#/$defs/artifact"}, "strictParserLog": {"$ref": "#/$defs/artifact"}, "ping": {"type": "object", "additionalProperties": false, "required": ["deviceIdentitySha256", "result"], "properties": {"deviceIdentitySha256": {"$ref": "#/$defs/sha256"}, "result": {"const": "id-bearing-ping-passed"}}}}}
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/r01-preservation-closure-manifest-v1.schema.json",
+  "title": "R01 preservation closure manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "registeredCloneRoot", "members"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "photonport.r01-preservation-closure-manifest.v1"},
+    "registeredCloneRoot": {"$ref": "#/$defs/cloneRoot"},
+    "members": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/member"}}
+  },
+  "$defs": {
+    "absolutePath": {"type": "string", "pattern": "^/[^\\u0000]*$"},
+    "hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "cloneRoot": {"type": "object", "additionalProperties": false, "required": ["canonicalPath", "dev", "ino", "registrationId", "purpose"], "properties": {"canonicalPath": {"$ref": "#/$defs/absolutePath"}, "dev": {"type": "integer", "minimum": 0}, "ino": {"type": "integer", "minimum": 0}, "registrationId": {"$ref": "#/$defs/hex"}, "purpose": {"const": "throwaway-clone"}}},
+    "member": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"], "properties": {"path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)(?!.*//)[^\\u0000]+$"}, "sha256": {"$ref": "#/$defs/hex"}, "size": {"type": "integer", "minimum": 0}}}
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.local/schemas/r01-fresh-build-request-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "sourceTuple", "generator", "project", "sourceManifest", "products"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "photonport.r01-fresh-build-request.v1"},
+    "sourceTuple": {"$ref": "#/$defs/sourceTuple"},
+    "generator": {"$ref": "#/$defs/digestFile"},
+    "project": {"$ref": "#/$defs/digestFile"},
+    "sourceManifest": {"$ref": "#/$defs/digestFile"},
+    "products": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Debug", "Release"],
+      "properties": {"Debug": {"$ref": "#/$defs/path"}, "Release": {"$ref": "#/$defs/path"}}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.?(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "digestFile": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"$ref": "#/$defs/path"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "sourceTuple": {"type": "object", "additionalProperties": false, "required": ["macCommit", "iosCommit", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"], "properties": {"macCommit": {"$ref": "#/$defs/commit"}, "iosCommit": {"$ref": "#/$defs/commit"}, "protocolCommit": {"$ref": "#/$defs/commit"}, "compatibilityDigest": {"$ref": "#/$defs/sha256"}, "normativeManifestDigest": {"$ref": "#/$defs/sha256"}}}
+  }
+}
