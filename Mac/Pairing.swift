@@ -94,7 +94,7 @@ struct SessionChannelOpen: Codable, Sendable {
     let proof: String
 }
 
-/// Receiver-wide ownership and replay state for one primary stream session.
+/// Controller-owned session state. A generation is a lease: asynchronous
 /// Keeping this reducer independent from Network.framework makes the busy,
 /// Controller-owned session state. A generation is a lease: asynchronous
 /// completion may mutate a session only while it still owns that generation.
@@ -127,107 +127,11 @@ enum SessionLifecycleState: Equatable, Sendable {
     }
 }
 
-/// stale-generation, and channel-replay rules deterministic to test.
-struct SessionOwnershipState: Sendable {
-    struct Lease: Equatable, Sendable {
-        let macInstallID: String
-        let generation: UInt64
-    }
-
-    enum Claim: Equatable, Sendable {
-        case accepted(Lease)
-        case busy(Lease)
-        case exhausted
-    }
-
-    private(set) var generation: UInt64
-    private(set) var exhausted: Bool
-    private(set) var active: Lease?
-    private var channelNonces: Set<String> = []
-
-    init() {
-        self.generation = 0
-        self.exhausted = false
-        self.active = nil
-    }
-
-    private init(generation: UInt64, exhausted: Bool, active: Lease?) {
-        self.generation = generation
-        self.exhausted = exhausted
-        self.active = active
-    }
-
-    mutating func claim(macInstallID: String) -> Claim {
-        if let active { return .busy(active) }
-        guard !exhausted, generation < UInt64.max else {
-            exhausted = true
-            return .exhausted
-        }
-        generation += 1
-        if generation == UInt64.max { exhausted = true }
-        let lease = Lease(macInstallID: macInstallID, generation: generation)
-        active = lease
-        channelNonces.removeAll(keepingCapacity: true)
-        return .accepted(lease)
-    }
-
-    struct Snapshot: Codable, Equatable, Sendable {
-        let generation: UInt64
-        let generationExhausted: Bool
-    }
-
-    static func fresh() -> SessionOwnershipState { SessionOwnershipState() }
-
-    func snapshot() -> Snapshot {
-        Snapshot(generation: generation, generationExhausted: exhausted)
-    }
-
-    func encodeSnapshot() throws -> Data {
-        try JSONEncoder().encode(snapshot())
-    }
-
-    static func restore(snapshot data: Data) throws -> SessionOwnershipState {
-        try restore(snapshot: ProtocolParser.parseGenerationSnapshot(data))
-    }
-
-    static func restore(snapshot: Snapshot) throws -> SessionOwnershipState {
-        guard snapshot.generation > 0 else { throw ProtocolParser.ParseError.value }
-        if snapshot.generation == UInt64.max {
-            guard snapshot.generationExhausted else { throw ProtocolParser.ParseError.value }
-            return SessionOwnershipState(generation: UInt64.max, exhausted: true, active: nil)
-        }
-        guard !snapshot.generationExhausted else { throw ProtocolParser.ParseError.value }
-        return SessionOwnershipState(generation: snapshot.generation, exhausted: false, active: nil)
-    }
-
-    func authorizes(macInstallID: String, generation: UInt64) -> Bool {
-        active == Lease(macInstallID: macInstallID, generation: generation)
-    }
-
-    mutating func consumeChannelNonce(macInstallID: String, generation: UInt64,
-                                      nonce: Data) -> Bool {
-        guard authorizes(macInstallID: macInstallID, generation: generation) else {
-            return false
-        }
-        return channelNonces.insert(nonce.base64EncodedString()).inserted
-    }
-
-    @discardableResult
-    mutating func release(macInstallID: String, generation: UInt64) -> Bool {
-        guard authorizes(macInstallID: macInstallID, generation: generation) else {
-            return false
-        }
-        active = nil
-        channelNonces.removeAll(keepingCapacity: true)
-        return true
-    }
-}
 
 enum SessionTiming {
-    static let receiverOwnershipTimeout: TimeInterval = 5
     static let macDisconnectGrace: TimeInterval = 10
-    static let audioBeforePrimaryPending: TimeInterval = 2
     static let handshakeTimeout: TimeInterval = 5
+    static let livenessDeadline: TimeInterval = 5
     static let busyRetryDelay: TimeInterval = 5
 }
 

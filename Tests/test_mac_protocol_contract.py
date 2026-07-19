@@ -36,9 +36,12 @@ def swift_function(source: str, name: str) -> str:
     return source[start:] if end == -1 else source[start:end]
 
 def swift_private_function(source: str, name: str) -> str:
-    start = source.index(f"private func {name}")
-    end = source.find("\n    private func ", start + 1)
-    return source[start:] if end == -1 else source[start:end]
+    match = re.search(rf"private (?:static )?func {re.escape(name)}\b", source)
+    if not match:
+        raise ValueError(f"missing private function {name}")
+    start = match.start()
+    end = re.search(r"\n    private (?:static )?func ", source[start + 1:])
+    return source[start:] if end is None else source[start:start + 1 + end.start()]
 
 
 class MacProtocolContractTests(unittest.TestCase):
@@ -64,6 +67,47 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn('base64(try string(object, "acceptProof"), bytes: 32)', session_accept)
         self.assertIn('try int(object, "v") == SessionCrypto.version', channel_open)
         self.assertIn('base64(try string(object, "proof"), bytes: 32)', channel_open)
+    def test_server_hello_is_transport_explicit_and_wifi_seeded(self):
+        server_hello = swift_function(PARSER, "parseServerHello")
+        self.assertIn("transport: Transport", server_hello)
+        self.assertIn('let required = transport == .wifi ? base.union(["wifiSessionSeed"]) : base', server_hello)
+        self.assertIn('try string(object, "transport") == (transport == .wifi ? "wifi" : "usb")', server_hello)
+        self.assertIn('transport == .wifi ? try base64(try string(object, "wifiSessionSeed"), bytes: 32) : nil', server_hello)
+        self.assertIn("wifiSessionSeed: seed", server_hello)
+        self.assertNotIn("usbSessionSeed", server_hello)
+
+    def test_uint64_wire_fields_are_strict_and_nonzero_where_required(self):
+        session_accept = swift_function(PARSER, "parseSessionAccept")
+        channel_open = swift_function(PARSER, "parseChannelOpen")
+        parse_control = swift_function(PARSER, "parseControl")
+        uint64 = swift_private_function(PARSER, "uint64")
+        self.assertIn('guard try uint64(object, "generation") > 0 else', session_accept)
+        self.assertIn('guard try uint64(object, "generation") > 0 else', channel_open)
+        self.assertIn('case ping(id: UInt64, t: Double)', PARSER)
+        self.assertIn('dropped: try uint64(object, "dropped")', parse_control)
+        self.assertIn('id: try uint64(object, "id")', PARSER)
+        self.assertIn('let max = String(UInt64.max)', uint64)
+        self.assertIn('let value = UInt64(digits)', uint64)
+
+    def test_video_payload_matches_canonical_framing_codec_and_keyframe_contract(self):
+        video_payload = swift_private_function(SENDER, "videoPayload")
+        setup_encoder = swift_private_function(SENDER, "setupEncoder")
+        encode = swift_private_function(SENDER, "encode")
+        control = swift_private_function(SENDER, "handleControl")
+        self.assertIn("annexB.starts(with: startCode3) || annexB.starts(with: startCode4)", video_payload)
+        self.assertIn('let codec = hevc ? "hevc-main10-hlg" : "h264"', video_payload)
+        self.assertIn('"{\\"codec\\":\\"\\(codec)\\",\\"keyframe\\":\\(keyframe)', video_payload)
+        self.assertIn("var telemetryLength = UInt32(telemetry.count).bigEndian", video_payload)
+        self.assertIn("payload.append(annexB)", video_payload)
+        self.assertIn("guard payload.count <= ProtocolParser.videoDataCap else { return nil }", video_payload)
+        self.assertIn("hevcTypes.isSuperset(of: [32, 33, 34]) && hasIRAP", video_payload)
+        self.assertIn("h264Types.isSuperset(of: [7, 8]) && hasIDR", video_payload)
+        self.assertIn("codecType: kCMVideoCodecType_HEVC", setup_encoder)
+        self.assertIn("codecType: kCMVideoCodecType_H264", setup_encoder)
+        self.assertIn("kVTProfileLevel_HEVC_Main10_AutoLevel", setup_encoder)
+        self.assertIn("kVTEncodeFrameOptionKey_ForceKeyFrame", encode)
+        self.assertIn("case .keyframe:", control)
+        self.assertIn("needsKeyframe = true", control)
 
     def test_accept_proof_is_fail_closed_before_binding(self):
         handler = swift_private_function(SENDER, "handleSessionAccept")
@@ -108,7 +152,6 @@ class MacProtocolContractTests(unittest.TestCase):
             "parseVerifiedSessionAccept": ("smallControlCap", "parseSessionAccept"),
             "parseSessionBusy": ("smallControlCap", "strictObject"),
             "parseChannelOpen": ("smallControlCap", "strictObject"),
-            "parseGenerationSnapshot": ("smallControlCap", "strictObject"),
             "parseControl": ("smallControlCap", "strictAnyObject"),
         }
         for name, (cap, first_parse_step) in guarded_entry_points.items():
@@ -129,7 +172,6 @@ class MacProtocolContractTests(unittest.TestCase):
             "parseVerifiedSessionAccept",
             "parseSessionBusy",
             "parseChannelOpen",
-            "parseGenerationSnapshot",
             "parseControl",
         ):
             self.assertIn(symbol, direct_caps)
@@ -172,11 +214,10 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn('\\"visible\\":false', cursor)
         self.assertNotIn('\\"cursorImg\\"', SENDER)
         self.assertNotRegex(cursor, r'\\"v\\"\s*:')
-    def test_persistent_generation_increment_is_checked_nonwrapping(self):
-        self.assertNotIn("generation &+= 1", PAIRING)
-        self.assertRegex(PAIRING, r"guard\s+!exhausted\s*,\s*generation\s*<\s*UInt64\.max\s+else")
-        self.assertRegex(PAIRING, r"exhausted\s*=\s*true")
-        self.assertRegex(PAIRING, r"generation\s*\+=\s*1")
+    def test_mac_has_no_receiver_generation_ownership(self):
+        mac_sources = (PARSER, PAIRING, SENDER)
+        for symbol in ("parseGenerationSnapshot", "GenerationStore", "SessionOwnershipState"):
+            self.assertEqual(sum(source.count(symbol) for source in mac_sources), 0, symbol)
 
     def test_build_pin_values_and_mac_resource_inclusion_are_exact(self):
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
@@ -241,14 +282,16 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertNotIn("JSONDecoder().decode(PhoneInfo.self", SENDER)
         self.assertIn("init(_ hello: ProtocolParser.ServerHello)", phone_info)
         self.assertIn("deviceNonce = hello.deviceNonce", phone_info)
-        self.assertIn("usbSessionSeed = hello.usbSessionSeed", phone_info)
+        self.assertIn("wifiSessionSeed = hello.wifiSessionSeed", phone_info)
+        self.assertNotIn("usbSessionSeed", phone_info)
 
         begin = swift_private_function(SENDER, "beginSessionHandshake")
         self.assertNotIn("Data(base64Encoded:", begin)
         self.assertNotIn("JSONDecoder", begin)
         self.assertNotIn("Mirror(", begin)
         self.assertIn("let deviceNonce = info.deviceNonce", begin)
-        self.assertIn("let seed = info.usbSessionSeed", begin)
+        self.assertIn("let ikm = wifiPSK?.key, info.wifiSessionSeed?.count == 32 else", begin)
+        self.assertNotIn("usbSessionSeed", begin)
 
         control = swift_private_function(SENDER, "handleControl")
         self.assertIn("case .serverHello(let parsed):", control)

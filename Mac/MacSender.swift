@@ -10,13 +10,10 @@
 //            -> framed TCP
 // Roles: the PHONE listens, the MAC connects (required for usbmux/USB).
 //
-// Wire protocol, Mac -> phone:   [4-byte big-endian length][Annex B payload]
-//   (keyframes prefixed with the parameter sets, NALUs delimited by
-//    00 00 00 01; a JSON telemetry prefix before the first start code
-//    carries timing + a "hevc" codec flag)
-// Wire protocol, phone -> Mac:   [4-byte big-endian length][JSON message]
-//   e.g. {"type":"hello","pixelsWide":2556,"pixelsHigh":1179,"scale":3,
-//         "maxFps":120,"hdr":true}
+// Wire protocol, Mac -> phone:
+//   [4-byte big-endian outer length]
+//   [4-byte big-endian telemetry JSON length][telemetry JSON][Annex-B payload]
+// Wire protocol, phone -> Mac: [4-byte big-endian length][JSON message]
 
 import ScreenCaptureKit
 import IOSurface
@@ -86,7 +83,7 @@ struct PhoneInfo {
     let hdr: Bool?
     let sessionVersion: Int?
     let deviceNonce: Data
-    let usbSessionSeed: Data?
+    let wifiSessionSeed: Data?
 
     init(_ hello: ProtocolParser.ServerHello) {
         pixelsWide = hello.pixelsWide
@@ -98,7 +95,7 @@ struct PhoneInfo {
         hdr = hello.hdr
         sessionVersion = SessionCrypto.version
         deviceNonce = hello.deviceNonce
-        usbSessionSeed = hello.usbSessionSeed
+        wifiSessionSeed = hello.wifiSessionSeed
     }
 
     var kind: String { device ?? "device" }
@@ -252,23 +249,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private var audioTap: SystemAudioTap?
     // Audio rides its own queue — see the tap wiring in startCapture.
     private let audioQueue = DispatchQueue(label: "sender.audio", qos: .userInteractive)
-    // ProRes and the raised bitrates are sized for the measured ~1Gbps
-    // usbmux link; every non-usbmux TCP path (WiFi AND manual -host/-port
-    // tunnels) stays conservative.
     private var isUSBTransport: Bool {
         if case .usb = transport { return true }
         return false
     }
     // Only the usbmux path is treated as the fast link. Any other TCP path
     // (WiFi Bonjour, or a manual -host/-port tunnel which is typically an
-    // SSH/iproxy hop of unknown bandwidth) gets the conservative profile:
-    // a non-usbmux HEVC encoder needs ~20ms/frame at native res (a ~50fps
-    // ceiling; ProRes on the dedicated block is USB-only), and the link's
-    // usable bitrate is a fraction of usbmux. Pushing native 120 there just
-    // saturates the encoder and socket, so frames queue as latency and drop
-    // in bulk (measured on WiFi: e2e 30–275ms, 200–400 drops/s). Cap to
-    // 60fps and a resolution ceiling so the encoder keeps pace. This is a
-    // deliberate "conservative TCP" mode, not WiFi-only.
+    // SSH/iproxy hop of unknown bandwidth) gets the conservative profile.
     private var effectiveScale: Double {
         isUSBTransport ? quality.scale : min(quality.scale, 0.6)
     }
@@ -363,11 +350,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         reserve: { [weak self] in self?.reserveFrameAdmission(pts: $0) },
         cancel: { [weak self] in self?.cancelFrameAdmission($0) },
         admitted: { [weak self] in self?.handleAdmittedFrame($0, pts: $1, admission: $2) })
-    // Codec actually in use (HEVC for HDR and for >60fps; see setupEncoder).
+    // Codec actually in use: H.264 for SDR, HEVC Main10 HLG for HDR.
     private var usingHEVC = false
-    // ProRes wire path (see setupEncoder): raw frames in a PRRS envelope
-    // instead of Annex B — ProRes has no NAL structure.
-    private var usingProRes = false
     // Rejected encodes (output handler status != noErr) — rate-limit logging.
     private var encodeFailures = 0
     // Pipeline diagnosis flag (`defaults write … diag -bool true`).
@@ -1318,10 +1302,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     // MARK: - Dedicated audio connection (port+1)
     //
-    // Audio shares no socket with video: on the main connection a ~5ms PCM
-    // chunk queues behind hundreds of KB of in-flight ProRes frames
-    // (head-of-line blocking measured as ~60ms of audio arrival latency at
-    // 240Mbps). A second TCP connection makes audio delivery independent.
+    // Audio uses a second TCP connection so delivery remains independent of
+    // in-flight video frames.
     // USB derives port+1; WiFi (Bonjour) opens a second TLS connection to the
     // same secure service tagged as the audio channel (see dialAudioConnection).
     private var audioConnection: NWConnection?
@@ -1667,7 +1649,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 self.scheduleReconnect(
                     status: "Session authentication timed out — retrying…")
             } else if self.connectionReady,
-                      idle > SessionTiming.receiverOwnershipTimeout {
+                      idle > SessionTiming.livenessDeadline {
                 Log.info("watchdog: nothing from the phone for >5s — reconnecting")
                 self.scheduleReconnect(status: "Connection stale — reconnecting…")
             }
@@ -1756,16 +1738,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             scheduleReconnect()
             return
         }
-        let ikm: Data?
-        if let wifiPSK {
-            ikm = wifiPSK.key
-        } else if let seed = info.usbSessionSeed, seed.count == 32 {
-            ikm = seed
-        } else {
-            ikm = nil
-        }
-        guard let ikm else {
-            Log.info("session v3 has no PSK or loopback seed")
+        guard let ikm = wifiPSK?.key, info.wifiSessionSeed?.count == 32 else {
+            Log.info("session v3 has no paired Wi-Fi PSK and challenge")
             scheduleReconnect()
             return
         }
@@ -1945,41 +1919,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         encoder.map(VTCompressionSessionInvalidate)
         encoder = nil
 
-        // Experimental (`-prores`): intra-only ProRes 422 on the media
-        // engine's DEDICATED ProRes block — sidesteps the HEVC engine's
-        // ~430Mpx/s ceiling entirely, so native panels run at full 120fps.
-        // Proxy ≈330Mbps / LT ≈540Mbps at native 120 — the measured ~1Gbps
-        // usbmux wire takes either. 10-bit 4:2:2, so the HDR path's HLG
-        // buffers ride through losslessly. (`-prores lt` for the LT flavor.)
-        if let flavor = UserDefaults.standard.string(forKey: "prores"), isUSBTransport {
-            usingProRes = true
-            usingHEVC = false
-            let codec: CMVideoCodecType = flavor == "lt"
-                ? kCMVideoCodecType_AppleProRes422LT
-                : kCMVideoCodecType_AppleProRes422Proxy
-            VTCompressionSessionCreate(
-                allocator: nil,
-                width: Int32(width), height: Int32(height),
-                codecType: codec,
-                encoderSpecification: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: kCFBooleanTrue] as CFDictionary,
-                imageBufferAttributes: nil,
-                compressedDataAllocator: nil,
-                outputCallback: nil,
-                refcon: nil,
-                compressionSessionOut: &encoder
-            )
-            if let encoder,
-               VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_RealTime,
-                                    value: kCFBooleanTrue) == noErr,
-               VTCompressionSessionPrepareToEncodeFrames(encoder) == noErr {
-                Log.info("encoder ready: \(width)x\(height) ProRes-422-\(flavor == "lt" ? "LT" : "Proxy") (intra, no rate control) \(streamFps)fps quality=\(quality.rawValue)")
-                return
-            }
-            encoder.map(VTCompressionSessionInvalidate)
-            encoder = nil
-            Log.info("ProRes session creation failed — falling back to the standard codecs")
-            usingProRes = false
-        }
+        // Session v3 permits only H.264 and HEVC Main10/HLG Annex-B media.
 
         // Low-latency rate control: the hardware encoder emits every frame
         // immediately instead of pipelining. (`-lowlatency NO` for A/B.)
@@ -1988,16 +1928,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         let spec: CFDictionary? = lowLatency
             ? [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue] as CFDictionary
             : nil
-        // Codec choice:
-        //  - HDR rides HEVC Main10 (H.264 has no 10-bit hardware path here).
-        //  - SDR above 60fps ALSO needs HEVC: H.264 levels top out at 5.2
-        //    (~535M luma samples/s) and a native panel at 120fps exceeds
-        //    that — VideoToolbox then rejects EVERY frame with noErr +
-        //    nil buffer (measured: 2816×1940@120 H.264 = zero output).
-        //    HEVC levels reach 6.2 (8K120), so it has headroom for years.
-        //  - SDR at ≤60fps stays H.264: universally fast, proven default.
-        // If an HEVC session can't be created, demote to SDR H.264 (and 60).
-        usingHEVC = hdrActive || streamFps > 60
+        // HDR rides HEVC Main10/HLG; SDR is always H.264.
+        usingHEVC = hdrActive
         if usingHEVC {
             VTCompressionSessionCreate(
                 allocator: nil,
@@ -2265,23 +2197,25 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     }
                     return
                 }
-                if self.usingProRes {
-                    self.needsKeyframe = false
-                    self.sendProRes(buffer, capturedAtMs: capturedAtMs)
-                    return
-                }
                 guard let data = self.annexB(from: buffer) else {
                     if requestingKeyframe { self.needsKeyframe = true }
                     self.encodeFailures += 1
                     Log.info("annexB conversion returned nil")
                     return
                 }
-                self.needsKeyframe = false
-                let sndMs = Int64(Date().timeIntervalSince1970 * 1000)
-                let codecTag = self.usingHEVC ? ",\"hevc\":1" : ""
-                var framed = Data("{\"cap\":\(capturedAtMs),\"snd\":\(sndMs)\(codecTag)}".utf8)
-                framed.append(data)
-                self.sendFramed(framed)
+                let keyframe = self.isKeyframe(buffer)
+                guard let framed = self.videoPayload(
+                    annexB: data, capturedAtMs: capturedAtMs, keyframe: keyframe) else {
+                    if requestingKeyframe { self.needsKeyframe = true }
+                    self.encodeFailures += 1
+                    Log.info("video framing rejected")
+                    return
+                }
+                if self.sendFramed(framed) {
+                    self.needsKeyframe = false
+                } else if requestingKeyframe {
+                    self.needsKeyframe = true
+                }
             }
         }
         if status != noErr {
@@ -2291,46 +2225,59 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         }
     }
 
-    // MARK: - ProRes wire envelope
-    //
-    // [PRRS][4B BE meta length][meta JSON][raw ProRes frame]
-    // Every ProRes frame is self-contained (intra-only); the meta carries
-    // the dimensions/codec/color info the receiver needs to build its
-    // CMVideoFormatDescription, plus the usual cap/snd telemetry.
-    private func sendProRes(_ sample: CMSampleBuffer, capturedAtMs: Int64) {
-        guard let block = CMSampleBufferGetDataBuffer(sample),
-              let fmt = CMSampleBufferGetFormatDescription(sample) else { return }
-        var len = 0, total = 0
-        var ptr: UnsafeMutablePointer<Int8>?
-        guard CMBlockBufferGetDataPointer(block, atOffset: 0,
-                lengthAtOffsetOut: &len, totalLengthOut: &total,
-                dataPointerOut: &ptr) == noErr, let ptr else { return }
-        let dims = CMVideoFormatDescriptionGetDimensions(fmt)
-        let codec = CMFormatDescriptionGetMediaSubType(fmt)
-        let sndMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let meta = "{\"cap\":\(capturedAtMs),\"snd\":\(sndMs),\"codec\":\(codec),\"w\":\(dims.width),\"h\":\(dims.height),\"hdr\":\(hdrActive ? 1 : 0)}"
-        let metaData = Data(meta.utf8)
-        var framed = Data(capacity: 8 + metaData.count + total)
-        framed.append(contentsOf: [0x50, 0x52, 0x52, 0x53])   // "PRRS"
-        var metaLen = UInt32(metaData.count).bigEndian
-        framed.append(Data(bytes: &metaLen, count: 4))
-        framed.append(metaData)
-        // The data pointer only covers `len`; copy from the block buffer when
-        // it isn't contiguous (len < total) rather than reading OOB off ptr.
-        if len == total {
-            framed.append(Data(bytes: ptr, count: total))
-        } else {
-            var frame = Data(count: total)
-            let ok = frame.withUnsafeMutableBytes {
-                CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: total,
-                                           destination: $0.baseAddress!) == noErr
-            }
-            guard ok else { return }
-            framed.append(frame)
-        }
-        sendFramed(framed)
-    }
 
+    private func videoPayload(annexB: Data, capturedAtMs: Int64, keyframe: Bool) -> Data? {
+        let startCode3 = Data([0, 0, 1])
+        let startCode4 = Data([0, 0, 0, 1])
+        guard annexB.starts(with: startCode3) || annexB.starts(with: startCode4) else { return nil }
+
+        var nalStarts: [Data.Index] = []
+        var index = annexB.startIndex
+        while index < annexB.endIndex {
+            let remaining = annexB.distance(from: index, to: annexB.endIndex)
+            if remaining >= 4, annexB[index] == 0, annexB[index + 1] == 0,
+               annexB[index + 2] == 0, annexB[index + 3] == 1 {
+                nalStarts.append(index + 4)
+                index += 4
+            } else if remaining >= 3, annexB[index] == 0, annexB[index + 1] == 0,
+                      annexB[index + 2] == 1 {
+                nalStarts.append(index + 3)
+                index += 3
+            } else {
+                index += 1
+            }
+        }
+        guard !nalStarts.isEmpty else { return nil }
+
+        var h264Types = Set<UInt8>()
+        var hevcTypes = Set<UInt8>()
+        for start in nalStarts where start < annexB.endIndex {
+            let byte = annexB[start]
+            h264Types.insert(byte & 0x1F)
+            hevcTypes.insert((byte >> 1) & 0x3F)
+        }
+        let hevc = usingHEVC
+        if hevc {
+            guard !hevcTypes.isEmpty else { return nil }
+            let hasIRAP = hevcTypes.contains { (16...23).contains($0) }
+            guard keyframe ? hevcTypes.isSuperset(of: [32, 33, 34]) && hasIRAP : !hasIRAP else { return nil }
+        } else {
+            guard hevcTypes.isDisjoint(with: [32, 33, 34]),
+                  !h264Types.isEmpty else { return nil }
+            let hasIDR = h264Types.contains(5)
+            guard keyframe ? h264Types.isSuperset(of: [7, 8]) && hasIDR : !hasIDR else { return nil }
+        }
+
+        let codec = hevc ? "hevc-main10-hlg" : "h264"
+        let telemetry = Data("{\"codec\":\"\(codec)\",\"keyframe\":\(keyframe),\"t\":\(Double(capturedAtMs) / 1_000),\"type\":\"video\"}".utf8)
+        guard (1...4_096).contains(telemetry.count) else { return nil }
+        var telemetryLength = UInt32(telemetry.count).bigEndian
+        var payload = Data(bytes: &telemetryLength, count: 4)
+        payload.append(telemetry)
+        payload.append(annexB)
+        guard payload.count <= ProtocolParser.videoDataCap else { return nil }
+        return payload
+    }
     // MARK: - H.264/HEVC -> Annex B
 
     private func annexB(from sample: CMSampleBuffer) -> Data? {
@@ -2435,13 +2382,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         connection.send(content: frame, completion: .contentProcessed { _ in })
     }
 
-    private func sendFramed(_ payload: Data) {
-        guard let connection, connectionReady else { return }
+    @discardableResult
+    private func sendFramed(_ payload: Data) -> Bool {
+        guard let connection, connectionReady else { return false }
         do {
             try ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .videoData)
         } catch {
             Log.info("video payload rejected before send: \(payload.count) bytes")
-            return
+            return false
         }
         var header = UInt32(payload.count).bigEndian
         var frame = Data(bytes: &header, count: 4)
@@ -2473,6 +2421,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 Task { @MainActor in self.onStats?(frames, mbps) }
             }
         })
+        return true
     }
 
     // MARK: - Helpers

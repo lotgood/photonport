@@ -109,10 +109,6 @@ struct MacProtocolAdversarialHarness {
         pongProductionState()
         scrollAdmissionAndBackpressure()
         scrollTimerAndConversionBehavior()
-        sessionProofsAndOwnership()
-        generationSnapshots()
-        proofMutations()
-        generationExhaustedPersistence()
         print("mac protocol adversarial harness passed")
     }
 
@@ -144,7 +140,6 @@ struct MacProtocolAdversarialHarness {
             }),
             ("session busy", oversizedControl, { _ = try ProtocolParser.parseSessionBusy($0) }),
             ("channel open", oversizedControl, { _ = try ProtocolParser.parseChannelOpen($0) }),
-            ("generation snapshot", oversizedControl, { _ = try ProtocolParser.parseGenerationSnapshot($0) }),
             ("control", oversizedControl, { _ = try ProtocolParser.parseControl($0, transport: .wifi) })
         ]
         for (name, data, parse) in entries {
@@ -193,16 +188,15 @@ struct MacProtocolAdversarialHarness {
         let cases: [(String, (String) -> Data, (Data) throws -> Void)] = [
             ("pair-commit v", { json("{\"type\":\"pair-commit\",\"v\":\($0),\"commit\":\"\(b64(0x11, 32))\"}") }, { _ = try ProtocolParser.parsePairCommit($0) }),
             ("pair-hello v", { json("{\"type\":\"pair-hello\",\"v\":\($0),\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\(b64(0x21, 32))\",\"nonce\":\"\(b64(0x22, 16))\"}") }, { _ = try ProtocolParser.parsePairHello($0, role: "device") }),
-            ("server-hello sessionVersion", { json("{\"type\":\"server-hello\",\"sessionVersion\":\($0),\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server-hello pixelsWide", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":\($0),\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server-hello pixelsHigh", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":\($0),\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server-hello maxFps", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":\($0),\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello sessionVersion", { json("{\"type\":\"server-hello\",\"sessionVersion\":\($0),\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello pixelsWide", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":\($0),\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello pixelsHigh", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":\($0),\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello maxFps", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":\($0),\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
             ("session-accept v", { json("{\"type\":\"session-accept\",\"v\":\($0),\"sessionID\":\"\(sid)\",\"generation\":1,\"acceptProof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("session-accept generation", { json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sid)\",\"generation\":\($0),\"acceptProof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("session-busy v", { json("{\"type\":\"session-busy\",\"v\":\($0),\"reason\":\"session_busy\"}") }, { _ = try ProtocolParser.parseSessionBusy($0) }),
             ("channel-open v", { json("{\"type\":\"channel-open\",\"v\":\($0),\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseChannelOpen($0) }),
             ("channel-open generation", { json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":\($0),\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseChannelOpen($0) }),
-            ("generation snapshot", { json("{\"generation\":\($0),\"generationExhausted\":false}") }, { _ = try ProtocolParser.parseGenerationSnapshot($0) }),
             ("ping id", { json("{\"type\":\"ping\",\"id\":\($0),\"t\":1.0}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) }),
             ("pong id", { json("{\"type\":\"pong\",\"id\":\($0),\"t\":1.0}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) }),
             ("stats dropped", { json("{\"type\":\"stats\",\"fps\":60,\"bitrate\":12,\"dropped\":\($0)}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) })
@@ -219,13 +213,12 @@ struct MacProtocolAdversarialHarness {
         return [
             ParserCase(name: "pair-commit", valid: json("{\"type\":\"pair-commit\",\"v\":2,\"commit\":\"\(b64(0x11, 32))\"}"), requiredKeys: ["type", "v", "commit"], typeKey: "type", typeValue: "pair-commit", wrongTypeField: "commit", wrongTypeValue: "1") { _ = try ProtocolParser.parsePairCommit($0) },
             ParserCase(name: "pair-hello", valid: json("{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\(b64(0x21, 32))\",\"nonce\":\"\(b64(0x22, 16))\"}"), requiredKeys: ["type", "v", "role", "installID", "pub", "nonce"], typeKey: "type", typeValue: "pair-hello", wrongTypeField: "pub", wrongTypeValue: "1") { _ = try ProtocolParser.parsePairHello($0, role: "device") },
-            ParserCase(name: "server-hello", valid: json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}"), requiredKeys: ["type", "sessionVersion", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr"], typeKey: "type", typeValue: "server-hello", wrongTypeField: "hdr", wrongTypeValue: "\"true\"") { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) },
+            ParserCase(name: "server-hello", valid: json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}"), requiredKeys: ["type", "sessionVersion", "transport", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr", "wifiSessionSeed"], typeKey: "type", typeValue: "server-hello", wrongTypeField: "hdr", wrongTypeValue: "\"true\"") { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) },
             ParserCase(name: "session-accept", valid: json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sid)\",\"generation\":1,\"acceptProof\":\"\(proof)\"}"), requiredKeys: ["type", "v", "sessionID", "generation", "acceptProof"], typeKey: "type", typeValue: "session-accept", wrongTypeField: "sessionID", wrongTypeValue: "1") { _ = try ProtocolParser.parseSessionAccept($0) },
             ParserCase(name: "session-busy", valid: json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}"), requiredKeys: ["type", "v", "reason"], typeKey: "type", typeValue: "session-busy", wrongTypeField: "reason", wrongTypeValue: "1") { _ = try ProtocolParser.parseSessionBusy($0) },
             ParserCase(name: "channel-open", valid: json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}"), requiredKeys: ["type", "v", "macInstallID", "sessionID", "generation", "channel", "nonce", "proof"], typeKey: "type", typeValue: "channel-open", wrongTypeField: "nonce", wrongTypeValue: "1") { _ = try ProtocolParser.parseChannelOpen($0) },
             ParserCase(name: "control-ping", valid: json("{\"type\":\"ping\",\"id\":1,\"t\":1.0}"), requiredKeys: ["type", "id", "t"], typeKey: "type", typeValue: "ping", wrongTypeField: "id", wrongTypeValue: "\"1\"") { _ = try ProtocolParser.parseControl($0, transport: .wifi) },
             ParserCase(name: "control-pong", valid: json("{\"type\":\"pong\",\"id\":1,\"t\":1.0}"), requiredKeys: ["type", "id", "t"], typeKey: "type", typeValue: "pong", wrongTypeField: "id", wrongTypeValue: "\"1\"") { _ = try ProtocolParser.parseControl($0, transport: .wifi) },
-            ParserCase(name: "generation-snapshot", valid: json("{\"generation\":1,\"generationExhausted\":false}"), requiredKeys: ["generation", "generationExhausted"], typeKey: "generationExhausted", typeValue: "false", wrongTypeField: "generationExhausted", wrongTypeValue: "\"false\"") { _ = try ProtocolParser.parseGenerationSnapshot($0) }
         ]
     }
 
@@ -250,8 +243,8 @@ struct MacProtocolAdversarialHarness {
             ("pair commit", 32, { json("{\"type\":\"pair-commit\",\"v\":2,\"commit\":\"\($0)\"}") }, { _ = try ProtocolParser.parsePairCommit($0) }),
             ("pair hello pub", 32, { json("{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\($0)\",\"nonce\":\"\(b64(0x22, 16))\"}") }, { _ = try ProtocolParser.parsePairHello($0, role: "device") }),
             ("pair hello nonce", 16, { json("{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\(b64(0x21, 32))\",\"nonce\":\"\($0)\"}") }, { _ = try ProtocolParser.parsePairHello($0, role: "device") }),
-            ("server deviceNonce", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\($0)\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server usbSessionSeed", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"usbSessionSeed\":\"\($0)\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .usb) }),
+            ("server deviceNonce", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\($0)\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server wifiSessionSeed", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\($0)\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
             ("session ID", 16, { json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\($0)\",\"generation\":1,\"acceptProof\":\"\(b64(0x52, 32))\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("accept proof", 32, { json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":1,\"acceptProof\":\"\($0)\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("channel nonce", 32, { json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\($0)\",\"proof\":\"\(b64(0x62, 32))\"}") }, { _ = try ProtocolParser.parseChannelOpen($0) }),
@@ -283,8 +276,8 @@ struct MacProtocolAdversarialHarness {
 
     static func transportRules() {
         let common = "\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true"
-        let wifi = json("{\(common)}")
-        let usb = json("{\(common),\"usbSessionSeed\":\"\(b64(0x43, 32))\"}")
+        let wifi = json("{\(common),\"transport\":\"wifi\",\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}")
+        let usb = json("{\(common),\"transport\":\"usb\"}")
         precondition((try? ProtocolParser.parseServerHello(wifi, transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseServerHello(usb, transport: .usb)) != nil)
         precondition((try? ProtocolParser.parseServerHello(usb, transport: .wifi)) == nil)
@@ -527,52 +520,5 @@ struct MacProtocolAdversarialHarness {
         precondition(!SessionCrypto.constantTimeEqual(receivedProof, channelProof))
     }
 
-    static func generationExhaustedPersistence() {
-        var state = try! SessionOwnershipState.restore(snapshot: .init(generation: UInt64.max - 1, generationExhausted: false))
-        guard case .accepted = state.claim(macInstallID: "mac-max") else { preconditionFailure("max generation unavailable") }
-        let encoded = try! state.encodeSnapshot()
-        var restarted = try! SessionOwnershipState.restore(snapshot: encoded)
-        precondition(restarted.exhausted && restarted.generation == UInt64.max)
-        guard case .exhausted = restarted.claim(macInstallID: "after-restart") else { preconditionFailure("exhaustion did not persist after restart") }
-    }
 
-    static func sessionProofsAndOwnership() {
-        let key = SymmetricKey(data: Data(repeating: 0x31, count: 32))
-        let macID = "mac-a", deviceID = "device-a"
-        let macNonce = Data(repeating: 0x41, count: 32), deviceNonce = Data(repeating: 0x42, count: 32)
-        let sid = Data(repeating: 0x51, count: 16)
-        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sid, generation: 1)
-        let proof = SessionCrypto.acceptProof(key: secret, sessionID: sid, generation: 1, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)
-        let accept = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sid.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}")
-        precondition((try? ProtocolParser.parseVerifiedSessionAccept(accept, primaryKey: key, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)) != nil)
-        precondition((try? ProtocolParser.parseVerifiedSessionAccept(accept, primaryKey: key, macInstallID: "wrong", deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)) == nil)
-        let channel = SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "video", nonce: Data(repeating: 0x61, count: 32))
-        precondition(!SessionCrypto.constantTimeEqual(channel, SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "audio", nonce: Data(repeating: 0x61, count: 32))))
-        var state = SessionOwnershipState.fresh()
-        precondition(state.consumeChannelNonce(macInstallID: macID, generation: 1, nonce: sid) == false)
-        guard case .accepted(let lease) = state.claim(macInstallID: macID) else { preconditionFailure("initial claim rejected") }
-        guard case .busy(let owner) = state.claim(macInstallID: "mac-b") else { preconditionFailure("ownership was not exclusive") }
-        precondition(owner == lease && state.authorizes(macInstallID: macID, generation: lease.generation))
-        precondition(state.consumeChannelNonce(macInstallID: macID, generation: lease.generation, nonce: sid))
-        precondition(!state.consumeChannelNonce(macInstallID: macID, generation: lease.generation, nonce: sid))
-        precondition(state.release(macInstallID: macID, generation: lease.generation))
-    }
-
-    static func generationSnapshots() {
-        let near = SessionOwnershipState.Snapshot(generation: UInt64.max - 1, generationExhausted: false)
-        var restored = try! SessionOwnershipState.restore(snapshot: near)
-        guard case .accepted(let maxLease) = restored.claim(macInstallID: "mac-max") else { preconditionFailure("max generation unavailable") }
-        precondition(maxLease.generation == UInt64.max && restored.exhausted)
-        let data = try! restored.encodeSnapshot()
-        let restarted = try! SessionOwnershipState.restore(snapshot: data)
-        precondition(restarted.exhausted && restarted.generation == UInt64.max)
-        guard case .busy = restored.claim(macInstallID: "after") else { preconditionFailure("active max lease not busy") }
-        precondition(restored.release(macInstallID: "mac-max", generation: UInt64.max))
-        guard case .exhausted = restored.claim(macInstallID: "after") else { preconditionFailure("exhaustion not persistent") }
-        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: 0, generationExhausted: false))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: UInt64.max, generationExhausted: false))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: 42, generationExhausted: true))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: json("{\"generation\":42,\"generation\":43,\"generationExhausted\":false}"))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: json("{\"generation\":42,\"generationExhausted\":false,\"extra\":1}"))) == nil)
-    }
 }

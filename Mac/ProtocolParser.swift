@@ -26,7 +26,7 @@ enum ProtocolParser {
         let maxFps: Int
         let hdr: Bool
         let deviceNonce: Data
-        let usbSessionSeed: Data?
+        let wifiSessionSeed: Data?
     }
 
     struct VerifiedSessionAccept {
@@ -119,10 +119,14 @@ enum ProtocolParser {
 
     static func parseServerHello(_ data: Data, transport: Transport) throws -> ServerHello {
         guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
-        let base: Set<String> = ["type", "sessionVersion", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr"]
-        let required = transport == .usb ? base.union(["usbSessionSeed"]) : base
+        let base: Set<String> = ["type", "sessionVersion", "transport", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr"]
+        let required = transport == .wifi ? base.union(["wifiSessionSeed"]) : base
         let object = try strictObject(data, keys: required)
-        guard try string(object, "type") == "server-hello", try int(object, "sessionVersion") == SessionCrypto.version else { throw ParseError.value }
+        guard try string(object, "type") == "server-hello",
+              try int(object, "sessionVersion") == SessionCrypto.version,
+              try string(object, "transport") == (transport == .wifi ? "wifi" : "usb") else {
+            throw ParseError.value
+        }
         let width = try rangedInt(object, "pixelsWide", 1, 65_535)
         let height = try rangedInt(object, "pixelsHigh", 1, 65_535)
         let scale = try finiteDouble(object, "scale", greaterThan: 0, max: 16)
@@ -132,8 +136,8 @@ enum ProtocolParser {
         let fps = try rangedInt(object, "maxFps", 1, 240)
         guard let hdr = object["hdr"] as? Bool else { throw ParseError.type }
         let deviceNonce = try base64(try string(object, "deviceNonce"), bytes: 32)
-        let seed = transport == .usb ? try base64(try string(object, "usbSessionSeed"), bytes: 32) : nil
-        return ServerHello(pixelsWide: width, pixelsHigh: height, scale: scale, device: device, id: try string(object, "id"), maxFps: fps, hdr: hdr, deviceNonce: deviceNonce, usbSessionSeed: seed)
+        let seed = transport == .wifi ? try base64(try string(object, "wifiSessionSeed"), bytes: 32) : nil
+        return ServerHello(pixelsWide: width, pixelsHigh: height, scale: scale, device: device, id: try string(object, "id"), maxFps: fps, hdr: hdr, deviceNonce: deviceNonce, wifiSessionSeed: seed)
     }
 
     static func parseSessionAccept(_ data: Data) throws -> SessionAccept {
@@ -186,16 +190,6 @@ enum ProtocolParser {
         return try JSONDecoder().decode(SessionChannelOpen.self, from: data)
     }
 
-    static func parseGenerationSnapshot(_ data: Data) throws -> SessionOwnershipState.Snapshot {
-        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
-        let object = try strictObject(data, keys: ["generation", "generationExhausted"])
-        guard let generationExhausted = object["generationExhausted"] as? Bool else {
-            throw ParseError.type
-        }
-        return SessionOwnershipState.Snapshot(
-            generation: try uint64(object, "generation"),
-            generationExhausted: generationExhausted)
-    }
 
     static func parseControl(_ data: Data, transport: Transport) throws -> Control {
         guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
@@ -418,7 +412,7 @@ enum ProtocolParser {
             skipWS(); guard i < s.endIndex, s[i] == ":" else { throw ParseError.invalidJSON }
             i = s.index(after: i)
             let raw = try skipValue()
-            if keys.contains(key), raw.isEmpty || raw.contains(where: { !$0.isNumber }) {
+            if keys.contains(key), raw.isEmpty || raw.contains(where: { $0 < "0" || $0 > "9" }) || UInt64(raw) == nil {
                 throw ParseError.type
             }
             skipWS(); if i < s.endIndex, s[i] == "," { i = s.index(after: i); continue }
@@ -428,7 +422,11 @@ enum ProtocolParser {
     }
 
     private static func string(_ object: [String: Any], _ key: String) throws -> String {
-        guard let value = object[key] as? String else { throw ParseError.type }
+        guard let value = object[key] as? String,
+              (1...256).contains(value.unicodeScalars.count),
+              value.unicodeScalars.allSatisfy({ $0.value < 0xD800 || $0.value > 0xDFFF }) else {
+            throw ParseError.type
+        }
         return value
     }
     private static func int(_ object: [String: Any], _ key: String) throws -> Int? {
