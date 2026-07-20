@@ -683,6 +683,13 @@ struct MacProtocolAdversarialHarness {
             replacing(initPayload, initProof, Data(repeating: 0, count: 32).base64EncodedString()),
             now: 0, token: 7, nonce: deviceNonce
         ) == nil)
+        let unpairedExpectedDevice = USBPrefaceServer(
+            psk: psk, macInstallID: "mac", deviceInstallID: "unpaired-receiver",
+            purpose: "primary", startedAt: 0, token: 7
+        )!
+        precondition(unpairedExpectedDevice.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        precondition(unpairedExpectedDevice.consume(initPayload, now: 0, token: 7, nonce: deviceNonce) == nil)
+        receipt("usb-unpaired-identity")
 
         let challenge = device.consume(initPayload, now: 0, token: 7, nonce: deviceNonce)!
         let challengePayload = USBPrefaceMessage.unframe(challenge)!.0
@@ -701,6 +708,25 @@ struct MacProtocolAdversarialHarness {
             now: 0, token: 7, nonce: deviceNonce
         )!
         precondition(device2.consume(USBPrefaceMessage.unframe(challenge2)!.0, now: 0, token: 7) == nil)
+        let finishWrongProofClient = client()
+        let finishWrongProofServer = server()
+        let finishWrongProofInitial = finishWrongProofClient.start(now: 0, token: 7)!
+        precondition(finishWrongProofServer.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let finishWrongProofChallenge = finishWrongProofServer.consume(
+            USBPrefaceMessage.unframe(Data(finishWrongProofInitial.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        let finishWrongProof = finishWrongProofClient.consume(
+            USBPrefaceMessage.unframe(finishWrongProofChallenge)!.0, now: 0, token: 7
+        )!
+        var finishWrongProofObject = try! JSONSerialization.jsonObject(
+            with: USBPrefaceMessage.unframe(finishWrongProof)!.0
+        ) as! [String: Any]
+        finishWrongProofObject["proof"] = Data(repeating: 0, count: 32).base64EncodedString()
+        let malformedFinishProof = try! JSONSerialization.data(withJSONObject: finishWrongProofObject)
+        precondition(finishWrongProofServer.consume(malformedFinishProof, now: 0, token: 7) == nil)
+        receipt("usb-finish-wrong-proof")
+
 
         let mac3 = client()
         let device3 = server()
@@ -715,6 +741,23 @@ struct MacProtocolAdversarialHarness {
         let acceptPayload = USBPrefaceMessage.unframe(accept)!.0
         precondition(mac3.consume(acceptPayload, now: 0, token: 7) == Data())
         precondition(mac3.consume(acceptPayload, now: 0, token: 7) == nil)
+        let extraFrameClient = client()
+        let extraFrameServer = server()
+        let extraFrameInitial = extraFrameClient.start(now: 0, token: 7)!
+        precondition(extraFrameServer.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let extraFrameChallenge = extraFrameServer.consume(
+            USBPrefaceMessage.unframe(Data(extraFrameInitial.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        let extraFrameFinish = extraFrameClient.consume(
+            USBPrefaceMessage.unframe(extraFrameChallenge)!.0, now: 0, token: 7
+        )!
+        let extraFrameAccept = extraFrameServer.consume(
+            USBPrefaceMessage.unframe(extraFrameFinish)!.0, now: 0, token: 7
+        )!
+        precondition(extraFrameClient.consume(USBPrefaceMessage.unframe(extraFrameAccept)!.0, now: 0, token: 7) == Data())
+        precondition(extraFrameServer.consume(USBPrefaceMessage.unframe(extraFrameFinish)!.0, now: 0, token: 7) == nil)
+        receipt("usb-preface-extra-frame")
 
         let binding = device3.authenticatedBinding()!
         func states() -> (USBRecordState, USBRecordState) {

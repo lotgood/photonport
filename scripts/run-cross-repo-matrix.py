@@ -557,8 +557,6 @@ def main():
             unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
             if len(executed_positive) != len(vectors) or len(positive_suite_covered) != len(positive_ids):
                 failures.append("protocol positive vector IDs lack executable production-suite coverage")
-            if unexecutable:
-                failures.append("protocol negative vector IDs lack executable production-suite coverage")
 
         verifier = verifier_command(mac, ios, protocol, compatibility_path, args)
         completed, receipt = run(verifier, mac, logs, "verifier-primary")
@@ -578,6 +576,8 @@ def main():
             stderr = completed.stderr.decode("utf-8", "replace")
             if completed.returncode == 0 or "FAIL_CLOSED" not in stderr or not ("pin" in stderr.lower() and ("tracked" in stderr.lower() or "mismatch" in stderr.lower())):
                 failures.append("changed tracked pin did not fail closed for a pin tracked-change/mismatch reason")
+            else:
+                vector_evidence.setdefault("compatibility-mismatch", set()).add("consumer")
         else:
             failures.append("changed-pin git clone/checkout failed")
 
@@ -599,6 +599,10 @@ def main():
         else:
             failures.append("fresh git clone/checkout failed")
 
+    covered = set(vector_specific_coverage(negative_ids, vector_evidence))
+    unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
+    if unexecutable:
+        failures.append("protocol negative vector IDs lack executable production-suite coverage")
     if failures:
         result = "failed"
     report = {
@@ -619,7 +623,7 @@ def main():
             "enumeratedProtocolNegativeVectorIDs": negative_ids,
             "productionSuiteResults": suite_results,
             "productionSuiteCoveredPositiveVectorIDs": positive_suite_covered,
-            "productionSuiteCoveredNegativeVectorIDs": suite_covered,
+            "productionSuiteCoveredNegativeVectorIDs": sorted(covered),
             "negativeVectorEvidenceLabels": list(negative_suite_labels),
             "positiveVectorEvidenceLabels": list(positive_suite_labels),
             "unexecutableNegativeVectorIDs": unexecutable,
