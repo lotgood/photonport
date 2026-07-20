@@ -226,13 +226,13 @@ class MacProtocolContractTests(unittest.TestCase):
             {
                 "schemaVersion": 1,
                 "protocolCommit": "2d2c613176ae76319c39f4676cf926a13984ec38",
-                "compatibilityDigest": "4ee7d298a0bd7ab284e7fa4d84d4fb19d68cdb681a6230945bb161815d3a4127",
-                "normativeManifestDigest": "3083f63b75764b25bd4e1e9f7d5b5b4392f8eea56a81ea783998c59750749762",
+                "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+                "normativeManifestDigest": "1711266e97dc06b1877ca75838f8e788d6519ba4c258e060119aff0dbc2d4033",
             },
         )
         self.assertNotIn("protocolTag", pin)
         self.assertIn('protocolCommit: "2d2c613176ae76319c39f4676cf926a13984ec38"', SENDER)
-        self.assertIn('normativeManifestDigest: "3083f63b75764b25bd4e1e9f7d5b5b4392f8eea56a81ea783998c59750749762"', SENDER)
+        self.assertIn('normativeManifestDigest: "1711266e97dc06b1877ca75838f8e788d6519ba4c258e060119aff0dbc2d4033"', SENDER)
         self.assertIn('Bundle.main.url(forResource: "ProtocolBuildPin"', SENDER)
         self.assertIn("try ProtocolBuildPin.validate(at: pinURL)", SENDER)
 
