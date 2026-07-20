@@ -21,6 +21,16 @@ MAC_HARNESS_CASE_IDS = {
 }
 NEGATIVE_FRAME = b"\x00\x00\x00\x00"
 IOS_NON_CONSUMER_CASE_IDS = {"wrong-device-nonce"}
+NEGATIVE_CONSUMER_STAGES = {
+    "mac-protocol-parser",
+    "ios-receiver-contracts",
+    "ios-pairing",
+    "ios-usb-preface",
+    "ios-usb-record-state",
+    "ios-session-wire-parser",
+    "ios-session-ownership",
+    "ios-media-frame-contract",
+}
 
 
 def digest(data):
@@ -330,6 +340,26 @@ def exact_vector_receipts(stdout, expected_ids, receipt_kind):
     return found
 
 
+def exact_negative_consumer_receipt(stdout, expected_id):
+    """Require one typed production rejection receipt for an atomic consumer."""
+    receipt_lines = [line for line in stdout.splitlines() if line.startswith(b"VECTOR_RECEIPT")]
+    if len(receipt_lines) != 1:
+        return False
+    try:
+        fields = receipt_lines[0].decode("utf-8", errors="strict").split(" ")
+    except UnicodeDecodeError:
+        return False
+    if len(fields) != 5:
+        return False
+    prefix, consumer, case_id, stage_field, outcome_field = fields
+    if prefix != "VECTOR_RECEIPT" or consumer != "consumer" or case_id != expected_id:
+        return False
+    if not stage_field.startswith("stage=") or outcome_field != "outcome=rejected":
+        return False
+    stage = stage_field.removeprefix("stage=")
+    return bool(stage) and stage in NEGATIVE_CONSUMER_STAGES
+
+
 
 
 
@@ -359,8 +389,9 @@ def run_mac_harness_cases(mac, case_ids, logs, receipts):
             mac, logs, "mac-harness-consumer-" + case_id
         )
         receipts.append(receipt)
-        executions[case_id] = completed.returncode == 0
-        if completed.returncode == 0:
+        succeeded = completed.returncode == 0 and exact_negative_consumer_receipt(completed.stdout, case_id)
+        executions[case_id] = succeeded
+        if succeeded:
             covered.append(case_id)
         else:
             failed.append(case_id)
@@ -379,8 +410,9 @@ def run_ios_harness_cases(ios, case_ids, logs, receipts):
             ios, logs, "ios-harness-consumer-" + case_id
         )
         receipts.append(receipt)
-        executions[case_id] = completed.returncode == 0
-        if completed.returncode == 0:
+        succeeded = completed.returncode == 0 and exact_negative_consumer_receipt(completed.stdout, case_id)
+        executions[case_id] = succeeded
+        if succeeded:
             covered.append(case_id)
         else:
             failed.append(case_id)

@@ -125,6 +125,50 @@ class MatrixSourceBindingTest(unittest.TestCase):
             ),
             ["session-v3:wifi-psk"],
         )
+    def test_negative_consumer_receipt_accepts_exact_typed_rejection(self):
+        self.assertTrue(
+            MATRIX.exact_negative_consumer_receipt(
+                b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\n",
+                "bad-length-prefix",
+            )
+        )
+
+    def test_negative_consumer_receipt_rejects_missing_receipt(self):
+        self.assertFalse(MATRIX.exact_negative_consumer_receipt(b"production rejected frame\n", "bad-length-prefix"))
+
+    def test_negative_consumer_receipt_rejects_forged_receipt(self):
+        self.assertFalse(
+            MATRIX.exact_negative_consumer_receipt(
+                b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=accepted\n",
+                "bad-length-prefix",
+            )
+        )
+
+    def test_negative_consumer_receipt_rejects_duplicate_receipts(self):
+        receipt = b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\n"
+        self.assertFalse(MATRIX.exact_negative_consumer_receipt(receipt + receipt, "bad-length-prefix"))
+
+    def test_negative_consumer_receipt_rejects_mismatched_id(self):
+        self.assertFalse(
+            MATRIX.exact_negative_consumer_receipt(
+                b"VECTOR_RECEIPT consumer oversize-frame stage=mac-protocol-parser outcome=rejected\n",
+                "bad-length-prefix",
+            )
+        )
+
+    def test_negative_consumer_receipt_rejects_unknown_stage_and_malformed_utf8(self):
+        self.assertFalse(
+            MATRIX.exact_negative_consumer_receipt(
+                b"VECTOR_RECEIPT consumer bad-length-prefix stage=untrusted-helper outcome=rejected\n",
+                "bad-length-prefix",
+            )
+        )
+        self.assertFalse(
+            MATRIX.exact_negative_consumer_receipt(
+                b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\xff\n",
+                "bad-length-prefix",
+            )
+        )
 
 
 
