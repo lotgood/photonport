@@ -12,6 +12,7 @@ from pathlib import Path
 VERIFIER = Path(__file__).resolve().with_name("verify-cross-repo-compatibility.py")
 EXPECTED_PIN_KEYS = {"schemaVersion", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"}
 SWIFT_EXECUTABLE_CASE_IDS = {"duplicate-json-key", "invalid-utf8-json", "bad-length-prefix", "oversize-frame"}
+MAC_HARNESS_CASE_IDS = {"bad-length-prefix", "oversize-frame", "duplicate-json-key", "sensitive-reason-code"}
 NEGATIVE_FRAME = b"\x00\x00\x00\x00"
 
 
@@ -328,6 +329,25 @@ def run_adversarial_cases(binary, case_ids, logs, prefix, receipts):
         else:
             failed.append(case_id)
     return covered, failed
+def run_mac_harness_cases(mac, case_ids, logs, receipts):
+    covered = []
+    failed = []
+    executions = {}
+    for case_id in case_ids:
+        if case_id not in MAC_HARNESS_CASE_IDS:
+            continue
+        completed, receipt = run(
+            ["./scripts/test-mac-protocol-adversarial.sh", "case", case_id],
+            mac, logs, "mac-harness-consumer-" + case_id
+        )
+        receipts.append(receipt)
+        executions[case_id] = completed.returncode == 0
+        if completed.returncode == 0:
+            covered.append(case_id)
+        else:
+            failed.append(case_id)
+    return covered, failed, executions
+
 
 
 def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids):
@@ -369,15 +389,9 @@ def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids):
         completed, receipt = run(argv, cwd, logs, label)
         receipts.append(receipt)
         results[label] = completed.returncode == 0
-        if completed.returncode == 0:
-            for raw_line in completed.stdout.splitlines():
-                line = raw_line.decode("utf-8", errors="strict") if isinstance(raw_line, bytes) else raw_line
-                parts = line.strip().split(" ", 2)
-                if len(parts) == 3 and parts[0] == "VECTOR_RECEIPT" and parts[1] in {"producer", "consumer"}:
-                    evidence.setdefault(parts[2], set()).add(parts[1])
-            if label == "suite-protocol-negative-vectors":
-                for case_id in negative_ids:
-                    evidence.setdefault(case_id, set()).add("producer")
+        if completed.returncode == 0 and label == "suite-protocol-negative-vectors":
+            for case_id in negative_ids:
+                evidence.setdefault(case_id, set()).add("producer")
     return results, evidence
 
 
@@ -460,6 +474,7 @@ def main():
     failures = []
     executed_positive = []
     executed_adversarial = {"mac": [], "ios": []}
+    consumer_case_success = {"macHarness": {}, "macLauncher": {}, "iosLauncher": {}}
     suite_results = {}
     suite_covered = []
     positive_suite_covered = []
@@ -543,15 +558,27 @@ def main():
                 failures.append("mac decoder accepted invalid zero-length frame")
             if not negative_decode(ios_bin, logs, "negative-to-ios-zero-length", receipts):
                 failures.append("ios decoder accepted invalid zero-length frame")
+            mac_harness_covered, mac_harness_failed, mac_harness_success = run_mac_harness_cases(
+                mac, negative_ids, logs, receipts
+            )
+            consumer_case_success["macHarness"] = mac_harness_success
             mac_covered, mac_failed = run_adversarial_cases(mac_bin, negative_ids, logs, "mac-adversarial", receipts)
             ios_covered, ios_failed = run_adversarial_cases(ios_bin, negative_ids, logs, "ios-adversarial", receipts)
-            executed_adversarial["mac"] = mac_covered
+            consumer_case_success["macLauncher"] = {
+                case_id: case_id in mac_covered for case_id in SWIFT_EXECUTABLE_CASE_IDS if case_id in negative_ids
+            }
+            consumer_case_success["iosLauncher"] = {
+                case_id: case_id in ios_covered for case_id in SWIFT_EXECUTABLE_CASE_IDS if case_id in negative_ids
+            }
+            executed_adversarial["mac"] = sorted(set(mac_harness_covered) | set(mac_covered))
             executed_adversarial["ios"] = ios_covered
+            for case_id in mac_harness_failed:
+                failures.append("mac harness consumer case failed: " + case_id)
             for case_id in mac_failed:
                 failures.append("mac adversarial case failed: " + case_id)
             for case_id in ios_failed:
                 failures.append("ios adversarial case failed: " + case_id)
-            for case_id in set(mac_covered) | set(ios_covered):
+            for case_id in set(mac_harness_covered) | set(mac_covered) | set(ios_covered):
                 vector_evidence.setdefault(case_id, set()).add("consumer")
             covered = set(vector_specific_coverage(negative_ids, vector_evidence))
             unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
@@ -628,6 +655,8 @@ def main():
             "positiveVectorEvidenceLabels": list(positive_suite_labels),
             "unexecutableNegativeVectorIDs": unexecutable,
             "unexecutablePolicy": "matrix fails rather than claiming vector coverage without passing production suites",
+            "consumerCaseSuccess": consumer_case_success,
+            "consumerCasePolicy": "consumer coverage is promoted only after the exact case subprocess exits zero; suite stdout is ignored",
         },
         "processProtocol": {
             "topology": "separate production-derived Swift executables",

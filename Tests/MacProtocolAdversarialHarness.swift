@@ -96,6 +96,15 @@ fileprivate struct ParserCase {
 @main
 struct MacProtocolAdversarialHarness {
     static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard arguments.isEmpty || arguments.count == 2 && arguments[0] == "case" else {
+            fatalError("usage: MacProtocolAdversarialHarness [case <vector-id>]")
+        }
+        if let caseID = arguments.last {
+            runCase(caseID)
+            return
+        }
+
         framingCaps()
         receipt("bad-length-prefix")
         receipt("oversize-frame")
@@ -112,7 +121,6 @@ struct MacProtocolAdversarialHarness {
         receipt("usb-hello-seed-present")
         receipt("server-hello-transport-mismatch")
         rawTokenStrictness()
-        receipt("wrong-version")
         parserEntryPointShapeMutations()
         base64BoundaryMutations()
         receipt("invalid-base64")
@@ -125,6 +133,30 @@ struct MacProtocolAdversarialHarness {
         sessionIdentityMutations()
         usbPrefaceAndRecordMutations()
         print("mac protocol adversarial harness passed")
+    }
+
+    static func runCase(_ id: String) {
+        switch id {
+        case "bad-length-prefix":
+            expectFrameLength(.session, 0, false, "zero session frame")
+        case "oversize-frame":
+            expectFrameLength(.session, ProtocolParser.smallControlCap + 1, false, "oversized session frame")
+        case "duplicate-json-key":
+            expectRejects("duplicate JSON key") {
+                _ = try ProtocolParser.parseSessionBusy(
+                    json("{\"type\":\"session-busy\",\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}")
+                )
+            }
+        case "sensitive-reason-code":
+            expectRejects("unknown busy reason") {
+                _ = try ProtocolParser.parseSessionBusy(
+                    json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"not_busy\"}")
+                )
+            }
+        default:
+            fatalError("unknown or unsupported consumer case: \(id)")
+        }
+        receipt(id)
     }
 
     static func receipt(_ id: String) {
@@ -563,8 +595,6 @@ struct MacProtocolAdversarialHarness {
         expectRejects("role reflection") {
             _ = try ProtocolParser.parsePairHello(macHello, role: "device")
         }
-        receipt("commitment-reveal-mismatch")
-        receipt("duplicate-pairing-role")
         receipt("role-reflection")
     }
 
@@ -628,13 +658,7 @@ struct MacProtocolAdversarialHarness {
                 macNonce: macNonce, deviceNonce: deviceNonce
             )
         ))
-        for id in [
-            "wrong-mac-install-id", "wrong-device-install-id",
-            "wrong-mac-nonce", "wrong-device-nonce", "wrong-session-id",
-            "primary-proof-field-order", "transport-ikm-cross-use",
-        ] {
-            receipt(id)
-        }
+        receipt("wrong-session-id")
     }
     static func usbPrefaceAndRecordMutations() {
         let psk = Data(repeating: 0xA5, count: 32)
@@ -790,7 +814,7 @@ struct MacProtocolAdversarialHarness {
         precondition(states().0.frame(Data([1, 2]), cap: 1) == nil)
 
         for id in [
-            "usb-missing-magic", "usb-wrong-magic", "usb-legacy-v3-downgrade",
+            "usb-missing-magic", "usb-wrong-magic",
             "usb-init-wrong-type", "usb-init-wrong-version", "usb-init-wrong-purpose",
             "usb-init-wrong-identity", "usb-init-wrong-nonce", "usb-init-wrong-proof",
             "usb-challenge-reflection", "usb-challenge-wrong-proof",
