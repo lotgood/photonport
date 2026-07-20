@@ -343,6 +343,7 @@ def run_production_suites(mac, ios, protocol, logs, receipts):
                 sys.executable, "-m", "unittest",
                 "tests.test_protocol.ProtocolTests.test_pairing_vector_recomputes_every_output",
                 "tests.test_protocol.ProtocolTests.test_session_vectors_recompute_every_output",
+                "tests.test_protocol.ProtocolTests.test_usb_binding_vectors_preface_records_and_key_separation",
                 "-v",
             ],
             "suite-protocol-positive-vectors",
@@ -363,11 +364,17 @@ def run_production_suites(mac, ios, protocol, logs, receipts):
         ),
     ]
     results = {}
+    evidence = {}
     for cwd, argv, label in commands:
         completed, receipt = run(argv, cwd, logs, label)
         receipts.append(receipt)
         results[label] = completed.returncode == 0
-    return results
+        if completed.returncode == 0:
+            for line in completed.stdout.splitlines():
+                parts = line.strip().split(" ", 2)
+                if len(parts) == 3 and parts[0] == "VECTOR_RECEIPT" and parts[1] in {"producer", "consumer"}:
+                    evidence.setdefault(parts[2], set()).add(parts[1])
+    return results, evidence
 
 
 def git_clone_checkout(src, dst, commit, mac, logs, label, receipts):
@@ -461,7 +468,7 @@ def main():
 
     negative_ids = load_negative_case_ids(protocol)
     positive_ids = load_positive_case_ids(protocol)
-    suite_results = run_production_suites(mac, ios, protocol, logs, receipts)
+    suite_results, positive_vector_evidence = run_production_suites(mac, ios, protocol, logs, receipts)
     for label, passed in suite_results.items():
         if not passed:
             failures.append(label + " failed")
@@ -481,7 +488,6 @@ def main():
     # A passing suite is not evidence that every protocol vector crossed the
     # producer/consumer boundary. Only an exact vector-ID receipt pair may
     # promote a positive vector to covered.
-    positive_vector_evidence = {}
     positive_suite_covered = vector_specific_coverage(positive_ids, positive_vector_evidence)
     with tempfile.TemporaryDirectory(prefix="photonport-m3-matrix-") as tmp:
         build = Path(tmp) / "build"

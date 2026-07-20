@@ -10,5 +10,5 @@ COMMON=(-parse-as-library -module-cache-path "$TMP/module-cache")
 xcrun swiftc "${COMMON[@]}" Mac/ProtocolParser.swift Mac/Pairing.swift Mac/Log.swift \
   Tests/SessionBindingHarness.swift -o "$TMP/session-mac"
 
-"$TMP/session-mac" >/dev/null
+"$TMP/session-mac"
 print -r -- "session ownership harness passed (Mac)"

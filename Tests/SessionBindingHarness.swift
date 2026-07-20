@@ -18,6 +18,17 @@ struct SessionBindingHarness {
         precondition((try? ProtocolParser.parseServerHello(usb, transport: .usb)) != nil)
         precondition((try? ProtocolParser.parseServerHello(wifi, transport: .usb)) == nil)
         precondition((try? ProtocolParser.parseServerHello(usb, transport: .wifi)) == nil)
+        let open = SessionOpen(
+            v: 3,
+            macInstallID: "00000000-1111-2222-3333-444444444444",
+            deviceInstallID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            macNonce: nonce,
+            primaryProof: Data(repeating: 0x44, count: 32).base64EncodedString()
+        )
+        precondition(PairingWire.frame(open) != nil)
+        print("VECTOR_RECEIPT consumer session-v3-frame:serverHelloWifi")
+        print("VECTOR_RECEIPT consumer session-v3-frame:serverHelloUsb")
+        print("VECTOR_RECEIPT consumer session-v3-frame:sessionOpenPayloadLength")
 
         let starting = SessionLifecycleState.starting(7)
         precondition(SessionLifecycleState.mayTransition(from: starting, to: .connected(7)))
