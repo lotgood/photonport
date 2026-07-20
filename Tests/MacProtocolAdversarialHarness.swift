@@ -120,6 +120,7 @@ struct MacProtocolAdversarialHarness {
         scrollAdmissionAndBackpressure()
         scrollTimerAndConversionBehavior()
         proofMutations()
+        usbPrefaceAndRecordMutations()
         print("mac protocol adversarial harness passed")
     }
 
@@ -533,6 +534,129 @@ struct MacProtocolAdversarialHarness {
         let parsedMutatedOpen = try! ProtocolParser.parseChannelOpen(mutatedOpen, channel: "audio")
         let receivedProof = Data(base64Encoded: parsedMutatedOpen.proof)!
         precondition(!SessionCrypto.constantTimeEqual(receivedProof, channelProof))
+    }
+    static func usbPrefaceAndRecordMutations() {
+        let psk = Data(repeating: 0xA5, count: 32)
+        let macNonce = Data(repeating: 0x11, count: 32)
+        let deviceNonce = Data(repeating: 0x22, count: 32)
+        func client() -> USBPrefaceClient {
+            USBPrefaceClient(
+                psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                purpose: "primary", startedAt: 0, token: 7, macNonce: macNonce
+            )!
+        }
+        func server() -> USBPrefaceServer {
+            USBPrefaceServer(
+                psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                purpose: "primary", startedAt: 0, token: 7
+            )!
+        }
+
+        precondition(!server().consumeMagic(Data(repeating: 0, count: 8), now: 0, token: 7))
+        precondition(!server().consumeMagic(Data("PPV3".utf8), now: 0, token: 7))
+        precondition(client().start(now: 5, token: 7) == nil)
+
+        let mac = client()
+        let device = server()
+        let initial = mac.start(now: 0, token: 7)!
+        precondition(device.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let initPayload = USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0
+        for (old, new) in [
+            ("\"usb-bind-init\"", "\"usb-bind-finish\""),
+            ("\"v\":1", "\"v\":2"),
+            ("\"primary\"", "\"audio\""),
+            ("\"receiver\"", "\"other\""),
+            (macNonce.base64EncodedString(), Data(repeating: 0x33, count: 32).base64EncodedString()),
+        ] {
+            let candidate = server()
+            precondition(candidate.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+            precondition(candidate.consume(
+                replacing(initPayload, old, new), now: 0, token: 7, nonce: deviceNonce
+            ) == nil)
+        }
+        let initObject = try! JSONSerialization.jsonObject(with: initPayload) as! [String: Any]
+        let initProof = initObject["proof"] as! String
+        let badProofServer = server()
+        precondition(badProofServer.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        precondition(badProofServer.consume(
+            replacing(initPayload, initProof, Data(repeating: 0, count: 32).base64EncodedString()),
+            now: 0, token: 7, nonce: deviceNonce
+        ) == nil)
+
+        let challenge = device.consume(initPayload, now: 0, token: 7, nonce: deviceNonce)!
+        let challengePayload = USBPrefaceMessage.unframe(challenge)!.0
+        precondition(client().consume(initPayload, now: 0, token: 7) == nil)
+        var challengeObject = try! JSONSerialization.jsonObject(with: challengePayload) as! [String: Any]
+        challengeObject["proof"] = Data(repeating: 0, count: 32).base64EncodedString()
+        let badChallenge = try! JSONSerialization.data(withJSONObject: challengeObject)
+        precondition(mac.consume(badChallenge, now: 0, token: 7) == nil)
+
+        let mac2 = client()
+        let device2 = server()
+        let initial2 = mac2.start(now: 0, token: 7)!
+        precondition(device2.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge2 = device2.consume(
+            USBPrefaceMessage.unframe(Data(initial2.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        precondition(device2.consume(USBPrefaceMessage.unframe(challenge2)!.0, now: 0, token: 7) == nil)
+
+        let mac3 = client()
+        let device3 = server()
+        let initial3 = mac3.start(now: 0, token: 7)!
+        precondition(device3.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge3 = device3.consume(
+            USBPrefaceMessage.unframe(Data(initial3.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        let finish3 = mac3.consume(USBPrefaceMessage.unframe(challenge3)!.0, now: 0, token: 7)!
+        let accept = device3.consume(USBPrefaceMessage.unframe(finish3)!.0, now: 0, token: 7)!
+        let acceptPayload = USBPrefaceMessage.unframe(accept)!.0
+        precondition(mac3.consume(acceptPayload, now: 0, token: 7) == Data())
+        precondition(mac3.consume(acceptPayload, now: 0, token: 7) == nil)
+
+        let binding = device3.authenticatedBinding()!
+        func states() -> (USBRecordState, USBRecordState) {
+            (
+                USBRecordState(role: "mac", binding: binding, macInstallID: "mac",
+                               deviceInstallID: "receiver", purpose: "primary",
+                               macNonce: macNonce, deviceNonce: deviceNonce)!,
+                USBRecordState(role: "device", binding: binding, macInstallID: "mac",
+                               deviceInstallID: "receiver", purpose: "primary",
+                               macNonce: macNonce, deviceNonce: deviceNonce)!
+            )
+        }
+        var pair = states()
+        let first = pair.0.frame(Data([1]), cap: 1)!
+        precondition(pair.1.consume(first, cap: 1)?.0 == Data([1]))
+        precondition(pair.1.consume(first, cap: 1) == nil)
+        pair = states()
+        _ = pair.0.frame(Data([1]), cap: 1)
+        precondition(pair.1.consume(pair.0.frame(Data([2]), cap: 1)!, cap: 1) == nil)
+        pair = states()
+        var badTag = pair.0.frame(Data([1]), cap: 1)!
+        badTag[badTag.index(before: badTag.endIndex)] ^= 1
+        precondition(pair.1.consume(badTag, cap: 1) == nil)
+        pair = states()
+        var badPayload = pair.0.frame(Data([1]), cap: 1)!
+        badPayload[badPayload.index(badPayload.startIndex, offsetBy: 12)] ^= 1
+        precondition(pair.1.consume(badPayload, cap: 1) == nil)
+        pair = states()
+        precondition(pair.1.consume(pair.1.frame(Data([1]), cap: 1)!, cap: 1) == nil)
+        precondition(states().0.frame(Data([1, 2]), cap: 1) == nil)
+
+        for id in [
+            "usb-missing-magic", "usb-wrong-magic", "usb-legacy-v3-downgrade",
+            "usb-init-wrong-type", "usb-init-wrong-version", "usb-init-wrong-purpose",
+            "usb-init-wrong-identity", "usb-init-wrong-nonce", "usb-init-wrong-proof",
+            "usb-challenge-reflection", "usb-challenge-wrong-proof",
+            "usb-finish-reflection", "usb-accept-replay", "usb-preface-timeout",
+            "usb-record-sequence-replay", "usb-record-sequence-skip",
+            "usb-record-tag-mutation", "usb-record-payload-mutation",
+            "usb-record-wrong-direction-key", "usb-record-overhead-in-semantic-cap",
+        ] {
+            receipt(id)
+        }
     }
 
 
