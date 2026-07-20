@@ -45,9 +45,8 @@ enum StreamQuality: String, CaseIterable {
         }
     }
 
-    // Transport-sized: usbmux sustains ~1Gbps (measured), so USB gets
-    // generous rates; WiFi keeps upstream's conservative numbers — an
-    // unencrypted, contended radio link is no place for 40Mbps.
+    // Transport-sized policy: USB uses the higher configured rates while Wi-Fi
+    // keeps conservative rates for a contended radio link.
     func bitrate(usb: Bool) -> Int {
         switch self {
         case .best: return usb ? 40_000_000 : 18_000_000
@@ -1086,6 +1085,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func drainAudioQueue() {
         guard pendingAudioSends < maxQueuedAudioFrames,
               !queuedAudioFrames.isEmpty else { return }
+        if case .authenticatedUSB = transport {
+            // Authenticated USB audio never shares the primary record/socket.
+            guard audioConnectionReady, audioConnection != nil, usbAudioRecordState != nil else { return }
+        }
         let (pcm, sampleRate) = queuedAudioFrames.removeFirst()
         sendAudioPCM(pcm, sampleRate: sampleRate)
     }
@@ -1100,11 +1103,29 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             return
         }
         let frame: Data
-        if isUSBTransport {
-            guard let state = audioConnectionReady ? usbAudioRecordState : usbPrimaryRecordState,
+        switch transport {
+        case .authenticatedUSB:
+            // Fail closed: the primary USB record/socket carries control and
+            // video only; audio requires its independently authenticated channel.
+            guard audioConnectionReady, let audioConnection,
+                  let state = usbAudioRecordState,
                   let protected = state.frame(payload, cap: 1 << 20) else { return }
             frame = protected
-        } else {
+            let generation = dialGeneration
+            let completion: (NWError?) -> Void = { [weak self] _ in
+                guard let self else { return }
+                self.queue.async {
+                    guard generation == self.dialGeneration else { return }
+                    self.pendingAudioSends = max(0, self.pendingAudioSends - 1)
+                    self.drainAudioQueue()
+                }
+            }
+            pendingAudioSends += 1
+            audioConnection.send(content: frame, completion: .contentProcessed(completion))
+            return
+        case .usb:
+            return
+        case .tcp:
             var header = UInt32(payload.count).bigEndian
             frame = Data(bytes: &header, count: 4) + payload
         }
@@ -1343,10 +1364,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     /// socket forever (measured as aud50 jumping 30→65ms).
     private func dialAudioConnection() {
         guard !audioDialInFlight, connectionReady, boundStreamSession != nil else { return }
-
         audioConnection?.cancel()
         audioConnection = nil
         audioConnectionReady = false
+        usbAudioRecordState?.clear()
+        usbAudioRecordState = nil
         let generation = dialGeneration
         switch transport {
         case .usb:
@@ -1434,6 +1456,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             case .failed, .cancelled:
                 self.audioConnectionReady = false
                 self.audioHandshakeInFlight = false
+                self.usbAudioRecordState?.clear()
+                self.usbAudioRecordState = nil
+                self.queuedAudioFrames.removeAll(keepingCapacity: false)
+                self.pendingAudioSends = 0
             default:
                 break
             }
@@ -1537,9 +1563,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     self.audioHandshakeInFlight = false
                     if let error {
                         Log.info("audio session open failed: \(error)")
+                        self.usbAudioRecordState?.clear()
+                        self.usbAudioRecordState = nil
+                        self.queuedAudioFrames.removeAll(keepingCapacity: false)
+                        self.pendingAudioSends = 0
                         conn.cancel()
                     } else {
                         self.audioConnectionReady = true
+                        self.drainAudioQueue()
                         Log.info("session v3 audio ready (dedicated socket\(tagged ? ", TLS" : ", USB"))")
                     }
                 })

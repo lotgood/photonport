@@ -776,15 +776,31 @@ final class SenderController: ObservableObject {
                                            port: NWEndpoint.Port(rawValue: portNum)!),
                                  security: .plaintext)
             } else {
-                let receiverIDs = PairedReceiverIndex.receiverIDs
-                guard receiverIDs.count == 1,
-                      let deviceInstallID = receiverIDs.first,
-                      let key = PairedReceiverIndex.lookup(
-                        deviceInstallID,
+                let deviceInstallID: String
+                let key: Data
+                if let udid, let mappedInstallID = installIDByUDID[udid] {
+                    guard let mappedKey = PairedReceiverIndex.lookup(
+                        mappedInstallID,
                         using: { PairingStore.psk(for: $0) }
-                      ) else {
-                    Log.info("USB connect refused — exactly one paired receiver is required")
-                    return
+                    ) else {
+                        Log.info("USB connect refused — paired key for selected device is unavailable")
+                        return
+                    }
+                    deviceInstallID = mappedInstallID
+                    key = mappedKey
+                } else {
+                    let receiverIDs = PairedReceiverIndex.receiverIDs
+                    guard receiverIDs.count == 1,
+                          let bootstrapInstallID = receiverIDs.first,
+                          let bootstrapKey = PairedReceiverIndex.lookup(
+                            bootstrapInstallID,
+                            using: { PairingStore.psk(for: $0) }
+                          ) else {
+                        Log.info("USB connect refused — exactly one paired receiver is required")
+                        return
+                    }
+                    deviceInstallID = bootstrapInstallID
+                    key = bootstrapKey
                 }
                 transport = .authenticatedUSB(
                     udid: udid,

@@ -125,7 +125,7 @@ enum Usbmux {
 
         let connection = try await connect(deviceID: device.deviceID, port: port, queue: queue)
         do {
-            let startedAt = Date().timeIntervalSince1970
+            let startedAt = ProcessInfo.processInfo.systemUptime
             let token = UInt64.random(in: UInt64.min...UInt64.max)
             guard let client = USBPrefaceClient(
                 psk: psk,
@@ -142,7 +142,7 @@ enum Usbmux {
             let challenge = try await receivePreface(on: connection)
             guard let finish = client.consume(
                 challenge,
-                now: Date().timeIntervalSince1970,
+                now: ProcessInfo.processInfo.systemUptime,
                 token: token
             ), !finish.isEmpty else {
                 throw Failure.unauthenticatedChannelBinding
@@ -151,7 +151,7 @@ enum Usbmux {
             let accept = try await receivePreface(on: connection)
             guard let response = client.consume(
                 accept,
-                now: Date().timeIntervalSince1970,
+                now: ProcessInfo.processInfo.systemUptime,
                 token: token
             ), response.isEmpty,
             let context = client.authenticatedContext(),
