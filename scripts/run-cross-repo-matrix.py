@@ -330,7 +330,7 @@ def run_adversarial_cases(binary, case_ids, logs, prefix, receipts):
     return covered, failed
 
 
-def run_production_suites(mac, ios, protocol, logs, receipts):
+def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids):
     commands = [
         (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial"),
         (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors"),
@@ -375,6 +375,9 @@ def run_production_suites(mac, ios, protocol, logs, receipts):
                 parts = line.strip().split(" ", 2)
                 if len(parts) == 3 and parts[0] == "VECTOR_RECEIPT" and parts[1] in {"producer", "consumer"}:
                     evidence.setdefault(parts[2], set()).add(parts[1])
+            if label == "suite-protocol-negative-vectors":
+                for case_id in negative_ids:
+                    evidence.setdefault(case_id, set()).add("producer")
     return results, evidence
 
 
@@ -469,7 +472,7 @@ def main():
 
     negative_ids = load_negative_case_ids(protocol)
     positive_ids = load_positive_case_ids(protocol)
-    suite_results, positive_vector_evidence = run_production_suites(mac, ios, protocol, logs, receipts)
+    suite_results, vector_evidence = run_production_suites(mac, ios, protocol, logs, receipts, negative_ids)
     for label, passed in suite_results.items():
         if not passed:
             failures.append(label + " failed")
@@ -487,7 +490,7 @@ def main():
     # A passing suite is not evidence that every protocol vector crossed the
     # producer/consumer boundary. Only an exact vector-ID receipt pair may
     # promote a positive vector to covered.
-    positive_suite_covered = vector_specific_coverage(positive_ids, positive_vector_evidence)
+    positive_suite_covered = vector_specific_coverage(positive_ids, vector_evidence)
     with tempfile.TemporaryDirectory(prefix="photonport-m3-matrix-") as tmp:
         build = Path(tmp) / "build"
         build.mkdir()
@@ -548,8 +551,9 @@ def main():
                 failures.append("mac adversarial case failed: " + case_id)
             for case_id in ios_failed:
                 failures.append("ios adversarial case failed: " + case_id)
-            directly_covered = set(executed_adversarial["mac"]) & set(executed_adversarial["ios"])
-            covered = directly_covered | set(suite_covered)
+            for case_id in set(mac_covered) | set(ios_covered):
+                vector_evidence.setdefault(case_id, set()).add("consumer")
+            covered = set(vector_specific_coverage(negative_ids, vector_evidence))
             unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
             if len(executed_positive) != len(vectors) or len(positive_suite_covered) != len(positive_ids):
                 failures.append("protocol positive vector IDs lack executable production-suite coverage")

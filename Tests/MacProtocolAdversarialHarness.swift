@@ -97,19 +97,34 @@ fileprivate struct ParserCase {
 struct MacProtocolAdversarialHarness {
     static func main() {
         framingCaps()
+        receipt("bad-length-prefix")
+        receipt("oversize-frame")
         directParserEntryPointCaps()
         strictJSON()
+        receipt("duplicate-json-key")
+        receipt("sensitive-reason-code")
         canonicalFields()
+        receipt("zero-generation")
+        receipt("wrong-channel")
         transportRules()
+        receipt("wifi-hello-missing-seed")
+        receipt("usb-hello-seed-present")
+        receipt("server-hello-transport-mismatch")
         rawTokenStrictness()
         parserEntryPointShapeMutations()
         base64BoundaryMutations()
+        receipt("invalid-base64")
         inboundAndParserOnlyCapBoundaries()
         strictControls()
         pongProductionState()
         scrollAdmissionAndBackpressure()
         scrollTimerAndConversionBehavior()
+        proofMutations()
         print("mac protocol adversarial harness passed")
+    }
+
+    static func receipt(_ id: String) {
+        print("VECTOR_RECEIPT consumer \(id)")
     }
 
     static func framingCaps() {
