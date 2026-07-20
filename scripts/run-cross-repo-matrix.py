@@ -473,6 +473,11 @@ def main():
     for label, passed in suite_results.items():
         if not passed:
             failures.append(label + " failed")
+    negative_suite_labels = (
+        "suite-mac-adversarial",
+        "suite-ios-adversarial",
+        "suite-protocol-negative-vectors",
+    )
     positive_suite_labels = (
         "suite-mac-session-vectors",
         "suite-ios-session-vectors",
