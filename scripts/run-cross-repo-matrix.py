@@ -23,13 +23,14 @@ NEGATIVE_FRAME = b"\x00\x00\x00\x00"
 IOS_NON_CONSUMER_CASE_IDS = {"wrong-device-nonce"}
 NEGATIVE_CONSUMER_STAGES = {
     "mac-protocol-parser",
-    "ios-receiver-contracts",
-    "ios-pairing",
-    "ios-usb-preface",
-    "ios-usb-record-state",
-    "ios-session-wire-parser",
-    "ios-session-ownership",
-    "ios-media-frame-contract",
+    "usb-record-state",
+    "usb-preface-server",
+    "session-ownership-state",
+    "pairing-admission-policy",
+    "media-parameter-set-policy",
+    "wire-frame",
+    "strict-json",
+    "session-wire-parser",
 }
 
 

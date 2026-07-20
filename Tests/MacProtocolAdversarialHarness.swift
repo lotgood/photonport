@@ -195,7 +195,7 @@ struct MacProtocolAdversarialHarness {
     }
 
     static func receipt(_ id: String) {
-        print("VECTOR_RECEIPT consumer \(id)")
+        print("VECTOR_RECEIPT consumer \(id) stage=mac-protocol-parser outcome=rejected")
     }
 
     static func framingCaps() {
