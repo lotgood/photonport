@@ -103,6 +103,7 @@ struct MacProtocolAdversarialHarness {
         strictJSON()
         receipt("duplicate-json-key")
         receipt("sensitive-reason-code")
+        pairingIdentityMutations()
         canonicalFields()
         receipt("zero-generation")
         receipt("wrong-channel")
@@ -111,6 +112,7 @@ struct MacProtocolAdversarialHarness {
         receipt("usb-hello-seed-present")
         receipt("server-hello-transport-mismatch")
         rawTokenStrictness()
+        receipt("wrong-version")
         parserEntryPointShapeMutations()
         base64BoundaryMutations()
         receipt("invalid-base64")
@@ -120,6 +122,7 @@ struct MacProtocolAdversarialHarness {
         scrollAdmissionAndBackpressure()
         scrollTimerAndConversionBehavior()
         proofMutations()
+        sessionIdentityMutations()
         usbPrefaceAndRecordMutations()
         print("mac protocol adversarial harness passed")
     }
@@ -534,6 +537,104 @@ struct MacProtocolAdversarialHarness {
         let parsedMutatedOpen = try! ProtocolParser.parseChannelOpen(mutatedOpen, channel: "audio")
         let receivedProof = Data(base64Encoded: parsedMutatedOpen.proof)!
         precondition(!SessionCrypto.constantTimeEqual(receivedProof, channelProof))
+    }
+    static func pairingIdentityMutations() {
+        let pub = Data(repeating: 0x21, count: 32)
+        let nonce = Data(repeating: 0x22, count: 16)
+        let commitment = PairingCrypto.commitment(
+            role: "device", installID: "device-a", name: nil, pub: pub, nonce: nonce
+        )
+        precondition(!SessionCrypto.constantTimeEqual(
+            commitment,
+            PairingCrypto.commitment(
+                role: "device", installID: "device-a", name: nil,
+                pub: pub, nonce: Data(repeating: 0x23, count: 16)
+            )
+        ))
+        let deviceHello = json(
+            "{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"device-a\",\"pub\":\"\(pub.base64EncodedString())\",\"nonce\":\"\(nonce.base64EncodedString())\"}"
+        )
+        let macHello = json(
+            "{\"type\":\"pair-hello\",\"v\":2,\"role\":\"mac\",\"installID\":\"mac-a\",\"name\":\"Mac\",\"pub\":\"\(pub.base64EncodedString())\",\"nonce\":\"\(nonce.base64EncodedString())\"}"
+        )
+        expectRejects("duplicate pairing role") {
+            _ = try ProtocolParser.parsePairHello(deviceHello, role: "mac")
+        }
+        expectRejects("role reflection") {
+            _ = try ProtocolParser.parsePairHello(macHello, role: "device")
+        }
+        receipt("commitment-reveal-mismatch")
+        receipt("duplicate-pairing-role")
+        receipt("role-reflection")
+    }
+
+    static func sessionIdentityMutations() {
+        let key = SymmetricKey(data: Data(repeating: 0x31, count: 32))
+        let macID = "mac-a", deviceID = "device-a"
+        let macNonce = Data(repeating: 0x41, count: 32)
+        let deviceNonce = Data(repeating: 0x42, count: 32)
+        let sessionID = Data(repeating: 0x51, count: 16)
+        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sessionID, generation: 1)
+        let proof = SessionCrypto.acceptProof(
+            key: secret, sessionID: sessionID, generation: 1,
+            macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce
+        )
+        let accept = json(
+            "{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}"
+        )
+        for (actualMacID, actualDeviceID, actualMacNonce, actualDeviceNonce) in [
+            ("wrong", deviceID, macNonce, deviceNonce),
+            (macID, "wrong", macNonce, deviceNonce),
+            (macID, deviceID, Data(repeating: 0x43, count: 32), deviceNonce),
+            (macID, deviceID, macNonce, Data(repeating: 0x44, count: 32)),
+        ] {
+            expectRejects("session identity mutation") {
+                _ = try ProtocolParser.parseVerifiedSessionAccept(
+                    accept, primaryKey: key,
+                    macInstallID: actualMacID, deviceInstallID: actualDeviceID,
+                    macNonce: actualMacNonce, deviceNonce: actualDeviceNonce
+                )
+            }
+        }
+        expectRejects("wrong session ID") {
+            _ = try ProtocolParser.parseVerifiedSessionAccept(
+                replacing(
+                    accept, sessionID.base64EncodedString(),
+                    Data(repeating: 0x52, count: 16).base64EncodedString()
+                ),
+                primaryKey: key, macInstallID: macID, deviceInstallID: deviceID,
+                macNonce: macNonce, deviceNonce: deviceNonce
+            )
+        }
+        let ordered = SessionCrypto.primaryProof(
+            key: key, macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce
+        )
+        let reflected = SessionCrypto.primaryProof(
+            key: key, macInstallID: deviceID, deviceInstallID: macID,
+            macNonce: deviceNonce, deviceNonce: macNonce
+        )
+        precondition(!SessionCrypto.constantTimeEqual(ordered, reflected))
+        let otherKey = SessionCrypto.primaryKey(
+            ikm: Data(repeating: 0x32, count: 32),
+            macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce
+        )
+        precondition(!SessionCrypto.constantTimeEqual(
+            ordered,
+            SessionCrypto.primaryProof(
+                key: otherKey, macInstallID: macID, deviceInstallID: deviceID,
+                macNonce: macNonce, deviceNonce: deviceNonce
+            )
+        ))
+        for id in [
+            "wrong-mac-install-id", "wrong-device-install-id",
+            "wrong-mac-nonce", "wrong-device-nonce", "wrong-session-id",
+            "primary-proof-field-order", "transport-ikm-cross-use",
+        ] {
+            receipt(id)
+        }
     }
     static func usbPrefaceAndRecordMutations() {
         let psk = Data(repeating: 0xA5, count: 32)
