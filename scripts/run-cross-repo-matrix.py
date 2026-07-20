@@ -313,11 +313,11 @@ def vector_specific_coverage(vector_ids, evidence):
 
 
 def exact_vector_receipts(stdout, expected_ids, receipt_kind):
-    prefix = "VECTOR_RECEIPT " + receipt_kind + " "
+    prefix = b"VECTOR_RECEIPT " + receipt_kind.encode("ascii") + b" "
     found = set()
     for line in stdout.splitlines():
         if line.startswith(prefix):
-            case_id = line[len(prefix):]
+            case_id = line[len(prefix):].decode("utf-8", errors="strict")
             if case_id in expected_ids:
                 found.add(case_id)
     return found
