@@ -473,19 +473,12 @@ def main():
     for label, passed in suite_results.items():
         if not passed:
             failures.append(label + " failed")
-    negative_suite_labels = (
-        "suite-mac-adversarial",
-        "suite-ios-adversarial",
-        "suite-protocol-negative-vectors",
-    )
     positive_suite_labels = (
         "suite-mac-session-vectors",
         "suite-ios-session-vectors",
         "suite-ios-pairing-vectors",
         "suite-protocol-positive-vectors",
     )
-    if all(suite_results.get(label) for label in negative_suite_labels):
-        suite_covered = list(negative_ids)
     # A passing suite is not evidence that every protocol vector crossed the
     # producer/consumer boundary. Only an exact vector-ID receipt pair may
     # promote a positive vector to covered.
