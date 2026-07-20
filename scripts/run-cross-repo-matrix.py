@@ -429,9 +429,9 @@ def load_positive_case_ids(protocol_root):
 
 def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, negative_cases):
     commands = [
-        (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial", "mac-client"),
+        (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial", None),
         (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors", None),
-        (ios, ["./scripts/test-receiver-adversarial.sh"], "suite-ios-adversarial", "ios-server"),
+        (ios, ["./scripts/test-receiver-adversarial.sh"], "suite-ios-adversarial", None),
         (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors", None),
         (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors", None),
         (
@@ -485,6 +485,33 @@ def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, nega
             evidence["positive"]["producer"] = {case_id: True for case_id in positive_ids}
         if parsed is not None:
             consumer_receipts.extend({**item, "commandReceipt": receipt} for item in parsed.values())
+    for case in negative_cases:
+        platform = case["ownership"]["consumerPlatform"]
+        if platform == "mac-client":
+            cwd = mac
+            argv = ["./scripts/test-mac-protocol-adversarial.sh", "case", case["id"]]
+        elif platform == "ios-server":
+            cwd = ios
+            argv = ["./scripts/test-receiver-adversarial.sh", case["id"]]
+        else:
+            receipt_errors.append("unsupported consumer platform: " + platform)
+            continue
+        label = "negative-consumer-" + platform + "-" + case["id"]
+        completed, receipt = run(argv, cwd, logs, label)
+        receipts.append(receipt)
+        if completed.returncode != 0:
+            receipt_errors.append(label + ": consumer command failed")
+            continue
+        try:
+            parsed = consumer_vector_receipts(completed.stdout, platform, [case])
+        except ValueError as exc:
+            receipt_errors.append(label + ": " + str(exc))
+            continue
+        if set(parsed) != {case["id"]}:
+            receipt_errors.append(label + ": exact consumer receipt missing")
+            continue
+        evidence["negative"]["consumer"][case["id"]] = True
+        consumer_receipts.extend({**item, "commandReceipt": receipt} for item in parsed.values())
     return results, evidence, consumer_receipts, receipt_errors
 
 
