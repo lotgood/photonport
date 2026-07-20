@@ -399,8 +399,6 @@ def load_negative_cases(protocol_root):
         if (
             not isinstance(case.get("message"), str)
             or not case["message"]
-            or not isinstance(case.get("mutatedField"), str)
-            or not case["mutatedField"]
             or case.get("outcome") != value["expectedOutcome"]
             or any(field in case and not isinstance(case[field], str) for field in optional_case_fields)
         ):
