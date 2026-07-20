@@ -1039,12 +1039,13 @@ enum MacProtocolConsumers {
     static func sessionFinishAccept(_ payload: Data, primaryKey: SymmetricKey,
                                     macInstallID: String, deviceInstallID: String,
                                     macNonce: Data, deviceNonce: Data,
-                                    vector: String, mutation: String) -> MacProtocolConsumerResult? {
+                                    vector: String, mutation: String,
+                                    stage: String = "session-finish-accept") -> MacProtocolConsumerResult? {
         guard (try? ProtocolParser.parseVerifiedSessionAccept(
             payload, primaryKey: primaryKey, macInstallID: macInstallID,
             deviceInstallID: deviceInstallID, macNonce: macNonce,
             deviceNonce: deviceNonce)) != nil else {
-            return .rejected(vector, mutation: mutation, stage: "session-finish-accept")
+            return .rejected(vector, mutation: mutation, stage: stage)
         }
         return nil
     }
@@ -1073,12 +1074,6 @@ enum MacProtocolConsumers {
         return valid ? nil : .rejected(vector, mutation: mutation, stage: "media-inbound")
     }
 
-    static func usbAudioBinding(primary: Data, audio: Data,
-                                vector: String, mutation: String) -> MacProtocolConsumerResult? {
-        primary != audio
-            ? .rejected(vector, mutation: mutation, stage: "usb-audio-binding")
-            : nil
-    }
 }
 
 /// Mac-side candidate wrapper. It exposes direction-specific receive methods so

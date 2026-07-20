@@ -92,16 +92,42 @@ fileprivate struct ParserCase {
     let wrongTypeValue: String
     let parse: (Data) throws -> Void
 }
+fileprivate struct CaseInvocation {
+    let id: String
+    let mutation: String
+    let mutationSHA256: String
+
+    init(arguments: [String]) {
+        guard arguments.count == 4, arguments[0] == "case",
+              let mutationData = arguments[2].data(using: .utf8),
+              arguments[3].count == 64,
+              arguments[3].allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else {
+            fatalError("usage: MacProtocolAdversarialHarness case <vector-id> <canonical-mutation-json> <mutation-sha256>")
+        }
+        guard SHA256.hash(data: mutationData).map({ String(format: "%02x", $0) }).joined() == arguments[3],
+              let object = try? JSONSerialization.jsonObject(with: mutationData) as? [String: Any],
+              Set(object.keys) == ["dimension", "value"],
+              let dimension = object["dimension"] as? String, !dimension.isEmpty,
+              let canonical = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              canonical == mutationData else {
+            fatalError("invalid canonical mutation binding")
+        }
+        id = arguments[1]
+        mutation = dimension
+        mutationSHA256 = arguments[3]
+    }
+}
+
 
 @main
 struct MacProtocolAdversarialHarness {
     static func main() {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        guard arguments.isEmpty || arguments.count == 2 && arguments[0] == "case" else {
-            fatalError("usage: MacProtocolAdversarialHarness [case <vector-id>]")
+        guard arguments.isEmpty || arguments.count == 4 && arguments[0] == "case" else {
+            fatalError("usage: MacProtocolAdversarialHarness [case <vector-id> <canonical-mutation-json> <mutation-sha256>]")
         }
-        if let caseID = arguments.last {
-            runCase(caseID)
+        if !arguments.isEmpty {
+            runCase(CaseInvocation(arguments: arguments))
             return
         }
 
@@ -135,7 +161,8 @@ struct MacProtocolAdversarialHarness {
         print("mac protocol adversarial harness passed")
     }
 
-    static func runCase(_ id: String) {
+    static func runCase(_ invocation: CaseInvocation) {
+        let id = invocation.id
         let result: MacProtocolConsumerResult?
         switch id {
         case "wrong-device-nonce":
@@ -186,20 +213,15 @@ struct MacProtocolAdversarialHarness {
             }
         case "usb-accept-replay":
             result = usbAcceptReplayCase(id)
-        case "usb-audio-binding-inequality-rejected":
-            let primary = Data(repeating: 0xA1, count: 32)
-            precondition(MacProtocolConsumers.usbAudioBinding(
-                primary: primary, audio: primary, vector: id, mutation: "bindingComparison") == nil)
-            result = MacProtocolConsumers.usbAudioBinding(
-                primary: primary, audio: Data(repeating: 0xA2, count: 32),
-                vector: id, mutation: "bindingComparison")
+        case "usb-primary-audio-binding-cross-use":
+            result = usbPrimaryAudioBindingCrossUseCase(id)
         default:
             fatalError("unknown or unsupported consumer case: \(id)")
         }
-        guard let result, result.outcome == "rejected" else {
-            fatalError("consumer unexpectedly accepted \(id)")
+        guard let result, result.outcome == "rejected", result.mutation == invocation.mutation else {
+            fatalError("consumer did not reject the supplied mutation for \(id)")
         }
-        receipt(result)
+        receipt(result, mutationSHA256: invocation.mutationSHA256)
     }
 
     static func serverHello(_ transport: ProtocolParser.Transport, seed: Bool = false) -> Data {
@@ -303,9 +325,43 @@ struct MacProtocolAdversarialHarness {
         return fresh.receiveAccept(
             USBPrefaceMessage.unframe(accept)!.0, now: 0, token: 7, vector: id, mutation: "state")
     }
+    static func usbPrimaryAudioBindingCrossUseCase(_ id: String) -> MacProtocolConsumerResult? {
+        let psk = Data(repeating: 0xA5, count: 32)
+        let macNonce = Data(repeating: 0x11, count: 32)
+        let deviceNonce = Data(repeating: 0x22, count: 32)
 
-    static func receipt(_ result: MacProtocolConsumerResult) {
-        print("VECTOR_RECEIPT consumer \(result.vector) mutation=\(result.mutation) stage=\(result.stage) outcome=\(result.outcome)")
+        func challenge(for purpose: String) -> (USBChannelCandidate, Data)? {
+            guard let candidate = USBChannelCandidate(
+                    psk: psk, macInstallID: "mac", deviceInstallID: "receiver", purpose: purpose,
+                    startedAt: 0, token: 7, macNonce: macNonce),
+                  let server = USBPrefaceServer(
+                    psk: psk, macInstallID: "mac", deviceInstallID: "receiver", purpose: purpose,
+                    startedAt: 0, token: 7),
+                  let initial = candidate.start(now: 0, token: 7),
+                  server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7),
+                  let framed = USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))?.0,
+                  let response = server.consume(framed, now: 0, token: 7, nonce: deviceNonce),
+                  let payload = USBPrefaceMessage.unframe(response)?.0 else {
+                return nil
+            }
+            return (candidate, payload)
+        }
+
+        guard let (primary, primaryChallenge) = challenge(for: "primary"),
+              let (audio, audioChallenge) = challenge(for: "audio"),
+              primary.receiveChallenge(
+                primaryChallenge, now: 0, token: 7, vector: id, mutation: "purpose") == nil,
+              audio.receiveChallenge(
+                audioChallenge, now: 0, token: 7, vector: id, mutation: "purpose") == nil,
+              let (crossPurposePrimary, _) = challenge(for: "primary") else {
+            return nil
+        }
+        return crossPurposePrimary.receiveChallenge(
+            audioChallenge, now: 0, token: 7, vector: id, mutation: "purpose")
+    }
+
+    static func receipt(_ result: MacProtocolConsumerResult, mutationSHA256: String) {
+        print("VECTOR_RECEIPT consumer \(result.vector) mutation=\(result.mutation) mutationSha256=\(mutationSHA256) stage=\(result.stage) outcome=\(result.outcome)")
     }
 
     static func receipt(_ id: String) {

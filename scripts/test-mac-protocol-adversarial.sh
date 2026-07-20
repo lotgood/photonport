@@ -1,6 +1,10 @@
 #!/bin/zsh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [[ $# -gt 0 && ( $# -ne 4 || "$1" != "case" ) ]]; then
+  print -u2 -- "usage: test-mac-protocol-adversarial.sh [case <vector-id> <canonical-mutation-json> <mutation-sha256>]"
+  exit 64
+fi
 
 TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }

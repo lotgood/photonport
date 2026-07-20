@@ -81,13 +81,22 @@ class MatrixReceiptParserTest(unittest.TestCase):
                 "mutation": {"dimension": "utf8", "value": "ff"},
             },
         ]
+    def receipt(self, case, *, digest=None):
+        _, expected_digest = MATRIX.canonical_mutation(case["mutation"])
+        return (
+            f"VECTOR_RECEIPT consumer {case['id']} mutation={case['mutation']['dimension']} "
+            f"mutationSha256={expected_digest if digest is None else digest} "
+            f"stage={case['ownership']['stage']} outcome=rejected\n"
+        ).encode()
+
 
     def test_accepts_exact_metadata_bound_receipt(self):
         receipts = MATRIX.consumer_vector_receipts(
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n",
+            self.receipt(self.cases[0]),
             "mac-client",
             self.cases,
         )
+        _, digest = MATRIX.canonical_mutation(self.cases[0]["mutation"])
         self.assertEqual(
             receipts,
             {
@@ -95,17 +104,19 @@ class MatrixReceiptParserTest(unittest.TestCase):
                     "id": "mac-case",
                     "ownership": self.cases[0]["ownership"],
                     "mutation": self.cases[0]["mutation"],
+                    "mutationSha256": digest,
                 }
             },
         )
 
-    def test_rejects_extra_wrong_platform_duplicate_and_wrong_stage_receipts(self):
+    def test_rejects_metadata_and_digest_drift(self):
+        _, digest = MATRIX.canonical_mutation(self.cases[0]["mutation"])
         invalid = (
-            b"VECTOR_RECEIPT consumer ios-case mutation=utf8 stage=framing-inbound outcome=rejected\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=wrong outcome=rejected\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=wrong stage=session-init-response outcome=rejected\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n"
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n",
+            self.receipt(self.cases[1]),
+            self.receipt(self.cases[0], digest="0" * 64),
+            b"VECTOR_RECEIPT consumer mac-case mutation=wrong mutationSha256=" + digest.encode()
+            + b" stage=session-init-response outcome=rejected\n",
+            self.receipt(self.cases[0]) + self.receipt(self.cases[0]),
         )
         for stdout in invalid:
             with self.subTest(stdout=stdout):
@@ -116,9 +127,12 @@ class MatrixReceiptParserTest(unittest.TestCase):
         for stdout in (
             b"VECTOR_RECEIPT consumer mac-case\n",
             b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=accepted\n",
-            b"VECTOR_RECEIPT producer mac-case\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected extra\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n\xff",
+            b"VECTOR_RECEIPT producer mac-case mutation=nonce mutationSha256=" + b"0" * 64
+            + b" stage=session-init-response outcome=rejected\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce mutationSha256=" + b"0" * 64
+            + b" stage=session-init-response outcome=rejected extra\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce mutationSha256=" + b"0" * 64
+            + b" stage=session-init-response outcome=rejected\n\xff",
         ):
             with self.subTest(stdout=stdout):
                 with self.assertRaises(ValueError):

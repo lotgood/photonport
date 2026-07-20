@@ -17,6 +17,17 @@ VECTOR_RECEIPT_PREFIX = "VECTOR_RECEIPT "
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+def canonical_mutation(mutation):
+    if not isinstance(mutation, dict) or set(mutation) != {"dimension", "value"}:
+        raise ValueError("mutation must contain exactly dimension and value")
+    if not isinstance(mutation["dimension"], str) or not mutation["dimension"]:
+        raise ValueError("mutation dimension must be a nonempty string")
+    try:
+        encoded = json.dumps(mutation, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("mutation is not canonical JSON") from exc
+    return encoded, digest(encoded)
+
 
 
 def atomic_json(path, value):
@@ -99,11 +110,12 @@ def consumer_vector_receipts(stdout, platform, cases):
         if not line.startswith(VECTOR_RECEIPT_PREFIX):
             continue
         fields = line.split(" ")
-        if len(fields) != 6 or fields[0:2] != ["VECTOR_RECEIPT", "consumer"]:
+        if len(fields) != 7 or fields[0:2] != ["VECTOR_RECEIPT", "consumer"]:
             raise ValueError("malformed consumer receipt: " + line)
-        case_id, mutation, stage, outcome = fields[2:]
+        case_id, mutation, mutation_sha256, stage, outcome = fields[2:]
         if (
             not mutation.startswith("mutation=")
+            or not mutation_sha256.startswith("mutationSha256=")
             or not stage.startswith("stage=")
             or not outcome.startswith("outcome=")
         ):
@@ -113,8 +125,14 @@ def consumer_vector_receipts(stdout, platform, cases):
         case = expected.get(case_id)
         if case is None:
             raise ValueError("consumer receipt is not owned by " + platform + ": " + case_id)
+        try:
+            _, expected_digest = canonical_mutation(case["mutation"])
+        except (KeyError, ValueError) as exc:
+            raise ValueError("consumer receipt mutation metadata is invalid: " + case_id) from exc
         if mutation.removeprefix("mutation=") != case["mutation"]["dimension"]:
             raise ValueError("consumer receipt mutation does not match metadata: " + case_id)
+        if mutation_sha256.removeprefix("mutationSha256=") != expected_digest:
+            raise ValueError("consumer receipt mutation digest does not match metadata: " + case_id)
         if stage.removeprefix("stage=") != case["ownership"]["stage"]:
             raise ValueError("consumer receipt stage does not match metadata: " + case_id)
         if outcome != "outcome=rejected":
@@ -123,6 +141,7 @@ def consumer_vector_receipts(stdout, platform, cases):
             "id": case_id,
             "ownership": case["ownership"],
             "mutation": case["mutation"],
+            "mutationSha256": expected_digest,
         }
     return receipts
 
@@ -395,7 +414,7 @@ def load_negative_cases(protocol_root):
             or ownership.get("direction") not in allowed_directions
             or ownership.get("stage") not in allowed_stages
             or not isinstance(mutation, dict)
-            or set(mutation) != set(mutation_schema.get("required", []))
+            or set(mutation) != {"dimension", "value"}
             or not isinstance(mutation.get("dimension"), str)
             or not mutation["dimension"]
         ):
@@ -429,9 +448,7 @@ def load_positive_case_ids(protocol_root):
 
 def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, negative_cases):
     commands = [
-        (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial", None),
         (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors", None),
-        (ios, ["./scripts/test-receiver-adversarial.sh"], "suite-ios-adversarial", None),
         (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors", None),
         (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors", None),
         (
@@ -489,10 +506,14 @@ def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, nega
         platform = case["ownership"]["consumerPlatform"]
         if platform == "mac-client":
             cwd = mac
-            argv = ["./scripts/test-mac-protocol-adversarial.sh", "case", case["id"]]
+            mutation_json, mutation_sha256 = canonical_mutation(case["mutation"])
+            argv = ["./scripts/test-mac-protocol-adversarial.sh", "case", case["id"],
+                    mutation_json.decode("utf-8"), mutation_sha256]
         elif platform == "ios-server":
             cwd = ios
-            argv = ["./scripts/test-receiver-adversarial.sh", case["id"]]
+            mutation_json, mutation_sha256 = canonical_mutation(case["mutation"])
+            argv = ["./scripts/test-receiver-adversarial.sh", case["id"],
+                    mutation_json.decode("utf-8"), mutation_sha256]
         else:
             receipt_errors.append("unsupported consumer platform: " + platform)
             continue
