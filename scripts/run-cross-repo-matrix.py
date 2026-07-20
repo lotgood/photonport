@@ -11,35 +11,8 @@ from pathlib import Path
 
 VERIFIER = Path(__file__).resolve().with_name("verify-cross-repo-compatibility.py")
 EXPECTED_PIN_KEYS = {"schemaVersion", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"}
-SWIFT_EXECUTABLE_CASE_IDS = {"duplicate-json-key", "invalid-utf8-json", "bad-length-prefix", "oversize-frame"}
-MAC_HARNESS_CASE_IDS = {
-    "bad-length-prefix",
-    "oversize-frame",
-    "duplicate-json-key",
-    "sensitive-reason-code",
-    "wrong-device-nonce",
-}
 NEGATIVE_FRAME = b"\x00\x00\x00\x00"
-IOS_NON_CONSUMER_CASE_IDS = MAC_HARNESS_CASE_IDS | {"wrong-device-nonce"}
-NEGATIVE_STAGE_BY_ID = {
-    "channel-nonce-replay": "session-ownership-state",
-    "primary-liveness-deadline": "session-ownership-state",
-    "invalid-primary-traffic-no-refresh": "session-ownership-state",
-    "pair-attempt-id-mismatch": "pairing-admission-policy",
-    "pair-commit-deadline": "pairing-admission-policy",
-    "pair-sas-confirm-deadline": "pairing-admission-policy",
-    "reveal-before-both-commitments": "pairing-admission-policy",
-    "video-keyframe-missing-h264-parameter-sets": "media-parameter-set-policy",
-    "video-keyframe-missing-hevc-parameter-sets": "media-parameter-set-policy",
-    "video-random-access-telemetry-mismatch": "media-parameter-set-policy",
-    "bad-length-prefix": "mac-protocol-parser",
-    "oversize-frame": "mac-protocol-parser",
-    "duplicate-json-key": "mac-protocol-parser",
-    "sensitive-reason-code": "mac-protocol-parser",
-    "wrong-device-nonce": "mac-protocol-parser",
-    "invalid-utf8-json": "strict-json",
-    "unicode-lone-surrogate": "strict-json",
-}
+VECTOR_RECEIPT_PREFIX = "VECTOR_RECEIPT "
 
 
 def digest(data):
@@ -113,6 +86,68 @@ def run(argv, cwd, log_dir, label, *, stdin=None):
         "logPath": "logs/" + log_path.name,
     }
 
+
+def consumer_vector_receipts(stdout, platform, cases):
+    """Parse exact, metadata-bound consumer rejection receipts from one suite."""
+    try:
+        lines = stdout.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError:
+        raise ValueError("consumer suite output is not valid UTF-8")
+    expected = {case["id"]: case for case in cases if case["ownership"]["consumerPlatform"] == platform}
+    receipts = {}
+    for line in lines:
+        if not line.startswith(VECTOR_RECEIPT_PREFIX):
+            continue
+        fields = line.split(" ")
+        if len(fields) != 6 or fields[0:2] != ["VECTOR_RECEIPT", "consumer"]:
+            raise ValueError("malformed consumer receipt: " + line)
+        case_id, mutation, stage, outcome = fields[2:]
+        if (
+            not mutation.startswith("mutation=")
+            or not stage.startswith("stage=")
+            or not outcome.startswith("outcome=")
+        ):
+            raise ValueError("malformed consumer receipt: " + line)
+        if case_id in receipts:
+            raise ValueError("duplicate consumer receipt ID: " + case_id)
+        case = expected.get(case_id)
+        if case is None:
+            raise ValueError("consumer receipt is not owned by " + platform + ": " + case_id)
+        if mutation.removeprefix("mutation=") != case["mutation"]["dimension"]:
+            raise ValueError("consumer receipt mutation does not match metadata: " + case_id)
+        if stage.removeprefix("stage=") != case["ownership"]["stage"]:
+            raise ValueError("consumer receipt stage does not match metadata: " + case_id)
+        if outcome != "outcome=rejected":
+            raise ValueError("consumer receipt outcome is not rejected: " + case_id)
+        receipts[case_id] = {
+            "id": case_id,
+            "ownership": case["ownership"],
+            "mutation": case["mutation"],
+        }
+    return receipts
+
+
+def empty_vector_evidence():
+    return {
+        "positive": {"producer": {}, "consumer": {}},
+        "negative": {"producer": {}, "consumer": {}},
+    }
+
+
+def evidence_ids(evidence, kind, role, case_ids):
+    return [case_id for case_id in case_ids if evidence[kind][role].get(case_id)]
+
+
+def record_suite_vector_evidence(evidence, consumer_platform, passed, stdout, negative_cases):
+    if not passed or consumer_platform is None:
+        return None
+    receipts = consumer_vector_receipts(stdout, consumer_platform, negative_cases)
+    evidence["negative"]["consumer"].update({case_id: True for case_id in receipts})
+    return receipts
+
+
+def covered_negative_vector_ids(negative_cases, evidence):
+    return evidence_ids(evidence, "negative", "consumer", [case["id"] for case in negative_cases])
 
 def read_pin_bytes(data, path):
     def pairs_hook(pairs):
@@ -295,43 +330,79 @@ def strict_vector_object(path, label):
     return value
 
 
-def negative_stage_for_case(case):
-    """Derive the owning consumer stage for a pinned negative-vector case."""
-    case_id = case["id"]
-    if case_id in NEGATIVE_STAGE_BY_ID:
-        return NEGATIVE_STAGE_BY_ID[case_id]
-    if case_id.startswith("usb-record-"):
-        return "usb-record-state"
-    if case_id.startswith("usb-"):
-        return "usb-preface-server"
-    return "session-wire-parser"
-
-
-def load_negative_case_stages(protocol_root):
+def load_negative_cases(protocol_root):
+    schema = strict_vector_object(protocol_root / "schemas/negative-vectors.schema.json", "negative vector schema")
     value = strict_vector_object(protocol_root / "vectors/negative.json", "negative vectors")
-    cases = value.get("cases")
-    if value.get("protocol") != "negative-vectors" or value.get("version") != "3.0.0" or not isinstance(cases, list) or not cases:
-        raise SystemExit("FAIL_CLOSED: negative vector header/cases are invalid")
-    stages = {}
-    for case in cases:
+    expected_root_fields = set(schema.get("properties", {}))
+    if (
+        schema.get("type") != "object"
+        or schema.get("additionalProperties") is not False
+        or set(schema.get("required", [])) != expected_root_fields
+        or set(value) != expected_root_fields
+        or value.get("protocol") != schema["properties"]["protocol"].get("const")
+        or value.get("version") != schema["properties"]["version"].get("const")
+        or value.get("expectedOutcome") != schema["properties"]["expectedOutcome"].get("const")
+        or not isinstance(value.get("cases"), list)
+        or not value["cases"]
+        or not isinstance(value.get("invariants"), list)
+        or not all(isinstance(item, str) for item in value["invariants"])
+        or not isinstance(value.get("strictContractSuites"), dict)
+    ):
+        raise SystemExit("FAIL_CLOSED: negative vectors do not validate against negative vector schema")
+    definitions = schema.get("$defs", {})
+    case_schema = definitions.get("case", {})
+    ownership_schema = definitions.get("ownership", {})
+    mutation_schema = definitions.get("mutation", {})
+    optional_case_fields = {"baseline", "encoding"}
+    required_case_fields = set(case_schema.get("required", []))
+    allowed_case_fields = set(case_schema.get("properties", {}))
+    allowed_platforms = set(ownership_schema.get("properties", {}).get("consumerPlatform", {}).get("enum", []))
+    allowed_directions = set(ownership_schema.get("properties", {}).get("direction", {}).get("enum", []))
+    allowed_stages = set(ownership_schema.get("properties", {}).get("stage", {}).get("enum", []))
+    if (
+        case_schema.get("additionalProperties") is not False
+        or ownership_schema.get("additionalProperties") is not False
+        or mutation_schema.get("additionalProperties") is not False
+        or not required_case_fields
+        or not allowed_platforms
+        or not allowed_directions
+        or not allowed_stages
+    ):
+        raise SystemExit("FAIL_CLOSED: negative vector schema is unsupported")
+    cases = []
+    identifiers = set()
+    for case in value["cases"]:
+        if not isinstance(case, dict) or not required_case_fields.issubset(case) or not set(case).issubset(allowed_case_fields):
+            raise SystemExit("FAIL_CLOSED: negative vector case does not validate against schema")
+        case_id = case.get("id")
+        if not isinstance(case_id, str) or not case_id or case_id in identifiers:
+            raise SystemExit("FAIL_CLOSED: duplicate or invalid negative vector case id")
         if (
-            not isinstance(case, dict)
-            or not isinstance(case.get("id"), str)
-            or not case["id"]
-            or not isinstance(case.get("message"), str)
+            not isinstance(case.get("message"), str)
             or not case["message"]
+            or not isinstance(case.get("mutatedField"), str)
+            or not case["mutatedField"]
+            or case.get("outcome") != value["expectedOutcome"]
+            or any(field in case and not isinstance(case[field], str) for field in optional_case_fields)
         ):
-            raise SystemExit("FAIL_CLOSED: negative vector case id/message is invalid")
-        if case.get("outcome") != "reject_and_fail_closed":
-            raise SystemExit("FAIL_CLOSED: negative vector outcome is not fail closed: " + case["id"])
-        if case["id"] in stages:
-            raise SystemExit("FAIL_CLOSED: duplicate negative vector case id")
-        stages[case["id"]] = negative_stage_for_case(case)
-    return stages
-
-
-def load_negative_case_ids(protocol_root):
-    return list(load_negative_case_stages(protocol_root))
+            raise SystemExit("FAIL_CLOSED: negative vector case fields are invalid: " + case_id)
+        ownership = case.get("ownership")
+        mutation = case.get("mutation")
+        if (
+            not isinstance(ownership, dict)
+            or set(ownership) != set(ownership_schema.get("required", []))
+            or ownership.get("consumerPlatform") not in allowed_platforms
+            or ownership.get("direction") not in allowed_directions
+            or ownership.get("stage") not in allowed_stages
+            or not isinstance(mutation, dict)
+            or set(mutation) != set(mutation_schema.get("required", []))
+            or not isinstance(mutation.get("dimension"), str)
+            or not mutation["dimension"]
+        ):
+            raise SystemExit("FAIL_CLOSED: negative vector ownership/mutation is invalid: " + case_id)
+        identifiers.add(case_id)
+        cases.append(case)
+    return cases
 
 
 def load_positive_case_ids(protocol_root):
@@ -350,124 +421,19 @@ def load_positive_case_ids(protocol_root):
     identifiers.extend("session-v3:" + name for name in names)
     identifiers.extend("session-v3-frame:" + key for key in sorted(frames) if isinstance(key, str))
     return identifiers
-def vector_specific_coverage(vector_ids, evidence):
-    """Return only vector IDs with both production producer and consumer receipts."""
-    covered = []
-    for vector_id in vector_ids:
-        receipts = evidence.get(vector_id, ())
-        if {"producer", "consumer"}.issubset(receipts):
-            covered.append(vector_id)
-    return covered
-
-
-def exact_vector_receipts(stdout, expected_ids, receipt_kind):
-    prefix = b"VECTOR_RECEIPT " + receipt_kind.encode("ascii") + b" "
-    found = set()
-    for line in stdout.splitlines():
-        if line.startswith(prefix):
-            case_id = line[len(prefix):].decode("utf-8", errors="strict")
-            if case_id in expected_ids:
-                found.add(case_id)
-    return found
-
-
-def exact_negative_consumer_receipt(stdout, expected_id, expected_stage):
-    """Parse one exact typed production rejection receipt, failing closed."""
-    try:
-        lines = stdout.decode("utf-8", errors="strict").splitlines()
-    except UnicodeDecodeError:
-        return None
-    receipt_lines = [line for line in lines if line.startswith("VECTOR_RECEIPT")]
-    if len(receipt_lines) != 1:
-        return None
-    fields = receipt_lines[0].split(" ")
-    if len(fields) != 5:
-        return None
-    prefix, consumer, case_id, stage_field, outcome_field = fields
-    if (
-        prefix != "VECTOR_RECEIPT"
-        or consumer != "consumer"
-        or case_id != expected_id
-        or stage_field != "stage=" + expected_stage
-        or outcome_field != "outcome=rejected"
-    ):
-        return None
-    return {"id": case_id, "stage": expected_stage, "outcome": "rejected"}
 
 
 
 
 
 
-def run_adversarial_cases(binary, case_ids, logs, prefix, receipts):
-    covered = []
-    failed = []
-    for case_id in case_ids:
-        if case_id not in SWIFT_EXECUTABLE_CASE_IDS:
-            continue
-        completed, receipt = run([str(binary), "case", case_id], binary.parent, logs, prefix + "-" + case_id)
-        receipts.append(receipt)
-        if completed.returncode == 0:
-            covered.append(case_id)
-        else:
-            failed.append(case_id)
-    return covered, failed
-def run_mac_harness_cases(mac, case_ids, stages, logs, receipts):
-    covered = []
-    failed = []
-    executions = {}
-    normalized = []
-    for case_id in case_ids:
-        if case_id not in MAC_HARNESS_CASE_IDS:
-            continue
-        completed, receipt = run(
-            ["./scripts/test-mac-protocol-adversarial.sh", "case", case_id],
-            mac, logs, "mac-harness-consumer-" + case_id
-        )
-        receipts.append(receipt)
-        parsed = exact_negative_consumer_receipt(completed.stdout, case_id, stages[case_id])
-        succeeded = completed.returncode == 0 and parsed is not None
-        executions[case_id] = succeeded
-        if succeeded:
-            covered.append(case_id)
-            normalized.append({**parsed, "consumerCommandReceipt": receipt})
-        else:
-            failed.append(case_id)
-    return covered, failed, executions, normalized
-
-
-def run_ios_harness_cases(ios, case_ids, stages, logs, receipts):
-    covered = []
-    failed = []
-    executions = {}
-    normalized = []
-    for case_id in case_ids:
-        if case_id in IOS_NON_CONSUMER_CASE_IDS:
-            continue
-        completed, receipt = run(
-            ["./scripts/test-receiver-adversarial.sh", case_id],
-            ios, logs, "ios-harness-consumer-" + case_id
-        )
-        receipts.append(receipt)
-        parsed = exact_negative_consumer_receipt(completed.stdout, case_id, stages[case_id])
-        succeeded = completed.returncode == 0 and parsed is not None
-        executions[case_id] = succeeded
-        if succeeded:
-            covered.append(case_id)
-            normalized.append({**parsed, "consumerCommandReceipt": receipt})
-        else:
-            failed.append(case_id)
-    return covered, failed, executions, normalized
-
-
-
-def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids, positive_ids):
+def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, negative_cases):
     commands = [
-        (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial"),
-        (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors"),
-        (ios, ["./scripts/test-receiver-adversarial.sh"], "suite-ios-adversarial"),
-        (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors"),
-        (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors"),
+        (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial", "mac-client"),
+        (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors", None),
+        (ios, ["./scripts/test-receiver-adversarial.sh"], "suite-ios-adversarial", "ios-server"),
+        (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors", None),
+        (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors", None),
         (
             protocol,
             [
@@ -478,6 +444,7 @@ def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids, posi
                 "-v",
             ],
             "suite-protocol-positive-vectors",
+            None,
         ),
         (
             protocol,
@@ -487,33 +454,38 @@ def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids, posi
                 "-v",
             ],
             "suite-protocol-negative-vectors",
+            None,
         ),
         (
             protocol,
             [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
             "suite-protocol-conformance",
+            None,
         ),
     ]
     results = {}
-    evidence = {}
-    for cwd, argv, label in commands:
+    evidence = empty_vector_evidence()
+    consumer_receipts = []
+    receipt_errors = []
+    for cwd, argv, label, consumer_platform in commands:
         completed, receipt = run(argv, cwd, logs, label)
         receipts.append(receipt)
-        results[label] = completed.returncode == 0
-        if completed.returncode == 0 and label == "suite-protocol-negative-vectors":
-            for case_id in negative_ids:
-                evidence.setdefault(case_id, set()).add("producer")
-        if completed.returncode == 0 and label == "suite-protocol-positive-vectors":
-            for case_id in positive_ids:
-                evidence.setdefault(case_id, set()).add("producer")
-        if completed.returncode == 0 and label in {
-            "suite-mac-session-vectors",
-            "suite-ios-session-vectors",
-            "suite-ios-pairing-vectors",
-        }:
-            for case_id in exact_vector_receipts(completed.stdout, set(positive_ids), "consumer"):
-                evidence.setdefault(case_id, set()).add("consumer")
-    return results, evidence
+        passed = completed.returncode == 0
+        results[label] = passed
+        try:
+            parsed = record_suite_vector_evidence(
+                evidence, consumer_platform, passed, completed.stdout, negative_cases
+            )
+        except ValueError as exc:
+            receipt_errors.append(label + ": " + str(exc))
+            continue
+        if label == "suite-protocol-negative-vectors" and passed:
+            evidence["negative"]["producer"] = {case["id"]: True for case in negative_cases}
+        elif label == "suite-protocol-positive-vectors" and passed:
+            evidence["positive"]["producer"] = {case_id: True for case_id in positive_ids}
+        if parsed is not None:
+            consumer_receipts.extend({**item, "commandReceipt": receipt} for item in parsed.values())
+    return results, evidence, consumer_receipts, receipt_errors
 
 
 def git_clone_checkout(src, dst, commit, mac, logs, label, receipts):
@@ -594,43 +566,41 @@ def main():
     receipts = []
     failures = []
     executed_positive = []
-    executed_adversarial = {"mac": [], "ios": []}
-    consumer_case_success = {"macHarness": {}, "macLauncher": {}, "iosLauncher": {}}
-    consumer_rejection_receipts = []
+    executed_adversarial = {"mac-client": [], "ios-server": []}
+    consumer_negative_receipts = []
     suite_results = {}
-    suite_covered = []
-    positive_suite_covered = []
+    vector_evidence_map = empty_vector_evidence()
     source_pins = {}
     built_pins = {}
     source_pin_sha256 = {}
     built_pin_sha256 = {}
-    unexecutable = []
     result = "passed"
 
-    negative_stages = load_negative_case_stages(protocol)
-    negative_ids = list(negative_stages)
+    negative_cases = load_negative_cases(protocol)
+    negative_ids = [case["id"] for case in negative_cases]
     positive_ids = load_positive_case_ids(protocol)
-    suite_results, vector_evidence = run_production_suites(
-        mac, ios, protocol, logs, receipts, negative_ids, positive_ids
+    suite_results, vector_evidence_map, consumer_negative_receipts, receipt_errors = run_production_suites(
+        mac, ios, protocol, logs, receipts, positive_ids, negative_cases
     )
+    failures.extend(receipt_errors)
+    for receipt in consumer_negative_receipts:
+        executed_adversarial[receipt["ownership"]["consumerPlatform"]].append(receipt["id"])
     for label, passed in suite_results.items():
         if not passed:
             failures.append(label + " failed")
-    negative_suite_labels = (
-        "suite-mac-adversarial",
-        "suite-ios-adversarial",
-        "suite-protocol-negative-vectors",
-    )
     positive_suite_labels = (
         "suite-mac-session-vectors",
         "suite-ios-session-vectors",
         "suite-ios-pairing-vectors",
         "suite-protocol-positive-vectors",
     )
-    # A passing suite is not evidence that every protocol vector crossed the
-    # producer/consumer boundary. Only an exact vector-ID receipt pair may
-    # promote a positive vector to covered.
-    positive_suite_covered = vector_specific_coverage(positive_ids, vector_evidence)
+    producer_covered = evidence_ids(vector_evidence_map, "negative", "producer", negative_ids)
+    covered = covered_negative_vector_ids(negative_cases, vector_evidence_map)
+    unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
+    if unexecutable:
+        failures.append("protocol negative vector IDs lack exact production consumer receipt coverage")
+    if all(suite_results.get(label) for label in positive_suite_labels):
+        positive_suite_covered = list(positive_ids)
     with tempfile.TemporaryDirectory(prefix="photonport-m3-matrix-") as tmp:
         build = Path(tmp) / "build"
         build.mkdir()
@@ -683,41 +653,6 @@ def main():
                 failures.append("mac decoder accepted invalid zero-length frame")
             if not negative_decode(ios_bin, logs, "negative-to-ios-zero-length", receipts):
                 failures.append("ios decoder accepted invalid zero-length frame")
-            mac_harness_covered, mac_harness_failed, mac_harness_success, mac_harness_receipts = run_mac_harness_cases(
-                mac, negative_ids, negative_stages, logs, receipts
-            )
-            consumer_rejection_receipts.extend(mac_harness_receipts)
-            consumer_case_success["macHarness"] = mac_harness_success
-            ios_harness_covered, ios_harness_failed, ios_harness_success, ios_harness_receipts = run_ios_harness_cases(
-                ios, negative_ids, negative_stages, logs, receipts
-            )
-            consumer_rejection_receipts.extend(ios_harness_receipts)
-            consumer_case_success["iosHarness"] = ios_harness_success
-            mac_covered, mac_failed = run_adversarial_cases(mac_bin, negative_ids, logs, "mac-adversarial", receipts)
-            ios_covered, ios_failed = run_adversarial_cases(ios_bin, negative_ids, logs, "ios-adversarial", receipts)
-            consumer_case_success["macLauncher"] = {
-                case_id: case_id in mac_covered for case_id in SWIFT_EXECUTABLE_CASE_IDS if case_id in negative_ids
-            }
-            consumer_case_success["iosLauncher"] = {
-                case_id: case_id in ios_covered for case_id in SWIFT_EXECUTABLE_CASE_IDS if case_id in negative_ids
-            }
-            executed_adversarial["mac"] = sorted(set(mac_harness_covered) | set(mac_covered))
-            executed_adversarial["ios"] = sorted(set(ios_harness_covered) | set(ios_covered))
-            for case_id in mac_harness_failed:
-                failures.append("mac harness consumer case failed: " + case_id)
-            for case_id in ios_harness_failed:
-                failures.append("ios harness consumer case failed: " + case_id)
-            for case_id in mac_failed:
-                failures.append("mac adversarial case failed: " + case_id)
-            for case_id in ios_failed:
-                failures.append("ios adversarial case failed: " + case_id)
-            receipt_ids = [item["id"] for item in consumer_rejection_receipts]
-            if len(receipt_ids) != len(set(receipt_ids)):
-                failures.append("production consumer rejection receipts are duplicated")
-            for item in consumer_rejection_receipts:
-                vector_evidence.setdefault(item["id"], set()).add("consumer")
-            covered = set(vector_specific_coverage(negative_ids, vector_evidence))
-            unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
             if len(executed_positive) != len(vectors) or len(positive_suite_covered) != len(positive_ids):
                 failures.append("protocol positive vector IDs lack executable production-suite coverage")
 
@@ -739,8 +674,6 @@ def main():
             stderr = completed.stderr.decode("utf-8", "replace")
             if completed.returncode == 0 or "FAIL_CLOSED" not in stderr or not ("pin" in stderr.lower() and ("tracked" in stderr.lower() or "mismatch" in stderr.lower())):
                 failures.append("changed tracked pin did not fail closed for a pin tracked-change/mismatch reason")
-            else:
-                vector_evidence.setdefault("compatibility-mismatch", set()).add("consumer")
         else:
             failures.append("changed-pin git clone/checkout failed")
 
@@ -762,14 +695,10 @@ def main():
         else:
             failures.append("fresh git clone/checkout failed")
 
-    covered = set(vector_specific_coverage(negative_ids, vector_evidence))
-    unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
-    if unexecutable:
-        failures.append("protocol negative vector IDs lack executable production-suite coverage")
     if failures:
         result = "failed"
     report = {
-        "schemaVersion": 3,
+        "schemaVersion": 2,
         "kind": "cross-repo-production-interop-report",
         "result": result,
         "sourceTuple": {
@@ -782,26 +711,33 @@ def main():
         "coverageContract": {
             "positiveRawFrameCases": executed_positive,
             "productionDerivedAdversarialCases": executed_adversarial,
+            "vectorEvidence": {
+                kind: {
+                    role: evidence_ids(vector_evidence_map, kind, role, case_ids)
+                    for role in ("producer", "consumer")
+                }
+                for kind, case_ids in (("positive", positive_ids), ("negative", negative_ids))
+            },
+            "productionConsumerNegativeVectorReceipts": evidence_ids(
+                vector_evidence_map, "negative", "consumer", negative_ids
+            ),
+            "negativeConsumerReceiptMetadata": consumer_negative_receipts,
+            "protocolProducerNegativeVectorIDs": producer_covered,
             "enumeratedProtocolPositiveVectorIDs": positive_ids,
             "enumeratedProtocolNegativeVectorIDs": negative_ids,
-            "negativeVectorOwningStages": negative_stages,
-            "negativeVectorOwningStageMappingSource": "pinned Protocol vectors/negative.json cases, keyed by exact case ID",
-            "productionConsumerNegativeRejectionReceipts": consumer_rejection_receipts,
             "productionSuiteResults": suite_results,
             "productionSuiteCoveredPositiveVectorIDs": positive_suite_covered,
-            "productionSuiteCoveredNegativeVectorIDs": sorted(covered),
-            "negativeVectorEvidenceLabels": list(negative_suite_labels),
+            "productionSuiteCoveredNegativeVectorIDs": covered,
+            "negativeVectorEvidenceLabels": ["exact metadata-bound production consumer receipt", "suite-protocol-negative-vectors producer reference"],
             "positiveVectorEvidenceLabels": list(positive_suite_labels),
             "unexecutableNegativeVectorIDs": unexecutable,
-            "unexecutablePolicy": "matrix fails rather than claiming vector coverage without a unique typed production rejection receipt for every pinned Protocol negative-vector ID",
-            "consumerCaseSuccess": consumer_case_success,
-            "consumerCasePolicy": "consumer coverage is promoted only when the requested case subprocess exits zero and emits exactly one UTF-8 typed receipt whose ID and Protocol-derived owning stage match, whose outcome is rejected, and whose normalized command receipt references its retained log; duplicate, missing, extra, or malformed receipts fail closed",
+            "unexecutablePolicy": "matrix fails closed on missing, duplicate, extra, wrong-platform, wrong-stage, or non-rejected metadata-bound consumer receipts; Protocol suite success supplies producer evidence only",
         },
         "processProtocol": {
             "topology": "separate production-derived Swift executables",
             "framing": "4-byte big-endian length followed by raw payload bytes over stdout/stdin",
             "directions": ["mac-encoder-to-ios-decoder", "ios-encoder-to-mac-decoder"],
-            "negativeCases": ["zero-length frame exits nonzero", "production-derived adversarial case mode exits nonzero on unexpected acceptance"],
+            "negativeCases": ["zero-length frame exits nonzero", "metadata-owned adversarial consumer suite emits exactly one rejected receipt per declared case"],
         },
         "builtPinEvidence": {
             "trackedConsumerPins": source_pins,

@@ -136,62 +136,176 @@ struct MacProtocolAdversarialHarness {
     }
 
     static func runCase(_ id: String) {
+        let result: MacProtocolConsumerResult?
         switch id {
-        case "bad-length-prefix":
-            expectFrameLength(.session, 0, false, "zero session frame")
-        case "oversize-frame":
-            expectFrameLength(.session, ProtocolParser.smallControlCap + 1, false, "oversized session frame")
-        case "duplicate-json-key":
-            expectRejects("duplicate JSON key") {
-                _ = try ProtocolParser.parseSessionBusy(
-                    json("{\"type\":\"session-busy\",\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}")
-                )
-            }
-        case "sensitive-reason-code":
-            expectRejects("unknown busy reason") {
-                _ = try ProtocolParser.parseSessionBusy(
-                    json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"not_busy\"}")
-                )
-            }
         case "wrong-device-nonce":
-            wrongDeviceNonce()
+            result = serverHelloCase(id, mutation: "deviceNonce",
+                                     payload: withFieldValue(serverHello(.wifi), "deviceNonce", quoted(b64(0x02, 32))),
+                                     transport: .wifi)
+        case "wifi-hello-missing-seed":
+            result = serverHelloCase(id, mutation: "wifiSessionSeed",
+                                     payload: withoutField(serverHello(.wifi), "wifiSessionSeed"), transport: .wifi)
+        case "usb-hello-seed-present":
+            result = serverHelloCase(id, mutation: "wifiSessionSeed",
+                                     payload: serverHello(.usb, seed: true), transport: .usb)
+        case "server-hello-transport-mismatch":
+            result = serverHelloCase(id, mutation: "transport",
+                                     payload: serverHello(.usb), transport: .wifi)
+        case "wrong-session-id":
+            result = sessionAcceptCase(id, mutation: "sessionID",
+                                       payloadMutation: { replacing($0, b64(0x51, 16), b64(0x00, 16)) })
+        case "zero-generation":
+            result = sessionAcceptCase(id, mutation: "generation",
+                                       payloadMutation: { withFieldValue($0, "generation", "0") })
+        case "sensitive-reason-code":
+            let valid = json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}")
+            precondition(MacProtocolConsumers.sessionBusyResponse(
+                valid, vector: id, mutation: "reason") == nil)
+            result = MacProtocolConsumers.sessionBusyResponse(
+                withFieldValue(valid, "reason", quoted("paired_identity_secret")),
+                vector: id, mutation: "reason")
+        case "video-keyframe-missing-h264-parameter-sets":
+            result = mediaCase(id, mutation: "Annex-B", codec: "h264",
+                               baseline: Data([0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65]),
+                               mutated: Data([0, 0, 0, 1, 0x65]), keyframe: true)
+        case "video-keyframe-missing-hevc-parameter-sets":
+            result = mediaCase(id, mutation: "Annex-B", codec: "hevc",
+                               baseline: Data([0, 0, 0, 1, 0x40, 0, 0, 0, 1, 0x42, 0, 0, 0, 1, 0x44, 0, 0, 0, 1, 0x26]),
+                               mutated: Data([0, 0, 0, 1, 0x26]), keyframe: true)
+        case "video-random-access-telemetry-mismatch":
+            result = mediaCase(id, mutation: "keyframe", codec: "h264",
+                               baseline: Data([0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65]),
+                               mutated: Data([0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65]), keyframe: false)
+        case "usb-challenge-reflection":
+            result = usbChallengeCase(id, mutation: "type") {
+                replacing($0, quoted("usb-bind-challenge"), quoted("usb-bind-init"))
+            }
+        case "usb-challenge-wrong-proof":
+            result = usbChallengeCase(id, mutation: "proof") {
+                return withFieldValue($0, "proof", quoted(Data(repeating: 0, count: 32).base64EncodedString()))
+            }
+        case "usb-accept-replay":
+            result = usbAcceptReplayCase(id)
+        case "usb-audio-binding-inequality-rejected":
+            let primary = Data(repeating: 0xA1, count: 32)
+            precondition(MacProtocolConsumers.usbAudioBinding(
+                primary: primary, audio: primary, vector: id, mutation: "bindingComparison") == nil)
+            result = MacProtocolConsumers.usbAudioBinding(
+                primary: primary, audio: Data(repeating: 0xA2, count: 32),
+                vector: id, mutation: "bindingComparison")
         default:
             fatalError("unknown or unsupported consumer case: \(id)")
         }
-        receipt(id)
+        guard let result, result.outcome == "rejected" else {
+            fatalError("consumer unexpectedly accepted \(id)")
+        }
+        receipt(result)
     }
 
+    static func serverHello(_ transport: ProtocolParser.Transport, seed: Bool = false) -> Data {
+        let transportName: String
+        switch transport {
+        case .wifi: transportName = "wifi"
+        case .usb: transportName = "usb"
+        }
+        let seedField: String
+        switch transport {
+        case .wifi: seedField = ",\"wifiSessionSeed\":\"\(b64(0x43, 32))\""
+        case .usb: seedField = seed ? ",\"wifiSessionSeed\":\"\(b64(0x43, 32))\"" : ""
+        }
+        return json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"\(transportName)\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true\(seedField)}")
+    }
 
-    static func wrongDeviceNonce() {
+    static func serverHelloCase(_ id: String, mutation: String, payload: Data,
+                                transport: ProtocolParser.Transport) -> MacProtocolConsumerResult? {
+        let baseline = serverHello(transport)
+        let expectedDeviceNonce = mutation == "deviceNonce" ? Data(repeating: 0x42, count: 32) : nil
+        precondition(MacProtocolConsumers.sessionInitResponse(
+            baseline, transport: transport, expectedDeviceNonce: expectedDeviceNonce,
+            vector: id, mutation: mutation) == nil)
+        return MacProtocolConsumers.sessionInitResponse(
+            payload, transport: transport, expectedDeviceNonce: expectedDeviceNonce,
+            vector: id, mutation: mutation)
+    }
+
+    static func sessionAcceptCase(_ id: String, mutation: String,
+                                  payloadMutation: (Data) -> Data) -> MacProtocolConsumerResult? {
         let key = SymmetricKey(data: Data(repeating: 0x31, count: 32))
-        let macID = "mac-a"
-        let deviceID = "device-a"
         let macNonce = Data(repeating: 0x41, count: 32)
         let deviceNonce = Data(repeating: 0x42, count: 32)
         let sessionID = Data(repeating: 0x51, count: 16)
         let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sessionID, generation: 1)
-        let proof = SessionCrypto.acceptProof(
-            key: secret,
-            sessionID: sessionID,
-            generation: 1,
-            macInstallID: macID,
-            deviceInstallID: deviceID,
-            macNonce: macNonce,
-            deviceNonce: deviceNonce
-        )
-        let accept = json(
-            "{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}"
-        )
-        expectRejects("wrong device nonce") {
-            _ = try ProtocolParser.parseVerifiedSessionAccept(
-                accept,
-                primaryKey: key,
-                macInstallID: macID,
-                deviceInstallID: deviceID,
-                macNonce: macNonce,
-                deviceNonce: Data(repeating: 0x44, count: 32)
-            )
-        }
+        let proof = SessionCrypto.acceptProof(key: secret, sessionID: sessionID, generation: 1,
+                                              macInstallID: "mac-a", deviceInstallID: "device-a",
+                                              macNonce: macNonce, deviceNonce: deviceNonce)
+        let baseline = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}")
+        precondition(MacProtocolConsumers.sessionFinishAccept(
+            baseline, primaryKey: key, macInstallID: "mac-a", deviceInstallID: "device-a",
+            macNonce: macNonce, deviceNonce: deviceNonce, vector: id, mutation: mutation) == nil)
+        return MacProtocolConsumers.sessionFinishAccept(
+            payloadMutation(baseline), primaryKey: key, macInstallID: "mac-a", deviceInstallID: "device-a",
+            macNonce: macNonce, deviceNonce: deviceNonce, vector: id, mutation: mutation)
+    }
+
+    static func mediaCase(_ id: String, mutation: String, codec: String, baseline: Data,
+                          mutated: Data, keyframe: Bool) -> MacProtocolConsumerResult? {
+        precondition(MacProtocolConsumers.mediaInbound(
+            annexB: baseline, keyframe: true, codec: codec, vector: id, mutation: mutation) == nil)
+        return MacProtocolConsumers.mediaInbound(
+            annexB: mutated, keyframe: keyframe, codec: codec, vector: id, mutation: mutation)
+    }
+
+    static func usbChallengeCase(_ id: String, mutation: String,
+                                 mutate: (Data) -> Data) -> MacProtocolConsumerResult? {
+        let psk = Data(repeating: 0xA5, count: 32), macNonce = Data(repeating: 0x11, count: 32)
+        let candidate = USBChannelCandidate(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                            purpose: "primary", startedAt: 0, token: 7, macNonce: macNonce)!
+        let server = USBPrefaceServer(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                      purpose: "primary", startedAt: 0, token: 7)!
+        let initial = candidate.start(now: 0, token: 7)!
+        precondition(server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge = server.consume(
+            USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+            nonce: Data(repeating: 0x22, count: 32))!
+        let payload = USBPrefaceMessage.unframe(challenge)!.0
+        return candidate.receiveChallenge(mutate(payload), now: 0, token: 7, vector: id, mutation: mutation)
+    }
+
+    static func usbAcceptReplayCase(_ id: String) -> MacProtocolConsumerResult? {
+        let psk = Data(repeating: 0xA5, count: 32), macNonce = Data(repeating: 0x11, count: 32)
+        let candidate = USBChannelCandidate(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                            purpose: "primary", startedAt: 0, token: 7, macNonce: macNonce)!
+        let server = USBPrefaceServer(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                      purpose: "primary", startedAt: 0, token: 7)!
+        let initial = candidate.start(now: 0, token: 7)!
+        precondition(server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge = server.consume(
+            USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+            nonce: Data(repeating: 0x22, count: 32))!
+        let finish = candidate.receiveChallenge(
+            USBPrefaceMessage.unframe(challenge)!.0, now: 0, token: 7, vector: id, mutation: "state")
+        precondition(finish == nil)
+        let replaySource = USBPrefaceClient(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                            purpose: "primary", startedAt: 0, token: 7, macNonce: macNonce)!
+        let replayInit = replaySource.start(now: 0, token: 7)!
+        let replayServer = USBPrefaceServer(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                            purpose: "primary", startedAt: 0, token: 7)!
+        precondition(replayServer.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let replayChallenge = replayServer.consume(
+            USBPrefaceMessage.unframe(Data(replayInit.dropFirst(8)))!.0, now: 0, token: 7,
+            nonce: Data(repeating: 0x22, count: 32))!
+        let replayFinish = replaySource.consume(USBPrefaceMessage.unframe(replayChallenge)!.0, now: 0, token: 7)!
+        let accept = replayServer.consume(USBPrefaceMessage.unframe(replayFinish)!.0, now: 0, token: 7)!
+        let fresh = USBChannelCandidate(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                        purpose: "primary", startedAt: 0, token: 7,
+                                        macNonce: Data(repeating: 0x12, count: 32))!
+        _ = fresh.start(now: 0, token: 7)!
+        return fresh.receiveAccept(
+            USBPrefaceMessage.unframe(accept)!.0, now: 0, token: 7, vector: id, mutation: "state")
+    }
+
+    static func receipt(_ result: MacProtocolConsumerResult) {
+        print("VECTOR_RECEIPT consumer \(result.vector) mutation=\(result.mutation) stage=\(result.stage) outcome=\(result.outcome)")
     }
 
     static func receipt(_ id: String) {

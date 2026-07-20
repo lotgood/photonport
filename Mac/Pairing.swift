@@ -1008,3 +1008,110 @@ final class ContinuationGate {
         return true
     }
 }
+// MARK: - Authoritative Mac protocol consumers
+//
+// These results are returned only after a receiving boundary rejects its input.
+struct MacProtocolConsumerResult: Equatable, Sendable {
+    let vector: String
+    let mutation: String
+    let stage: String
+    let outcome: String
+
+    static func rejected(_ vector: String, mutation: String,
+                         stage: String) -> MacProtocolConsumerResult {
+        MacProtocolConsumerResult(
+            vector: vector, mutation: mutation, stage: stage, outcome: "rejected"
+        )
+    }
+}
+
+enum MacProtocolConsumers {
+    static func sessionInitResponse(_ payload: Data, transport: ProtocolParser.Transport,
+                                    expectedDeviceNonce: Data? = nil, vector: String,
+                                    mutation: String) -> MacProtocolConsumerResult? {
+        guard let hello = try? ProtocolParser.parseServerHello(payload, transport: transport),
+              expectedDeviceNonce == nil || hello.deviceNonce == expectedDeviceNonce else {
+            return .rejected(vector, mutation: mutation, stage: "session-init-response")
+        }
+        return nil
+    }
+
+    static func sessionFinishAccept(_ payload: Data, primaryKey: SymmetricKey,
+                                    macInstallID: String, deviceInstallID: String,
+                                    macNonce: Data, deviceNonce: Data,
+                                    vector: String, mutation: String) -> MacProtocolConsumerResult? {
+        guard (try? ProtocolParser.parseVerifiedSessionAccept(
+            payload, primaryKey: primaryKey, macInstallID: macInstallID,
+            deviceInstallID: deviceInstallID, macNonce: macNonce,
+            deviceNonce: deviceNonce)) != nil else {
+            return .rejected(vector, mutation: mutation, stage: "session-finish-accept")
+        }
+        return nil
+    }
+
+    static func sessionBusyResponse(_ payload: Data, vector: String,
+                                    mutation: String) -> MacProtocolConsumerResult? {
+        guard (try? ProtocolParser.parseSessionBusy(payload)) != nil else {
+            return .rejected(vector, mutation: mutation, stage: "session-busy-response")
+        }
+        return nil
+    }
+
+    static func mediaInbound(annexB: Data, keyframe: Bool, codec: String,
+                             vector: String, mutation: String) -> MacProtocolConsumerResult? {
+        let startCode = Data([0, 0, 0, 1])
+        let hasH264Parameters = annexB.contains(startCode + Data([0x67])) &&
+            annexB.contains(startCode + Data([0x68]))
+        let hasHEVCParameters = annexB.contains(startCode + Data([0x40])) &&
+            annexB.contains(startCode + Data([0x42])) &&
+            annexB.contains(startCode + Data([0x44]))
+        let h264RandomAccess = annexB.contains(startCode + Data([0x65]))
+        let hevcRandomAccess = annexB.contains(startCode + Data([0x26]))
+        let valid = codec == "h264"
+            ? (!h264RandomAccess || keyframe && hasH264Parameters)
+            : (!hevcRandomAccess || keyframe && hasHEVCParameters)
+        return valid ? nil : .rejected(vector, mutation: mutation, stage: "media-inbound")
+    }
+
+    static func usbAudioBinding(primary: Data, audio: Data,
+                                vector: String, mutation: String) -> MacProtocolConsumerResult? {
+        primary != audio
+            ? .rejected(vector, mutation: mutation, stage: "usb-audio-binding")
+            : nil
+    }
+}
+
+/// Mac-side candidate wrapper. It exposes direction-specific receive methods so
+/// a server challenge can never be accepted in the accept state, and vice versa.
+final class USBChannelCandidate {
+    private let client: USBPrefaceClient
+
+    init?(psk: Data, macInstallID: String, deviceInstallID: String, purpose: String,
+          startedAt: TimeInterval, token: UInt64, macNonce: Data) {
+        guard let client = USBPrefaceClient(
+            psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID,
+            purpose: purpose, startedAt: startedAt, token: token, macNonce: macNonce
+        ) else { return nil }
+        self.client = client
+    }
+
+    func start(now: TimeInterval, token: UInt64) -> Data? {
+        client.start(now: now, token: token)
+    }
+
+    func receiveChallenge(_ payload: Data, now: TimeInterval, token: UInt64,
+                          vector: String, mutation: String) -> MacProtocolConsumerResult? {
+        guard client.consume(payload, now: now, token: token) != nil else {
+            return .rejected(vector, mutation: mutation, stage: "usb-bind-challenge")
+        }
+        return nil
+    }
+
+    func receiveAccept(_ payload: Data, now: TimeInterval, token: UInt64,
+                       vector: String, mutation: String) -> MacProtocolConsumerResult? {
+        guard client.consume(payload, now: now, token: token) != nil else {
+            return .rejected(vector, mutation: mutation, stage: "usb-bind-accept")
+        }
+        return nil
+    }
+}

@@ -17,10 +17,10 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run-cross-repo-matrix.py"
-ZERO64 = "0" * 64
-MATRIX_SPEC = importlib.util.spec_from_file_location("cross_repo_matrix_source_binding", SCRIPT)
+MATRIX_SPEC = importlib.util.spec_from_file_location("run_cross_repo_matrix", SCRIPT)
 MATRIX = importlib.util.module_from_spec(MATRIX_SPEC)
 MATRIX_SPEC.loader.exec_module(MATRIX)
+ZERO64 = "0" * 64
 
 
 def git(root, *args):
@@ -58,6 +58,71 @@ def run_matrix(mac, ios, protocol, expected, output):
     ]
     return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
+
+class MatrixReceiptParserTest(unittest.TestCase):
+    def setUp(self):
+        self.cases = [
+            {
+                "id": "mac-case",
+                "ownership": {
+                    "consumerPlatform": "mac-client",
+                    "direction": "ios-to-mac",
+                    "stage": "session-init-response",
+                },
+                "mutation": {"dimension": "nonce", "value": "mutated"},
+            },
+            {
+                "id": "ios-case",
+                "ownership": {
+                    "consumerPlatform": "ios-server",
+                    "direction": "mac-to-ios",
+                    "stage": "framing-inbound",
+                },
+                "mutation": {"dimension": "utf8", "value": "ff"},
+            },
+        ]
+
+    def test_accepts_exact_metadata_bound_receipt(self):
+        receipts = MATRIX.consumer_vector_receipts(
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n",
+            "mac-client",
+            self.cases,
+        )
+        self.assertEqual(
+            receipts,
+            {
+                "mac-case": {
+                    "id": "mac-case",
+                    "ownership": self.cases[0]["ownership"],
+                    "mutation": self.cases[0]["mutation"],
+                }
+            },
+        )
+
+    def test_rejects_extra_wrong_platform_duplicate_and_wrong_stage_receipts(self):
+        invalid = (
+            b"VECTOR_RECEIPT consumer ios-case mutation=utf8 stage=framing-inbound outcome=rejected\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=wrong outcome=rejected\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=wrong stage=session-init-response outcome=rejected\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n"
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n",
+        )
+        for stdout in invalid:
+            with self.subTest(stdout=stdout):
+                with self.assertRaises(ValueError):
+                    MATRIX.consumer_vector_receipts(stdout, "mac-client", self.cases)
+
+    def test_rejects_malformed_and_non_rejected_receipts(self):
+        for stdout in (
+            b"VECTOR_RECEIPT consumer mac-case\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=accepted\n",
+            b"VECTOR_RECEIPT producer mac-case\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected extra\n",
+            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=rejected\n\xff",
+        ):
+            with self.subTest(stdout=stdout):
+                with self.assertRaises(ValueError):
+                    MATRIX.consumer_vector_receipts(stdout, "mac-client", self.cases)
 
 class MatrixSourceBindingTest(unittest.TestCase):
     def setUp(self):
@@ -116,58 +181,6 @@ class MatrixSourceBindingTest(unittest.TestCase):
         # The toy repos lack protocol vectors, so the run must still fail,
         # but only after the source-binding guard has passed.
         self.assertNotEqual(completed.returncode, 0)
-    def test_positive_vector_requires_its_own_producer_and_consumer_receipts(self):
-        vector_ids = ["session-v3:wifi-psk", "session-v3:usb-seed"]
-        self.assertEqual(
-            MATRIX.vector_specific_coverage(
-                vector_ids,
-                {"session-v3:wifi-psk": {"producer", "consumer"}, "session-v3:usb-seed": {"producer"}},
-            ),
-            ["session-v3:wifi-psk"],
-        )
-    def test_negative_consumer_receipt_accepts_exact_typed_rejection(self):
-        self.assertEqual(
-            MATRIX.exact_negative_consumer_receipt(
-                b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\n",
-                "bad-length-prefix",
-                "mac-protocol-parser",
-            ),
-            {"id": "bad-length-prefix", "stage": "mac-protocol-parser", "outcome": "rejected"},
-        )
-
-    def test_negative_consumer_receipt_rejects_missing_duplicate_extra_or_malformed_receipts(self):
-        receipt = b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\n"
-        for stdout in (
-            b"production rejected frame\n",
-            receipt + receipt,
-            receipt + b"VECTOR_RECEIPT consumer oversize-frame stage=mac-protocol-parser outcome=rejected\n",
-            b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected extra\n",
-            receipt + b"\xff",
-        ):
-            self.assertIsNone(
-                MATRIX.exact_negative_consumer_receipt(stdout, "bad-length-prefix", "mac-protocol-parser")
-            )
-
-    def test_negative_consumer_receipt_rejects_wrong_id_outcome_or_globally_allowed_wrong_stage(self):
-        for stdout in (
-            b"VECTOR_RECEIPT consumer oversize-frame stage=mac-protocol-parser outcome=rejected\n",
-            b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=accepted\n",
-            b"VECTOR_RECEIPT consumer bad-length-prefix stage=session-wire-parser outcome=rejected\n",
-        ):
-            self.assertIsNone(
-                MATRIX.exact_negative_consumer_receipt(stdout, "bad-length-prefix", "mac-protocol-parser")
-            )
-
-    def test_negative_stage_mapping_is_id_specific(self):
-        self.assertEqual(
-            MATRIX.negative_stage_for_case({"id": "bad-length-prefix"}),
-            "mac-protocol-parser",
-        )
-        self.assertEqual(
-            MATRIX.negative_stage_for_case({"id": "usb-record-tag-mutation"}),
-            "usb-record-state",
-        )
-
 
 
 if __name__ == "__main__":
