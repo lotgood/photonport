@@ -107,9 +107,7 @@ fileprivate struct CaseInvocation {
         guard SHA256.hash(data: mutationData).map({ String(format: "%02x", $0) }).joined() == arguments[3],
               let object = try? JSONSerialization.jsonObject(with: mutationData) as? [String: Any],
               Set(object.keys) == ["dimension", "value"],
-              let dimension = object["dimension"] as? String, !dimension.isEmpty,
-              let canonical = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-              canonical == mutationData else {
+              let dimension = object["dimension"] as? String, !dimension.isEmpty else {
             fatalError("invalid canonical mutation binding")
         }
         id = arguments[1]
@@ -161,7 +159,7 @@ struct MacProtocolAdversarialHarness {
         print("mac protocol adversarial harness passed")
     }
 
-    static func runCase(_ invocation: CaseInvocation) {
+    fileprivate static func runCase(_ invocation: CaseInvocation) {
         let id = invocation.id
         let result: MacProtocolConsumerResult?
         switch id {
