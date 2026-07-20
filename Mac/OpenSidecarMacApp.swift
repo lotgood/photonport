@@ -776,7 +776,22 @@ final class SenderController: ObservableObject {
                                            port: NWEndpoint.Port(rawValue: portNum)!),
                                  security: .plaintext)
             } else {
-                transport = .usb(udid: udid, port: portNum)
+                let receiverIDs = PairedReceiverIndex.receiverIDs
+                guard receiverIDs.count == 1,
+                      let deviceInstallID = receiverIDs.first,
+                      let key = PairedReceiverIndex.lookup(
+                        deviceInstallID,
+                        using: { PairingStore.psk(for: $0) }
+                      ) else {
+                    Log.info("USB connect refused — exactly one paired receiver is required")
+                    return
+                }
+                transport = .authenticatedUSB(
+                    udid: udid,
+                    port: portNum,
+                    deviceInstallID: deviceInstallID,
+                    psk: key
+                )
             }
         case .wifi(let result):
             // WiFi requires a pairing-established PSK — the receiver's TLS

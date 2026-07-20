@@ -39,6 +39,11 @@ struct UsbmuxDevice: Hashable, Identifiable {
     var id: String { udid }
     var label: String { "\(name ?? "iPhone / iPad") (USB)" }
 }
+struct UsbmuxDialedConnection {
+    let connection: NWConnection
+    let authenticatedChannelBindingKey: Data
+    let recordState: USBRecordState
+}
 
 enum Usbmux {
     static let socketPath = "/var/run/usbmuxd"
@@ -48,6 +53,7 @@ enum Usbmux {
     enum Failure: Error, LocalizedError {
         case noDevice          // nothing attached (or the chosen udid is gone)
         case refused           // device present, nothing listening on the port
+        case unauthenticatedChannelBinding
         case result(Int)       // other usbmuxd result code
         case timeout
         case protocolError(String)
@@ -57,8 +63,9 @@ enum Usbmux {
             case .noDevice: return "no USB device attached"
             case .refused: return "the device is not listening on the port"
             case .result(let code): return "usbmuxd result \(code)"
-            case .timeout: return "usbmuxd request timed out"
+            case .unauthenticatedChannelBinding: return "USB transport has no authenticated channel-binding key"
             case .protocolError(let detail): return "usbmuxd protocol error: \(detail)"
+            case .timeout: return "usbmuxd request timed out"
             }
         }
     }
@@ -104,14 +111,81 @@ enum Usbmux {
         }
     }
 
-    /// Resolve a device (specific udid, or the first wired one) and connect
-    /// to `port` on it. One-shot — callers own the retry loop.
+    /// Resolve exactly one device and establish the application-authenticated
+    /// PPUSB1 preface before exposing the transparent pipe to callers.
     static func dial(udid: String?, port: UInt16,
-                     queue: DispatchQueue) async throws -> NWConnection {
+                     queue: DispatchQueue,
+                     macInstallID: String,
+                     deviceInstallID: String,
+                     psk: Data,
+                     purpose: String) async throws -> UsbmuxDialedConnection {
         let devices = try await listDevices(queue: queue)
-        let device = udid.map { u in devices.first { $0.udid == u } } ?? devices.first
-        guard let device else { throw Failure.noDevice }
-        return try await connect(deviceID: device.deviceID, port: port, queue: queue)
+        let matches = udid.map { selected in devices.filter { $0.udid == selected } } ?? devices
+        guard matches.count == 1, let device = matches.first else { throw Failure.noDevice }
+
+        let connection = try await connect(deviceID: device.deviceID, port: port, queue: queue)
+        do {
+            let startedAt = Date().timeIntervalSince1970
+            let token = UInt64.random(in: UInt64.min...UInt64.max)
+            guard let client = USBPrefaceClient(
+                psk: psk,
+                macInstallID: macInstallID,
+                deviceInstallID: deviceInstallID,
+                purpose: purpose,
+                startedAt: startedAt,
+                token: token
+            ),
+            let initial = client.start(now: startedAt, token: token) else {
+                throw Failure.unauthenticatedChannelBinding
+            }
+            try await send(raw: initial, on: connection)
+            let challenge = try await receivePreface(on: connection)
+            guard let finish = client.consume(
+                challenge,
+                now: Date().timeIntervalSince1970,
+                token: token
+            ), !finish.isEmpty else {
+                throw Failure.unauthenticatedChannelBinding
+            }
+            try await send(raw: finish, on: connection)
+            let accept = try await receivePreface(on: connection)
+            guard let response = client.consume(
+                accept,
+                now: Date().timeIntervalSince1970,
+                token: token
+            ), response.isEmpty,
+            let context = client.authenticatedContext(),
+            let records = USBRecordState(
+                role: "mac",
+                binding: context.binding,
+                macInstallID: macInstallID,
+                deviceInstallID: deviceInstallID,
+                purpose: purpose,
+                macNonce: context.macNonce,
+                deviceNonce: context.deviceNonce
+            ) else {
+                throw Failure.unauthenticatedChannelBinding
+            }
+            return UsbmuxDialedConnection(
+                connection: connection,
+                authenticatedChannelBindingKey: context.binding,
+                recordState: records
+            )
+        } catch {
+            connection.cancel()
+            throw error
+        }
+    }
+
+    private static func receivePreface(on connection: NWConnection) async throws -> Data {
+        let header = try await receive(exactly: 4, on: connection)
+        let length = Int(UInt32(bigEndian: header.withUnsafeBytes {
+            $0.loadUnaligned(as: UInt32.self)
+        }))
+        guard length > 0, length <= 4096 else {
+            throw Failure.protocolError("invalid PPUSB1 frame length")
+        }
+        return try await receive(exactly: length, on: connection)
     }
 
     /// Best-effort friendly name ("Philip's iPhone") from lockdownd, which

@@ -85,4 +85,46 @@ final class S05UsbmuxTests: XCTestCase {
         XCTAssertThrowsError(try Usbmux.decodeResult(["MessageType": "DeviceList", "Number": 0], operation: "Connect"))
         XCTAssertThrowsError(try Usbmux.decodeResult(["MessageType": "Result", "Number": 2], operation: "Connect"))
     }
+    func testUSBPrefaceDeterministicHandshakeAndDirectionalRecords() {
+        let psk = Data(repeating: 0xA5, count: 32)
+        let macNonce = Data(repeating: 0x11, count: 32)
+        let deviceNonce = Data(repeating: 0x22, count: 32)
+        let mac = USBPrefaceClient(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                   purpose: "primary", startedAt: 0, token: 7, macNonce: macNonce)!
+        let device = USBPrefaceServer(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                      purpose: "primary", startedAt: 0, token: 7)!
+        let initial = mac.start(now: 0, token: 7)!
+        XCTAssertEqual(initial.prefix(8), USBPrefaceMessage.magic)
+        let initPayload = USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0
+        XCTAssertTrue(device.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge = device.consume(initPayload, now: 0, token: 7, nonce: deviceNonce)!
+        let finish = mac.consume(USBPrefaceMessage.unframe(challenge)!.0, now: 0, token: 7)!
+        let accept = device.consume(USBPrefaceMessage.unframe(finish)!.0, now: 0, token: 7)!
+        XCTAssertEqual(mac.consume(USBPrefaceMessage.unframe(accept)!.0, now: 0, token: 7), Data())
+        let binding = mac.authenticatedBinding()
+        XCTAssertEqual(binding, device.authenticatedBinding())
+
+        let sender = USBRecordState(role: "mac", binding: binding!, macInstallID: "mac",
+                                    deviceInstallID: "receiver", purpose: "primary",
+                                    macNonce: macNonce, deviceNonce: deviceNonce)!
+        let receiver = USBRecordState(role: "device", binding: binding!, macInstallID: "mac",
+                                      deviceInstallID: "receiver", purpose: "primary",
+                                      macNonce: macNonce, deviceNonce: deviceNonce)!
+        XCTAssertEqual(receiver.consume(sender.frame(Data("hello".utf8), cap: 32)!, cap: 32)?.0, Data("hello".utf8))
+    }
+
+    func testUSBRejectsDuplicatePrefaceAndTamperedRecordBeforePayload() {
+        let duplicate = Data(#"{"type":"usb-bind-init","type":"usb-bind-init","v":1,"macInstallID":"m","deviceInstallID":"d","purpose":"primary","macNonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","proof":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}"#.utf8)
+        XCTAssertNil(USBPrefaceMessage.decode(duplicate, expectedType: "usb-bind-init"))
+
+        let binding = Data(repeating: 1, count: 32), nonce = Data(repeating: 2, count: 32)
+        let sender = USBRecordState(role: "mac", binding: binding, macInstallID: "m", deviceInstallID: "d",
+                                    purpose: "primary", macNonce: nonce, deviceNonce: nonce)!
+        let receiver = USBRecordState(role: "device", binding: binding, macInstallID: "m", deviceInstallID: "d",
+                                      purpose: "primary", macNonce: nonce, deviceNonce: nonce)!
+        var record = sender.frame(Data([1]), cap: 1)!
+        record[record.index(before: record.endIndex)] ^= 1
+        XCTAssertNil(receiver.consume(record, cap: 1))
+        XCTAssertTrue(receiver.closed)
+    }
 }

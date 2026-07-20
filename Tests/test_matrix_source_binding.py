@@ -8,6 +8,7 @@ claim that a later evidence-recording commit (one that stores the receipt,
 tooling, or docs) was the source that got executed: such a commit cannot be
 the clean HEAD of the root at execution time.
 """
+import importlib.util
 import json
 import subprocess
 import sys
@@ -17,6 +18,9 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run-cross-repo-matrix.py"
 ZERO64 = "0" * 64
+MATRIX_SPEC = importlib.util.spec_from_file_location("cross_repo_matrix_source_binding", SCRIPT)
+MATRIX = importlib.util.module_from_spec(MATRIX_SPEC)
+MATRIX_SPEC.loader.exec_module(MATRIX)
 
 
 def git(root, *args):
@@ -112,6 +116,16 @@ class MatrixSourceBindingTest(unittest.TestCase):
         # The toy repos lack protocol vectors, so the run must still fail,
         # but only after the source-binding guard has passed.
         self.assertNotEqual(completed.returncode, 0)
+    def test_positive_vector_requires_its_own_producer_and_consumer_receipts(self):
+        vector_ids = ["session-v3:wifi-psk", "session-v3:usb-seed"]
+        self.assertEqual(
+            MATRIX.vector_specific_coverage(
+                vector_ids,
+                {"session-v3:wifi-psk": {"producer", "consumer"}, "session-v3:usb-seed": {"producer"}},
+            ),
+            ["session-v3:wifi-psk"],
+        )
+
 
 
 if __name__ == "__main__":

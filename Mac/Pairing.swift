@@ -345,6 +345,275 @@ enum SessionCrypto {
     }
 }
 
+// MARK: - Protocol 2d2c613 USB authenticated channel
+
+struct USBPrefaceMessage: Codable, Equatable, Sendable {
+    let type: String
+    let v: Int
+    let macInstallID: String
+    let deviceInstallID: String
+    let purpose: String
+    let macNonce: String
+    let deviceNonce: String?
+    let proof: String
+
+    static let magic = Data([0x50, 0x50, 0x55, 0x53, 0x42, 0x31, 0x00, 0x00])
+    static let frameCap = 4_096
+
+    static func frame(_ message: USBPrefaceMessage) -> Data? {
+        guard let payload = try? JSONEncoder().encode(message), valid(message, expectedType: message.type) else { return nil }
+        return prefaceFrame(payload)
+    }
+
+    static func prefaceFrame(_ payload: Data) -> Data? {
+        guard !payload.isEmpty, payload.count <= frameCap else { return nil }
+        var length = UInt32(payload.count).bigEndian
+        return Data(bytes: &length, count: 4) + payload
+    }
+
+    static func unframe(_ data: Data) -> (Data, Data)? {
+        guard data.count >= 4 else { return nil }
+        let length = data.prefix(4).withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self)) }
+        guard length > 0, length <= frameCap, data.count >= 4 + Int(length) else { return nil }
+        return (Data(data[4..<(4 + Int(length))]), Data(data.dropFirst(4 + Int(length))))
+    }
+
+    static func decode(_ payload: Data, expectedType: String) -> USBPrefaceMessage? {
+        guard !payload.isEmpty, payload.count <= frameCap,
+              duplicateFreeTopLevelObject(payload),
+              let rawObject = try? JSONSerialization.jsonObject(with: payload),
+              let object = rawObject as? [String: Any],
+              let type = object["type"] as? String,
+              exactKeys(object, type: type),
+              let message = try? JSONDecoder().decode(USBPrefaceMessage.self, from: payload),
+              valid(message, expectedType: expectedType) else { return nil }
+        return message
+    }
+
+    static func valid(_ message: USBPrefaceMessage, expectedType: String) -> Bool {
+        guard ["usb-bind-init", "usb-bind-challenge", "usb-bind-finish", "usb-bind-accept"].contains(message.type) else {
+            return false
+        }
+        guard message.type == expectedType, message.v == 1, bounded(message.macInstallID),
+              bounded(message.deviceInstallID), message.purpose == "primary" || message.purpose == "audio",
+              canonicalBase64(message.macNonce, count: 32), canonicalBase64(message.proof, count: 32) else { return false }
+        return message.type == "usb-bind-init"
+            ? message.deviceNonce == nil
+            : message.deviceNonce.map { canonicalBase64($0, count: 32) } ?? false
+    }
+    private static func exactKeys(_ object: [String: Any], type: String) -> Bool {
+        switch type {
+        case "usb-bind-init":
+            return Set(object.keys) == ["type", "v", "macInstallID", "deviceInstallID", "purpose", "macNonce", "proof"]
+        case "usb-bind-challenge", "usb-bind-finish", "usb-bind-accept":
+            return Set(object.keys) == ["type", "v", "macInstallID", "deviceInstallID", "purpose", "macNonce", "deviceNonce", "proof"]
+        default:
+            return false
+        }
+    }
+
+    private static func bounded(_ value: String) -> Bool { !value.isEmpty && value.utf8.count <= 256 }
+    static func canonicalBase64(_ value: String, count: Int) -> Bool {
+        guard let decoded = Data(base64Encoded: value), decoded.count == count else { return false }
+        return decoded.base64EncodedString() == value
+    }
+
+    /// Reject duplicate top-level names before Foundation's permissive JSON parser sees them.
+    private static func duplicateFreeTopLevelObject(_ data: Data) -> Bool {
+        guard let source = String(data: data, encoding: .utf8) else { return false }
+        var index = source.startIndex
+        func whitespace() { while index < source.endIndex && source[index].isWhitespace { index = source.index(after: index) } }
+        func string() -> String? {
+            guard index < source.endIndex, source[index] == "\"" else { return nil }
+            index = source.index(after: index); var result = ""; var escaped = false
+            while index < source.endIndex {
+                let c = source[index]; index = source.index(after: index)
+                if escaped { result.append(c); escaped = false }
+                else if c == "\\" { escaped = true }
+                else if c == "\"" { return result }
+                else { result.append(c) }
+            }
+            return nil
+        }
+        whitespace(); guard index < source.endIndex, source[index] == "{" else { return false }
+        index = source.index(after: index); var keys = Set<String>(); whitespace()
+        if index < source.endIndex, source[index] == "}" { return false }
+        while index < source.endIndex {
+            guard let key = string(), keys.insert(key).inserted else { return false }
+            whitespace(); guard index < source.endIndex, source[index] == ":" else { return false }
+            index = source.index(after: index); whitespace()
+            var depth = 0; var quoted = false; var escaped = false
+            while index < source.endIndex {
+                let c = source[index]
+                if quoted { if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" { quoted = false } }
+                else if c == "\"" { quoted = true } else if c == "{" || c == "[" { depth += 1 } else if c == "}" || c == "]" { if depth == 0 { break }; depth -= 1 } else if c == "," && depth == 0 { break }
+                index = source.index(after: index)
+            }
+            whitespace()
+            guard index < source.endIndex else { return false }
+            if source[index] == "}" { index = source.index(after: index); whitespace(); return index == source.endIndex }
+            guard source[index] == "," else { return false }
+            index = source.index(after: index); whitespace()
+        }
+        return false
+    }
+}
+
+enum USBChannelCrypto {
+    static func authKey(psk: Data, macInstallID: String, deviceInstallID: String, purpose: String) -> SymmetricKey? {
+        guard valid(psk, macInstallID, deviceInstallID, purpose) else { return nil }
+        return derive(psk, "PhotonPort-usb-auth-salt-v1", [u64(3), text(macInstallID), text(deviceInstallID), text(purpose)], "PhotonPort-usb-auth-key-v1")
+    }
+
+    static func proof(_ type: String, key: SymmetricKey, macInstallID: String, deviceInstallID: String, purpose: String, macNonce: Data, deviceNonce: Data? = nil) -> Data? {
+        guard ["usb-bind-init", "usb-bind-challenge", "usb-bind-finish", "usb-bind-accept"].contains(type), macNonce.count == 32,
+              type == "usb-bind-init" ? deviceNonce == nil : deviceNonce?.count == 32 else { return nil }
+        var fields = [text(type), u64(1), text(macInstallID), text(deviceInstallID), text(purpose), macNonce]
+        if let deviceNonce { fields.append(deviceNonce) }
+        return hmac(key, fields)
+    }
+
+    static func binding(psk: Data, macInstallID: String, deviceInstallID: String, purpose: String, macNonce: Data, deviceNonce: Data) -> Data? {
+        guard valid(psk, macInstallID, deviceInstallID, purpose), macNonce.count == 32, deviceNonce.count == 32 else { return nil }
+        return data(derive(psk, "PhotonPort-usb-binding-salt-v1", [u64(3), text(macInstallID), text(deviceInstallID), text(purpose), macNonce, deviceNonce], "PhotonPort-usb-binding-v1"))
+    }
+
+    static func recordKeys(binding: Data, macInstallID: String, deviceInstallID: String, purpose: String, macNonce: Data, deviceNonce: Data) -> (macToDevice: SymmetricKey, deviceToMac: SymmetricKey)? {
+        guard valid(binding, macInstallID, deviceInstallID, purpose), macNonce.count == 32, deviceNonce.count == 32 else { return nil }
+        let salt = Data(SHA256.hash(data: lp([text("PhotonPort-usb-record-salt-v1"), u64(3), u64(1), text(macInstallID), text(deviceInstallID), text(purpose), macNonce, deviceNonce])))
+        let key = SymmetricKey(data: binding)
+        return (HKDF<SHA256>.deriveKey(inputKeyMaterial: key, salt: salt, info: text("PhotonPort-usb-record-mac-to-device-v1"), outputByteCount: 32),
+                HKDF<SHA256>.deriveKey(inputKeyMaterial: key, salt: salt, info: text("PhotonPort-usb-record-device-to-mac-v1"), outputByteCount: 32))
+    }
+
+    static func recordTag(key: SymmetricKey, macInstallID: String, deviceInstallID: String, purpose: String, direction: String, sequence: UInt64, payload: Data) -> Data? {
+        guard ["mac-to-device", "device-to-mac"].contains(direction) else { return nil }
+        return hmac(key, [text("PhotonPort-usb-record-v1"), u64(1), text(macInstallID), text(deviceInstallID), text(purpose), text(direction), u64(sequence), payload])
+    }
+
+    static func randomNonce() -> Data? { SessionCrypto.randomBytes(count: 32) }
+    private static func valid(_ psk: Data, _ mac: String, _ device: String, _ purpose: String) -> Bool { psk.count == 32 && !mac.isEmpty && mac.utf8.count <= 256 && !device.isEmpty && device.utf8.count <= 256 && ["primary", "audio"].contains(purpose) }
+    private static func derive(_ psk: Data, _ label: String, _ fields: [Data], _ info: String) -> SymmetricKey { HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: psk), salt: Data(SHA256.hash(data: lp([text(label)] + fields))), info: text(info), outputByteCount: 32) }
+    private static func hmac(_ key: SymmetricKey, _ fields: [Data]) -> Data { Data(HMAC<SHA256>.authenticationCode(for: lp(fields), using: key)) }
+    private static func lp(_ fields: [Data]) -> Data { SessionCrypto.lengthPrefixed(fields) }
+    private static func text(_ value: String) -> Data { Data(value.utf8) }
+    private static func u64(_ value: UInt64) -> Data { var value = value.bigEndian; return Data(bytes: &value, count: 8) }
+    private static func data(_ key: SymmetricKey) -> Data { key.withUnsafeBytes { Data($0) } }
+}
+
+final class USBRecordState {
+    private var sendKey: SymmetricKey?
+    private var receiveKey: SymmetricKey?
+    private let macInstallID: String, deviceInstallID: String, purpose: String
+    private let sendDirection: String, receiveDirection: String
+    private var sendSequence: UInt64 = 0, receiveSequence: UInt64 = 0
+    private(set) var closed = false
+
+    init?(role: String, binding: Data, macInstallID: String, deviceInstallID: String, purpose: String, macNonce: Data, deviceNonce: Data) {
+        guard role == "mac" || role == "device",
+              let keys = USBChannelCrypto.recordKeys(binding: binding, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: macNonce, deviceNonce: deviceNonce) else { return nil }
+        (sendKey, receiveKey, sendDirection, receiveDirection) = role == "mac" ? (keys.macToDevice, keys.deviceToMac, "mac-to-device", "device-to-mac") : (keys.deviceToMac, keys.macToDevice, "device-to-mac", "mac-to-device")
+        self.macInstallID = macInstallID; self.deviceInstallID = deviceInstallID; self.purpose = purpose
+    }
+
+    func frame(_ payload: Data, cap: Int) -> Data? {
+        guard !closed, !payload.isEmpty, cap > 0, payload.count <= cap, let sendKey,
+              let tag = USBChannelCrypto.recordTag(key: sendKey, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, direction: sendDirection, sequence: sendSequence, payload: payload),
+              sendSequence < UInt64.max else { clear(); return nil }
+        var sequence = sendSequence.bigEndian; var body = Data(bytes: &sequence, count: 8); body += payload; body += tag; sendSequence += 1
+        var length = UInt32(body.count).bigEndian; return Data(bytes: &length, count: 4) + body
+    }
+
+    func consume(_ data: Data, cap: Int) -> (Data, Data)? {
+        guard !closed, cap > 0, data.count >= 4 else { clear(); return nil }
+        let length = data.prefix(4).withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self)) }
+        guard length > 40, length <= cap + 40, data.count >= 4 + Int(length), let receiveKey else { clear(); return nil }
+        let body = data[4..<(4 + Int(length))], payload = Data(body.dropFirst(8).dropLast(32)), tag = Data(body.suffix(32))
+        let sequence = body.prefix(8).withUnsafeBytes { UInt64(bigEndian: $0.loadUnaligned(as: UInt64.self)) }
+        guard sequence == receiveSequence, receiveSequence < UInt64.max,
+              let expected = USBChannelCrypto.recordTag(key: receiveKey, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, direction: receiveDirection, sequence: sequence, payload: payload),
+              SessionCrypto.constantTimeEqual(tag, expected) else { clear(); return nil }
+        receiveSequence += 1; return (payload, Data(data.dropFirst(4 + Int(length))))
+    }
+
+    func clear() { sendKey = nil; receiveKey = nil; sendSequence = 0; receiveSequence = 0; closed = true }
+}
+
+final class USBPrefaceClient {
+    private let psk: Data, macInstallID: String, deviceInstallID: String, purpose: String, startedAt: TimeInterval, token: UInt64
+    private var macNonce: Data?, deviceNonce: Data?, binding: Data?
+    private var state = "idle"
+    init?(psk: Data, macInstallID: String, deviceInstallID: String, purpose: String, startedAt: TimeInterval, token: UInt64, macNonce: Data? = nil) {
+        guard USBChannelCrypto.authKey(psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose) != nil else { return nil }
+        self.psk = psk; self.macInstallID = macInstallID; self.deviceInstallID = deviceInstallID; self.purpose = purpose; self.startedAt = startedAt; self.token = token; self.macNonce = macNonce
+    }
+    func start(now: TimeInterval, token: UInt64, nonce: Data? = nil) -> Data? {
+        guard active(now, token), state == "idle" else { clear(); return nil }
+        macNonce = nonce ?? macNonce ?? USBChannelCrypto.randomNonce()
+        guard let macNonce, macNonce.count == 32, let key = USBChannelCrypto.authKey(psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose),
+              let proof = USBChannelCrypto.proof("usb-bind-init", key: key, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: macNonce),
+              let frame = USBPrefaceMessage.frame(USBPrefaceMessage(type: "usb-bind-init", v: 1, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: macNonce.base64EncodedString(), deviceNonce: nil, proof: proof.base64EncodedString())) else { clear(); return nil }
+        state = "init-sent"; return USBPrefaceMessage.magic + frame
+    }
+    func consume(_ payload: Data, now: TimeInterval, token: UInt64) -> Data? {
+        guard active(now, token), state == "init-sent" || state == "finish-sent" else { clear(); return nil }
+        let expected = state == "init-sent" ? "usb-bind-challenge" : "usb-bind-accept"
+        guard let message = USBPrefaceMessage.decode(payload, expectedType: expected), message.macInstallID == macInstallID, message.deviceInstallID == deviceInstallID, message.purpose == purpose,
+              let mac = Data(base64Encoded: message.macNonce), mac == macNonce, let device = message.deviceNonce.flatMap({ Data(base64Encoded: $0) }),
+              let proof = Data(base64Encoded: message.proof), let key = USBChannelCrypto.authKey(psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose),
+              let expectedProof = USBChannelCrypto.proof(expected, key: key, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac, deviceNonce: device),
+              (state == "init-sent" || device == deviceNonce),
+              SessionCrypto.constantTimeEqual(proof, expectedProof) else { clear(); return nil }
+        deviceNonce = device
+        if expected == "usb-bind-accept" { binding = USBChannelCrypto.binding(psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac, deviceNonce: device); state = "authenticated"; return Data() }
+        guard let finish = USBChannelCrypto.proof("usb-bind-finish", key: key, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac, deviceNonce: device),
+              let frame = USBPrefaceMessage.frame(USBPrefaceMessage(type: "usb-bind-finish", v: 1, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac.base64EncodedString(), deviceNonce: device.base64EncodedString(), proof: finish.base64EncodedString())) else { clear(); return nil }
+        state = "finish-sent"; return frame
+    }
+    func authenticatedBinding() -> Data? { state == "authenticated" ? binding : nil }
+    func authenticatedContext() -> (binding: Data, macNonce: Data, deviceNonce: Data)? {
+        guard state == "authenticated", let binding, let macNonce, let deviceNonce else { return nil }
+        return (binding, macNonce, deviceNonce)
+    }
+    func clear() { macNonce = nil; deviceNonce = nil; binding = nil; state = "closed" }
+    private func active(_ now: TimeInterval, _ token: UInt64) -> Bool { state != "closed" && token == self.token && now < startedAt + 5 }
+}
+
+final class USBPrefaceServer {
+    private let psk: Data, macInstallID: String, deviceInstallID: String, purpose: String, startedAt: TimeInterval, token: UInt64
+    private var macNonce: Data?, deviceNonce: Data?, binding: Data?
+    private var state = "await-magic"
+    init?(psk: Data, macInstallID: String, deviceInstallID: String, purpose: String, startedAt: TimeInterval, token: UInt64) {
+        guard USBChannelCrypto.authKey(psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose) != nil else { return nil }
+        self.psk = psk; self.macInstallID = macInstallID; self.deviceInstallID = deviceInstallID; self.purpose = purpose; self.startedAt = startedAt; self.token = token
+    }
+    func consumeMagic(_ magic: Data, now: TimeInterval, token: UInt64) -> Bool { guard active(now, token), state == "await-magic", magic == USBPrefaceMessage.magic else { clear(); return false }; state = "await-init"; return true }
+    func consume(_ payload: Data, now: TimeInterval, token: UInt64, nonce: Data? = nil) -> Data? {
+        guard active(now, token), state == "await-init" || state == "challenge-sent" else { clear(); return nil }
+        let expected = state == "await-init" ? "usb-bind-init" : "usb-bind-finish"
+        guard let message = USBPrefaceMessage.decode(payload, expectedType: expected), message.macInstallID == macInstallID, message.deviceInstallID == deviceInstallID, message.purpose == purpose,
+              let mac = Data(base64Encoded: message.macNonce), let proof = Data(base64Encoded: message.proof),
+              let key = USBChannelCrypto.authKey(psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose),
+              let expectedProof = USBChannelCrypto.proof(expected, key: key, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac, deviceNonce: expected == "usb-bind-init" ? nil : deviceNonce),
+              (expected == "usb-bind-init" || message.deviceNonce.flatMap({ Data(base64Encoded: $0) }) == deviceNonce),
+              SessionCrypto.constantTimeEqual(proof, expectedProof) else { clear(); return nil }
+        macNonce = mac
+        if expected == "usb-bind-finish" {
+            guard let deviceNonce, let result = USBChannelCrypto.binding(psk: psk, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac, deviceNonce: deviceNonce),
+                  let accept = USBChannelCrypto.proof("usb-bind-accept", key: key, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac, deviceNonce: deviceNonce),
+                  let frame = USBPrefaceMessage.frame(USBPrefaceMessage(type: "usb-bind-accept", v: 1, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac.base64EncodedString(), deviceNonce: deviceNonce.base64EncodedString(), proof: accept.base64EncodedString())) else { clear(); return nil }
+            binding = result; state = "authenticated"; return frame
+        }
+        deviceNonce = nonce ?? USBChannelCrypto.randomNonce()
+        guard let deviceNonce, deviceNonce.count == 32,
+              let challenge = USBChannelCrypto.proof("usb-bind-challenge", key: key, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac, deviceNonce: deviceNonce),
+              let frame = USBPrefaceMessage.frame(USBPrefaceMessage(type: "usb-bind-challenge", v: 1, macInstallID: macInstallID, deviceInstallID: deviceInstallID, purpose: purpose, macNonce: mac.base64EncodedString(), deviceNonce: deviceNonce.base64EncodedString(), proof: challenge.base64EncodedString())) else { clear(); return nil }
+        state = "challenge-sent"; return frame
+    }
+    func authenticatedBinding() -> Data? { state == "authenticated" ? binding : nil }
+    func clear() { macNonce = nil; deviceNonce = nil; binding = nil; state = "closed" }
+    private func active(_ now: TimeInterval, _ token: UInt64) -> Bool { state != "closed" && token == self.token && now < startedAt + 5 }
+}
 // MARK: - Framing (4-byte BE length + JSON payload)
 
 enum PairingWire {
@@ -388,6 +657,37 @@ enum PairingWire {
         if type == SessionBusy.self { return try ProtocolParser.parseSessionBusy(payload) as! T }
         if type == SessionChannelOpen.self { return try ProtocolParser.parseChannelOpen(payload) as! T }
         throw ProtocolParser.ParseError.type
+    }
+}
+
+/// Non-secret receiver identity index. It deliberately stores no credentials and
+/// lets callers select one exact keychain account rather than probing candidates.
+enum PairedReceiverIndex {
+    private static let defaultsKey = "pairedReceiverInstallIDs"
+
+    static var receiverIDs: [String] {
+        Array(Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []))
+            .filter { !$0.isEmpty && $0.utf8.count <= 256 }
+            .sorted()
+    }
+
+    static func contains(_ receiverID: String) -> Bool { receiverIDs.contains(receiverID) }
+
+    static func record(_ receiverID: String) {
+        guard !receiverID.isEmpty, receiverID.utf8.count <= 256 else { return }
+        var ids = Set(receiverIDs); ids.insert(receiverID)
+        UserDefaults.standard.set(ids.sorted(), forKey: defaultsKey)
+    }
+
+    static func remove(_ receiverID: String) {
+        var ids = Set(receiverIDs); ids.remove(receiverID)
+        UserDefaults.standard.set(ids.sorted(), forKey: defaultsKey)
+    }
+
+    /// Resolves only the supplied identity; there is no multi-key fallback.
+    static func lookup<T>(_ receiverID: String, using resolver: (String) -> T?) -> T? {
+        guard contains(receiverID) else { return nil }
+        return resolver(receiverID)
     }
 }
 
@@ -484,7 +784,10 @@ enum PairingStore {
         // delete-and-add after an update error: that sequence can destroy a
         // credential that is still usable when either operation fails.
         let updateStatus = keychainOperations.update(base, attrs)
-        if updateStatus == errSecSuccess { return true }
+        if updateStatus == errSecSuccess {
+            PairedReceiverIndex.record(deviceID)
+            return true
+        }
         guard updateStatus == errSecItemNotFound else {
             Log.info("pairing: keychain update failed (\(updateStatus)); existing key retained")
             return false
@@ -496,6 +799,7 @@ enum PairingStore {
         if addStatus != errSecSuccess {
             Log.info("pairing: keychain add failed (\(addStatus))")
         }
+        if addStatus == errSecSuccess { PairedReceiverIndex.record(deviceID) }
         return addStatus == errSecSuccess
     }
 
@@ -508,6 +812,7 @@ enum PairingStore {
             Log.info("pairing: keychain delete failed (\(status))")
             return false
         }
+        PairedReceiverIndex.remove(deviceID)
         return true
     }
 }

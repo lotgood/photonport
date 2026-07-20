@@ -107,6 +107,7 @@ struct PhoneInfo {
 enum SenderTransport {
     case tcp(NWEndpoint, security: TCPTransportSecurity)
     case usb(udid: String?, port: UInt16)  // native usbmuxd dial; nil = first device
+    case authenticatedUSB(udid: String?, port: UInt16, deviceInstallID: String, psk: Data)
 }
 
 enum TCPTransportSecurity {
@@ -136,9 +137,9 @@ struct ProtocolBuildPin: Decodable, Equatable {
 
     private static let expected = ProtocolBuildPin(
         schemaVersion: 1,
-        protocolCommit: "b7be72c50249fed978dd56cd44a6c883de01bca8",
-        compatibilityDigest: "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
-        normativeManifestDigest: "2ff0c5171294afc0b9187dee9229617581f25c9a622692992f148cf6d06e51cc")
+        protocolCommit: "2d2c613176ae76319c39f4676cf926a13984ec38",
+        compatibilityDigest: "4ee7d298a0bd7ab284e7fa4d84d4fb19d68cdb681a6230945bb161815d3a4127",
+        normativeManifestDigest: "3083f63b75764b25bd4e1e9f7d5b5b4392f8eea56a81ea783998c59750749762")
 
     static func validate(at url: URL?) throws {
         guard let url else {
@@ -251,6 +252,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private let audioQueue = DispatchQueue(label: "sender.audio", qos: .userInteractive)
     private var isUSBTransport: Bool {
         if case .usb = transport { return true }
+        if case .authenticatedUSB = transport { return true }
         return false
     }
     // Only the usbmux path is treated as the fast link. Any other TCP path
@@ -404,6 +406,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     private var pendingStreamSession: PendingStreamSession?
     private var boundStreamSession: BoundStreamSession?
+    private var usbChannelBindingKey: Data?
+    private var usbPrimaryRecordState: USBRecordState?
+    private var usbAudioRecordState: USBRecordState?
+    private var consumedWifiSessionSeeds = Set<Data>()
     private var inputInjector: InputInjector?
     // Monotonic lifetime token for display-owned UI work; never sent on the wire.
     private var virtualDisplayGeneration: UInt64 = 0
@@ -472,6 +478,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             return nil
         }
         return (identity, key)
+    }
+    private var sessionTransport: ProtocolParser.Transport {
+        if case .usb = transport { return .usb }
+        if case .authenticatedUSB = transport { return .usb }
+        return .wifi
     }
 
 
@@ -1088,9 +1099,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             Log.info("audio payload rejected before send: \(payload.count) bytes")
             return
         }
-        var header = UInt32(payload.count).bigEndian
-        var frame = Data(bytes: &header, count: 4)
-        frame.append(payload)
+        let frame: Data
+        if isUSBTransport {
+            guard let state = audioConnectionReady ? usbAudioRecordState : usbPrimaryRecordState,
+                  let protected = state.frame(payload, cap: 1 << 20) else { return }
+            frame = protected
+        } else {
+            var header = UInt32(payload.count).bigEndian
+            frame = Data(bytes: &header, count: 4) + payload
+        }
         let generation = dialGeneration
         let completion: (NWError?) -> Void = { [weak self] _ in
             guard let self else { return }
@@ -1191,6 +1208,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         pendingAudioSends = 0
         pendingStreamSession = nil
         boundStreamSession = nil
+        usbChannelBindingKey = nil
+        usbPrimaryRecordState?.clear()
+        usbPrimaryRecordState = nil
+        usbAudioRecordState?.clear()
+        usbAudioRecordState = nil
+        consumedWifiSessionSeeds.removeAll(keepingCapacity: false)
         handshakeStartedAt = nil
         pendingSends = 0
         pendingEncodes = 0
@@ -1259,7 +1282,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         guard !stopped else { return }
         switch transport {
         case .tcp(let endpoint, _): connectTCP(endpoint)
-        case .usb(let udid, let port): connectUSB(udid: udid, port: port)
+        case .usb:
+            Log.info("unauthenticated USB transport refused")
+            scheduleReconnect()
+        case .authenticatedUSB(let udid, let port, let deviceInstallID, let psk):
+            connectUSB(udid: udid, port: port, deviceInstallID: deviceInstallID, psk: psk)
         }
     }
 
@@ -1268,9 +1295,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func becomeReady(_ conn: NWConnection) {
         Log.info("transport ready to \(endpointName); waiting for session v3 hello")
         if case .tcp = transport {
-            Log.info(wifiPSK == nil
-                ? "TCP transport uses a loopback session seed"
-                : "TCP transport secured with TLS-PSK (paired)")
+            Log.info("TCP transport awaiting paired Wi-Fi session challenge")
         }
         inputInjector?.releasePressedInput()
         connectionReady = false
@@ -1324,18 +1349,30 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         audioConnectionReady = false
         let generation = dialGeneration
         switch transport {
-        case .usb(let udid, let port):
+        case .usb:
+            return
+        case .authenticatedUSB(let udid, let port, let deviceInstallID, let psk):
             audioDialInFlight = true
             Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let conn = try await Usbmux.dial(udid: udid, port: port + 1, queue: queue)
+                    let dialed = try await Usbmux.dial(
+                        udid: udid,
+                        port: port + 1,
+                        queue: queue,
+                        macInstallID: PairingStore.macInstallID,
+                        deviceInstallID: deviceInstallID,
+                        psk: psk,
+                        purpose: "audio"
+                    )
+                    let conn = dialed.connection
                     queue.async {
                         self.audioDialInFlight = false
                         guard generation == self.dialGeneration, !self.stopped else {
                             conn.cancel()
                             return
                         }
+                        self.usbAudioRecordState = dialed.recordState
                         self.adoptAudioConnection(conn, tag: false)
                     }
                 } catch {
@@ -1411,24 +1448,71 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] header, _, _, error in
             guard let self, conn === self.audioConnection,
                   error == nil, let header, header.count == 4 else {
-                conn.cancel(); return
+                conn.cancel()
+                return
             }
-            do {
-                let length = try ProtocolParser.framedPayloadLength(from: header, kind: .audioControl)
-                conn.receive(minimumIncompleteLength: length, maximumLength: length) {
-                    [weak self] payload, _, _, error in
-                    guard let self, conn === self.audioConnection,
-                          error == nil, let payload,
-                          (try? ProtocolParser.validatePayload(payload, expectedLength: length, kind: .audioControl)) != nil,
-                          let parsed = try? ProtocolParser.parseServerHello(payload, transport: tagged ? .wifi : .usb),
-                          let session = self.boundStreamSession,
-                          parsed.id == session.info.id,
-                          let nonce = SessionCrypto.randomBytes(count: 32) else {
-                    conn.cancel(); return
+            let rawLength = Int(UInt32(bigEndian: header.withUnsafeBytes {
+                $0.loadUnaligned(as: UInt32.self)
+            }))
+            let protected = !tagged
+            let bodyLength: Int
+            if protected {
+                guard rawLength > 40, rawLength <= (1 << 20) + 40 else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = rawLength
+            } else {
+                guard let length = try? ProtocolParser.framedPayloadLength(
+                    from: header,
+                    kind: .audioControl
+                ) else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = length
+            }
+            conn.receive(minimumIncompleteLength: bodyLength, maximumLength: bodyLength) {
+                [weak self] body, _, _, error in
+                guard let self, conn === self.audioConnection,
+                      error == nil, let body else {
+                    conn.cancel()
+                    return
+                }
+                let payload: Data
+                if protected {
+                    guard let state = self.usbAudioRecordState,
+                          let consumed = state.consume(header + body, cap: 1 << 20),
+                          consumed.1.isEmpty else {
+                        conn.cancel()
+                        return
+                    }
+                    payload = consumed.0
+                } else {
+                    payload = body
+                }
+                guard (try? ProtocolParser.validatePayload(
+                    payload,
+                    expectedLength: payload.count,
+                    kind: .audioControl
+                )) != nil,
+                let parsed = try? ProtocolParser.parseServerHello(
+                    payload,
+                    transport: tagged ? .wifi : .usb
+                ),
+                let session = self.boundStreamSession,
+                parsed.id == session.info.id,
+                let nonce = SessionCrypto.randomBytes(count: 32) else {
+                    conn.cancel()
+                    return
                 }
                 let proof = SessionCrypto.channelProof(
-                    key: session.channelSecret, sessionID: session.sessionID,
-                    generation: session.generation, channel: "audio", nonce: nonce)
+                    key: session.channelSecret,
+                    sessionID: session.sessionID,
+                    generation: session.generation,
+                    channel: "audio",
+                    nonce: nonce
+                )
                 let open = SessionChannelOpen(
                     v: SessionCrypto.version,
                     macInstallID: PairingStore.macInstallID,
@@ -1436,8 +1520,18 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     generation: session.generation,
                     channel: "audio",
                     nonce: nonce.base64EncodedString(),
-                    proof: proof.base64EncodedString())
-                guard let frame = PairingWire.frame(open, kind: .audioControl) else { conn.cancel(); return }
+                    proof: proof.base64EncodedString()
+                )
+                let frame: Data?
+                if protected, let encoded = try? JSONEncoder().encode(open) {
+                    frame = self.usbAudioRecordState?.frame(encoded, cap: 1 << 20)
+                } else {
+                    frame = PairingWire.frame(open, kind: .audioControl)
+                }
+                guard let frame else {
+                    conn.cancel()
+                    return
+                }
                 conn.send(content: frame, completion: .contentProcessed { [weak self] error in
                     guard let self, conn === self.audioConnection else { return }
                     self.audioHandshakeInFlight = false
@@ -1449,9 +1543,6 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                         Log.info("session v3 audio ready (dedicated socket\(tagged ? ", TLS" : ", USB"))")
                     }
                 })
-            }
-            } catch {
-                conn.cancel()
             }
         }
     }
@@ -1467,7 +1558,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 tcp: options)
         case .tcp(_, security: .plaintext):
             params = NWParameters(tls: nil, tcp: options)
-        case .usb:
+        case .usb, .authenticatedUSB:
             preconditionFailure("TCP connection requires a TCP transport")
         }
         // WMM QoS: the video frames flow Mac -> device on THIS connection, and
@@ -1514,19 +1605,30 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     /// Dial through macOS's built-in usbmuxd — no external tunnel needed.
     /// The handshake is async, so adoption is gated on `dialGeneration`.
-    private func connectUSB(udid: String?, port: UInt16) {
+    private func connectUSB(udid: String?, port: UInt16, deviceInstallID: String, psk: Data) {
         dialGeneration += 1
         let generation = dialGeneration
         Task { [weak self] in
             guard let self else { return }
             do {
-                let conn = try await Usbmux.dial(udid: udid, port: port, queue: queue)
+                let dialed = try await Usbmux.dial(
+                    udid: udid,
+                    port: port,
+                    queue: queue,
+                    macInstallID: PairingStore.macInstallID,
+                    deviceInstallID: deviceInstallID,
+                    psk: psk,
+                    purpose: "primary"
+                )
+                let conn = dialed.connection
                 queue.async { [weak self] in
                     guard let self else { conn.cancel(); return }
                     guard generation == self.dialGeneration, !self.stopped else {
                         conn.cancel()
                         return
                     }
+                    self.usbChannelBindingKey = dialed.authenticatedChannelBindingKey
+                    self.usbPrimaryRecordState = dialed.recordState
                     self.connection = conn
                     conn.stateUpdateHandler = { [weak self] state in
                         guard let self else { return }
@@ -1589,6 +1691,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         pendingStreamSession = nil
         boundStreamSession = nil
         lastHello = nil
+        usbChannelBindingKey = nil
+        usbPrimaryRecordState?.clear()
+        usbPrimaryRecordState = nil
+        usbAudioRecordState?.clear()
+        usbAudioRecordState = nil
         handshakeStartedAt = nil
         dialGeneration += 1   // a USB dial still in flight must not adopt
         connection?.cancel()
@@ -1702,17 +1809,57 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     // MARK: - Control messages (phone -> Mac)
 
     private func receiveControl(on conn: NWConnection) {
-        conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] data, _, _, error in
-            guard let self, conn === self.connection else { return }
-            guard error == nil, let data, data.count == 4,
-                  let len = try? ProtocolParser.framedPayloadLength(from: data, kind: .session) else {
+        conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] header, _, _, error in
+            guard let self, conn === self.connection,
+                  error == nil, let header, header.count == 4 else {
                 conn.cancel()
                 return
             }
-            conn.receive(minimumIncompleteLength: len, maximumLength: len) { [weak self] payload, _, _, error in
-                guard let self, conn === self.connection else { return }
-                guard error == nil, let payload,
-                      (try? ProtocolParser.validatePayload(payload, expectedLength: len, kind: .session)) != nil else {
+            let rawLength = Int(UInt32(bigEndian: header.withUnsafeBytes {
+                $0.loadUnaligned(as: UInt32.self)
+            }))
+            let protected = self.isUSBTransport
+            let bodyLength: Int
+            if protected {
+                guard rawLength > 40, rawLength <= (1 << 20) + 40 else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = rawLength
+            } else {
+                guard let length = try? ProtocolParser.framedPayloadLength(
+                    from: header,
+                    kind: .session
+                ) else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = length
+            }
+            conn.receive(minimumIncompleteLength: bodyLength, maximumLength: bodyLength) {
+                [weak self] body, _, _, error in
+                guard let self, conn === self.connection,
+                      error == nil, let body else {
+                    conn.cancel()
+                    return
+                }
+                let payload: Data
+                if protected {
+                    guard let state = self.usbPrimaryRecordState,
+                          let consumed = state.consume(header + body, cap: 1 << 20),
+                          consumed.1.isEmpty else {
+                        conn.cancel()
+                        return
+                    }
+                    payload = consumed.0
+                } else {
+                    payload = body
+                }
+                guard (try? ProtocolParser.validatePayload(
+                    payload,
+                    expectedLength: payload.count,
+                    kind: .session
+                )) != nil else {
                     conn.cancel()
                     return
                 }
@@ -1727,31 +1874,43 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         guard pendingStreamSession == nil, boundStreamSession == nil,
               info.sessionVersion == SessionCrypto.version,
               let deviceID = info.id,
-              let macNonce = SessionCrypto.randomBytes(count: 32) else {
+              let macNonce = SessionCrypto.randomBytes(count: 32),
+              info.deviceNonce.count == 32 else {
             Log.info("session v3 server hello invalid")
             scheduleReconnect()
             return
         }
-        let deviceNonce = info.deviceNonce
-        guard deviceNonce.count == 32 else {
-            Log.info("session v3 server hello invalid")
-            scheduleReconnect()
-            return
-        }
-        guard let ikm = wifiPSK?.key, info.wifiSessionSeed?.count == 32 else {
-            Log.info("session v3 has no paired Wi-Fi PSK and challenge")
-            scheduleReconnect()
-            return
+        let ikm: Data
+        switch sessionTransport {
+        case .wifi:
+            guard let wifiPSK,
+                  let seed = info.wifiSessionSeed,
+                  seed.count == 32,
+                  consumedWifiSessionSeeds.insert(seed).inserted else {
+                Log.info("session v3 Wi-Fi challenge or paired PSK rejected")
+                scheduleReconnect()
+                return
+            }
+            ikm = wifiPSK.key
+        case .usb:
+            guard info.wifiSessionSeed == nil,
+                  let binding = usbChannelBindingKey,
+                  binding.count == 32 else {
+                Log.info("session v3 USB channel binding unavailable")
+                scheduleReconnect()
+                return
+            }
+            ikm = binding
         }
         let macID = PairingStore.macInstallID
         let primaryKey = SessionCrypto.primaryKey(
             ikm: ikm, macInstallID: macID, deviceInstallID: deviceID,
-            macNonce: macNonce, deviceNonce: deviceNonce)
+            macNonce: macNonce, deviceNonce: info.deviceNonce)
         let proof = SessionCrypto.primaryProof(
             key: primaryKey, macInstallID: macID, deviceInstallID: deviceID,
-            macNonce: macNonce, deviceNonce: deviceNonce)
+            macNonce: macNonce, deviceNonce: info.deviceNonce)
         pendingStreamSession = PendingStreamSession(
-            info: info, macNonce: macNonce, deviceNonce: deviceNonce,
+            info: info, macNonce: macNonce, deviceNonce: info.deviceNonce,
             primaryKey: primaryKey)
         let message = SessionOpen(
             v: SessionCrypto.version,
@@ -1792,7 +1951,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     @discardableResult
     private func sendSessionMessage<T: Encodable>(_ message: T,
                                                    on conn: NWConnection?) -> Bool {
-        guard let conn, let frame = PairingWire.frame(message) else { return false }
+        guard let conn, let payload = try? JSONEncoder().encode(message) else { return false }
+        let frame: Data
+        if isUSBTransport {
+            guard let protected = usbPrimaryRecordState?.frame(payload, cap: 1 << 20) else { return false }
+            frame = protected
+        } else {
+            guard let plain = PairingWire.frame(message) else { return false }
+            frame = plain
+        }
         conn.send(content: frame, completion: .contentProcessed { error in
             if let error { Log.info("session send error: \(error)") }
         })
@@ -1801,7 +1968,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
 
     private func handleControl(_ payload: Data) {
-        guard let control = try? ProtocolParser.parseControl(payload, transport: wifiPSK == nil ? .usb : .wifi) else {
+        guard let control = try? ProtocolParser.parseControl(payload, transport: sessionTransport) else {
             Log.info("invalid control message (\(payload.count) bytes)")
             scheduleReconnect()
             return
@@ -2376,9 +2543,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             Log.info("session payload rejected before send: \(payload.count) bytes")
             return
         }
-        var header = UInt32(payload.count).bigEndian
-        var frame = Data(bytes: &header, count: 4)
-        frame.append(payload)
+        let frame: Data
+        if isUSBTransport {
+            guard let protected = usbPrimaryRecordState?.frame(payload, cap: 1 << 20) else { return }
+            frame = protected
+        } else {
+            var header = UInt32(payload.count).bigEndian
+            frame = Data(bytes: &header, count: 4) + payload
+        }
         connection.send(content: frame, completion: .contentProcessed { _ in })
     }
 
@@ -2391,9 +2563,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             Log.info("video payload rejected before send: \(payload.count) bytes")
             return false
         }
-        var header = UInt32(payload.count).bigEndian
-        var frame = Data(bytes: &header, count: 4)
-        frame.append(payload)
+        let frame: Data
+        if isUSBTransport {
+            guard let protected = usbPrimaryRecordState?.frame(payload, cap: 16 << 20) else { return false }
+            frame = protected
+        } else {
+            var header = UInt32(payload.count).bigEndian
+            frame = Data(bytes: &header, count: 4) + payload
+        }
         pendingSends += 1
         connection.send(content: frame, completion: .contentProcessed { [weak self] error in
             guard let self else { return }

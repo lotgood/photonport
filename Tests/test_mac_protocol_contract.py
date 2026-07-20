@@ -225,14 +225,14 @@ class MacProtocolContractTests(unittest.TestCase):
             pin,
             {
                 "schemaVersion": 1,
-                "protocolCommit": "b7be72c50249fed978dd56cd44a6c883de01bca8",
-                "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
-                "normativeManifestDigest": "2ff0c5171294afc0b9187dee9229617581f25c9a622692992f148cf6d06e51cc",
+                "protocolCommit": "2d2c613176ae76319c39f4676cf926a13984ec38",
+                "compatibilityDigest": "4ee7d298a0bd7ab284e7fa4d84d4fb19d68cdb681a6230945bb161815d3a4127",
+                "normativeManifestDigest": "3083f63b75764b25bd4e1e9f7d5b5b4392f8eea56a81ea783998c59750749762",
             },
         )
         self.assertNotIn("protocolTag", pin)
-        self.assertIn('protocolCommit: "b7be72c50249fed978dd56cd44a6c883de01bca8"', SENDER)
-        self.assertIn('normativeManifestDigest: "2ff0c5171294afc0b9187dee9229617581f25c9a622692992f148cf6d06e51cc"', SENDER)
+        self.assertIn('protocolCommit: "2d2c613176ae76319c39f4676cf926a13984ec38"', SENDER)
+        self.assertIn('normativeManifestDigest: "3083f63b75764b25bd4e1e9f7d5b5b4392f8eea56a81ea783998c59750749762"', SENDER)
         self.assertIn('Bundle.main.url(forResource: "ProtocolBuildPin"', SENDER)
         self.assertIn("try ProtocolBuildPin.validate(at: pinURL)", SENDER)
 
@@ -244,11 +244,11 @@ class MacProtocolContractTests(unittest.TestCase):
 
     def test_inbound_frames_validate_before_receive_decode_or_dispatch(self):
         receive_control = swift_private_function(SENDER, "receiveControl")
-        self.assertLess(receive_control.index("ProtocolParser.framedPayloadLength"), receive_control.index("conn.receive(minimumIncompleteLength: len"))
+        self.assertLess(receive_control.index("ProtocolParser.framedPayloadLength"), receive_control.index("conn.receive(minimumIncompleteLength: bodyLength"))
         self.assertLess(receive_control.index("ProtocolParser.validatePayload"), receive_control.index("self.handleControl(payload)"))
 
         receive_audio_hello = swift_private_function(SENDER, "receiveAudioServerHello")
-        self.assertLess(receive_audio_hello.index("ProtocolParser.framedPayloadLength"), receive_audio_hello.index("conn.receive(minimumIncompleteLength: length"))
+        self.assertLess(receive_audio_hello.index("ProtocolParser.framedPayloadLength"), receive_audio_hello.index("conn.receive(minimumIncompleteLength: bodyLength"))
         self.assertLess(receive_audio_hello.index("ProtocolParser.validatePayload"), receive_audio_hello.index("ProtocolParser.parseServerHello"))
 
         pairing_receive = swift_function(PAIRING, "receive")
@@ -293,9 +293,13 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertNotIn("Data(base64Encoded:", begin)
         self.assertNotIn("JSONDecoder", begin)
         self.assertNotIn("Mirror(", begin)
-        self.assertIn("let deviceNonce = info.deviceNonce", begin)
-        self.assertIn("let ikm = wifiPSK?.key, info.wifiSessionSeed?.count == 32 else", begin)
+        self.assertIn("switch sessionTransport", begin)
+        self.assertIn("consumedWifiSessionSeeds.insert(seed).inserted", begin)
+        self.assertIn("ikm = wifiPSK.key", begin)
+        self.assertIn("let binding = usbChannelBindingKey", begin)
+        self.assertIn("ikm = binding", begin)
         self.assertNotIn("usbSessionSeed", begin)
+        self.assertNotIn("wifiPSK?.key, info.wifiSessionSeed", begin)
 
         control = swift_private_function(SENDER, "handleControl")
         self.assertIn("case .serverHello(let parsed):", control)

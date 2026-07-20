@@ -301,6 +301,16 @@ def load_positive_case_ids(protocol_root):
     identifiers.extend("session-v3:" + name for name in names)
     identifiers.extend("session-v3-frame:" + key for key in sorted(frames) if isinstance(key, str))
     return identifiers
+def vector_specific_coverage(vector_ids, evidence):
+    """Return only vector IDs with both production producer and consumer receipts."""
+    covered = []
+    for vector_id in vector_ids:
+        receipts = evidence.get(vector_id, ())
+        if {"producer", "consumer"}.issubset(receipts):
+            covered.append(vector_id)
+    return covered
+
+
 
 
 
@@ -468,8 +478,11 @@ def main():
     )
     if all(suite_results.get(label) for label in negative_suite_labels):
         suite_covered = list(negative_ids)
-    if all(suite_results.get(label) for label in positive_suite_labels):
-        positive_suite_covered = list(positive_ids)
+    # A passing suite is not evidence that every protocol vector crossed the
+    # producer/consumer boundary. Only an exact vector-ID receipt pair may
+    # promote a positive vector to covered.
+    positive_vector_evidence = {}
+    positive_suite_covered = vector_specific_coverage(positive_ids, positive_vector_evidence)
     with tempfile.TemporaryDirectory(prefix="photonport-m3-matrix-") as tmp:
         build = Path(tmp) / "build"
         build.mkdir()

@@ -143,6 +143,8 @@ final class S05AppLifecycleTests: XCTestCase {
         let replacement = FakeSender()
         let factory = FakeFactory([failed, replacement])
         let controller = SenderController(makeBrowser: { FakeBrowser() }, senderFactory: factory)
+        UserDefaults.standard.set("127.0.0.1", forKey: "host")
+        defer { UserDefaults.standard.removeObject(forKey: "host") }
 
         controller.connect(to: .usb(udid: nil), userInitiated: true)
         try await Task.sleep(for: .milliseconds(20))
