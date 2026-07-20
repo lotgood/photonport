@@ -370,7 +370,8 @@ def run_production_suites(mac, ios, protocol, logs, receipts):
         receipts.append(receipt)
         results[label] = completed.returncode == 0
         if completed.returncode == 0:
-            for line in completed.stdout.splitlines():
+            for raw_line in completed.stdout.splitlines():
+                line = raw_line.decode("utf-8", errors="strict") if isinstance(raw_line, bytes) else raw_line
                 parts = line.strip().split(" ", 2)
                 if len(parts) == 3 and parts[0] == "VECTOR_RECEIPT" and parts[1] in {"producer", "consumer"}:
                     evidence.setdefault(parts[2], set()).add(parts[1])
