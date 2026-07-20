@@ -13,11 +13,11 @@ final class S01AdmissionTests: XCTestCase {
         XCTAssertThrowsError(try ProtocolBuildPin.validate(at: temporaryFile(contents: "{")))
         XCTAssertThrowsError(try ProtocolBuildPin.validate(
             at: temporaryFile(contents: validPin.replacingOccurrences(
-                of: "1f7d0ef5c43a585ebc29ea0f4d772e88364699fc",
+                of: "1f7d0ef052e13c3be3fe5c1658f002da0449d340",
                 with: String(repeating: "0", count: 40)))))
         XCTAssertThrowsError(try ProtocolBuildPin.validate(
             at: temporaryFile(contents: validPin.replacingOccurrences(
-                of: "1f7d0ef5c43a585ebc29ea0f4d772e88364699fc",
+                of: "1f7d0ef052e13c3be3fe5c1658f002da0449d340",
                 with: "2280861313b2363b673089637d1c1dc544e208d8"))))
     }
 
