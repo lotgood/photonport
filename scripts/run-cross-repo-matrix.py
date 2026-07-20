@@ -12,8 +12,15 @@ from pathlib import Path
 VERIFIER = Path(__file__).resolve().with_name("verify-cross-repo-compatibility.py")
 EXPECTED_PIN_KEYS = {"schemaVersion", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"}
 SWIFT_EXECUTABLE_CASE_IDS = {"duplicate-json-key", "invalid-utf8-json", "bad-length-prefix", "oversize-frame"}
-MAC_HARNESS_CASE_IDS = {"bad-length-prefix", "oversize-frame", "duplicate-json-key", "sensitive-reason-code"}
+MAC_HARNESS_CASE_IDS = {
+    "bad-length-prefix",
+    "oversize-frame",
+    "duplicate-json-key",
+    "sensitive-reason-code",
+    "wrong-device-nonce",
+}
 NEGATIVE_FRAME = b"\x00\x00\x00\x00"
+IOS_NON_CONSUMER_CASE_IDS = {"wrong-device-nonce"}
 
 
 def digest(data):
@@ -365,6 +372,8 @@ def run_ios_harness_cases(ios, case_ids, logs, receipts):
     failed = []
     executions = {}
     for case_id in case_ids:
+        if case_id in IOS_NON_CONSUMER_CASE_IDS:
+            continue
         completed, receipt = run(
             ["./scripts/test-receiver-adversarial.sh", case_id],
             ios, logs, "ios-harness-consumer-" + case_id

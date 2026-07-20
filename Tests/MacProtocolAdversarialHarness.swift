@@ -153,10 +153,45 @@ struct MacProtocolAdversarialHarness {
                     json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"not_busy\"}")
                 )
             }
+        case "wrong-device-nonce":
+            wrongDeviceNonce()
         default:
             fatalError("unknown or unsupported consumer case: \(id)")
         }
         receipt(id)
+    }
+
+
+    static func wrongDeviceNonce() {
+        let key = SymmetricKey(data: Data(repeating: 0x31, count: 32))
+        let macID = "mac-a"
+        let deviceID = "device-a"
+        let macNonce = Data(repeating: 0x41, count: 32)
+        let deviceNonce = Data(repeating: 0x42, count: 32)
+        let sessionID = Data(repeating: 0x51, count: 16)
+        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sessionID, generation: 1)
+        let proof = SessionCrypto.acceptProof(
+            key: secret,
+            sessionID: sessionID,
+            generation: 1,
+            macInstallID: macID,
+            deviceInstallID: deviceID,
+            macNonce: macNonce,
+            deviceNonce: deviceNonce
+        )
+        let accept = json(
+            "{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}"
+        )
+        expectRejects("wrong device nonce") {
+            _ = try ProtocolParser.parseVerifiedSessionAccept(
+                accept,
+                primaryKey: key,
+                macInstallID: macID,
+                deviceInstallID: deviceID,
+                macNonce: macNonce,
+                deviceNonce: Data(repeating: 0x44, count: 32)
+            )
+        }
     }
 
     static func receipt(_ id: String) {
