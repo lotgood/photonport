@@ -126,48 +126,46 @@ class MatrixSourceBindingTest(unittest.TestCase):
             ["session-v3:wifi-psk"],
         )
     def test_negative_consumer_receipt_accepts_exact_typed_rejection(self):
-        self.assertTrue(
+        self.assertEqual(
             MATRIX.exact_negative_consumer_receipt(
                 b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\n",
                 "bad-length-prefix",
-            )
+                "mac-protocol-parser",
+            ),
+            {"id": "bad-length-prefix", "stage": "mac-protocol-parser", "outcome": "rejected"},
         )
 
-    def test_negative_consumer_receipt_rejects_missing_receipt(self):
-        self.assertFalse(MATRIX.exact_negative_consumer_receipt(b"production rejected frame\n", "bad-length-prefix"))
-
-    def test_negative_consumer_receipt_rejects_forged_receipt(self):
-        self.assertFalse(
-            MATRIX.exact_negative_consumer_receipt(
-                b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=accepted\n",
-                "bad-length-prefix",
-            )
-        )
-
-    def test_negative_consumer_receipt_rejects_duplicate_receipts(self):
+    def test_negative_consumer_receipt_rejects_missing_duplicate_extra_or_malformed_receipts(self):
         receipt = b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\n"
-        self.assertFalse(MATRIX.exact_negative_consumer_receipt(receipt + receipt, "bad-length-prefix"))
+        for stdout in (
+            b"production rejected frame\n",
+            receipt + receipt,
+            receipt + b"VECTOR_RECEIPT consumer oversize-frame stage=mac-protocol-parser outcome=rejected\n",
+            b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected extra\n",
+            receipt + b"\xff",
+        ):
+            self.assertIsNone(
+                MATRIX.exact_negative_consumer_receipt(stdout, "bad-length-prefix", "mac-protocol-parser")
+            )
 
-    def test_negative_consumer_receipt_rejects_mismatched_id(self):
-        self.assertFalse(
-            MATRIX.exact_negative_consumer_receipt(
-                b"VECTOR_RECEIPT consumer oversize-frame stage=mac-protocol-parser outcome=rejected\n",
-                "bad-length-prefix",
+    def test_negative_consumer_receipt_rejects_wrong_id_outcome_or_globally_allowed_wrong_stage(self):
+        for stdout in (
+            b"VECTOR_RECEIPT consumer oversize-frame stage=mac-protocol-parser outcome=rejected\n",
+            b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=accepted\n",
+            b"VECTOR_RECEIPT consumer bad-length-prefix stage=session-wire-parser outcome=rejected\n",
+        ):
+            self.assertIsNone(
+                MATRIX.exact_negative_consumer_receipt(stdout, "bad-length-prefix", "mac-protocol-parser")
             )
-        )
 
-    def test_negative_consumer_receipt_rejects_unknown_stage_and_malformed_utf8(self):
-        self.assertFalse(
-            MATRIX.exact_negative_consumer_receipt(
-                b"VECTOR_RECEIPT consumer bad-length-prefix stage=untrusted-helper outcome=rejected\n",
-                "bad-length-prefix",
-            )
+    def test_negative_stage_mapping_is_id_specific(self):
+        self.assertEqual(
+            MATRIX.negative_stage_for_case({"id": "bad-length-prefix"}),
+            "mac-protocol-parser",
         )
-        self.assertFalse(
-            MATRIX.exact_negative_consumer_receipt(
-                b"VECTOR_RECEIPT consumer bad-length-prefix stage=mac-protocol-parser outcome=rejected\xff\n",
-                "bad-length-prefix",
-            )
+        self.assertEqual(
+            MATRIX.negative_stage_for_case({"id": "usb-record-tag-mutation"}),
+            "usb-record-state",
         )
 
 
