@@ -12,4 +12,6 @@ xcrun swiftc -parse-as-library -module-cache-path "$TMP/module-cache" \
   Mac/ScrollEventCoalescer.swift Mac/ProtocolParser.swift Mac/Pairing.swift Mac/Log.swift Tests/MacProtocolAdversarialHarness.swift \
   -o "$TMP/mac-protocol-adversarial"
 "$TMP/mac-protocol-adversarial" "$@"
-[[ $# -eq 0 ]] && print -r -- "mac protocol adversarial harness passed"
+if [[ $# -eq 0 ]]; then
+  print -r -- "mac protocol adversarial harness passed"
+fi
