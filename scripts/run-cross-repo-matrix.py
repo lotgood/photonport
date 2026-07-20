@@ -13,13 +13,6 @@ VERIFIER = Path(__file__).resolve().with_name("verify-cross-repo-compatibility.p
 EXPECTED_PIN_KEYS = {"schemaVersion", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"}
 SWIFT_EXECUTABLE_CASE_IDS = {"duplicate-json-key", "invalid-utf8-json", "bad-length-prefix", "oversize-frame"}
 MAC_HARNESS_CASE_IDS = {"bad-length-prefix", "oversize-frame", "duplicate-json-key", "sensitive-reason-code"}
-IOS_HARNESS_CASE_IDS = {
-    "unicode-lone-surrogate",
-    "secure-store-not-device-only",
-    "video-random-access-telemetry-mismatch",
-    "primary-liveness-deadline",
-    "invalid-primary-traffic-no-refresh",
-}
 NEGATIVE_FRAME = b"\x00\x00\x00\x00"
 
 
@@ -319,6 +312,17 @@ def vector_specific_coverage(vector_ids, evidence):
     return covered
 
 
+def exact_vector_receipts(stdout, expected_ids, receipt_kind):
+    prefix = "VECTOR_RECEIPT " + receipt_kind + " "
+    found = set()
+    for line in stdout.splitlines():
+        if line.startswith(prefix):
+            case_id = line[len(prefix):]
+            if case_id in expected_ids:
+                found.add(case_id)
+    return found
+
+
 
 
 
@@ -361,8 +365,6 @@ def run_ios_harness_cases(ios, case_ids, logs, receipts):
     failed = []
     executions = {}
     for case_id in case_ids:
-        if case_id not in IOS_HARNESS_CASE_IDS:
-            continue
         completed, receipt = run(
             ["./scripts/test-receiver-adversarial.sh", case_id],
             ios, logs, "ios-harness-consumer-" + case_id
@@ -377,7 +379,7 @@ def run_ios_harness_cases(ios, case_ids, logs, receipts):
 
 
 
-def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids):
+def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids, positive_ids):
     commands = [
         (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial"),
         (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors"),
@@ -419,6 +421,16 @@ def run_production_suites(mac, ios, protocol, logs, receipts, negative_ids):
         if completed.returncode == 0 and label == "suite-protocol-negative-vectors":
             for case_id in negative_ids:
                 evidence.setdefault(case_id, set()).add("producer")
+        if completed.returncode == 0 and label == "suite-protocol-positive-vectors":
+            for case_id in positive_ids:
+                evidence.setdefault(case_id, set()).add("producer")
+        if completed.returncode == 0 and label in {
+            "suite-mac-session-vectors",
+            "suite-ios-session-vectors",
+            "suite-ios-pairing-vectors",
+        }:
+            for case_id in exact_vector_receipts(completed.stdout, set(positive_ids), "consumer"):
+                evidence.setdefault(case_id, set()).add("consumer")
     return results, evidence
 
 
@@ -514,7 +526,9 @@ def main():
 
     negative_ids = load_negative_case_ids(protocol)
     positive_ids = load_positive_case_ids(protocol)
-    suite_results, vector_evidence = run_production_suites(mac, ios, protocol, logs, receipts, negative_ids)
+    suite_results, vector_evidence = run_production_suites(
+        mac, ios, protocol, logs, receipts, negative_ids, positive_ids
+    )
     for label, passed in suite_results.items():
         if not passed:
             failures.append(label + " failed")
