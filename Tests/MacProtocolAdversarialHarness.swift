@@ -395,8 +395,8 @@ struct MacProtocolAdversarialHarness {
         func snapshot(_ state: String, _ inputs: [Data], _ effects: [[String: String]]) -> String {
             let value: [String: Any] = [
                 "reducer": invocation.reducer,
-                "stage": invocation.stage,
                 "state": state,
+                "time": 1,
                 "acceptedInputs": inputs.map(sha256),
                 "effects": effects,
             ]
@@ -405,19 +405,11 @@ struct MacProtocolAdversarialHarness {
         }
         let setupEffect = ["type": "accepted-event", "role": "setup", "inputSha256": sha256(invocation.setup)]
         let baselineEffect = ["type": "accepted-event", "role": "baseline", "inputSha256": sha256(invocation.baseline)]
-        let rejectionEffect = [
-            "type": "rejected-event",
-            "role": "mutation",
-            "inputSha256": sha256(invocation.mutation),
-            "code": String(describing: rejection.code),
-        ]
         let initial = snapshot("fresh:setup", [invocation.setup], [setupEffect])
         let baseline = snapshot("fresh:setup:baseline", [invocation.setup, invocation.baseline],
                                 [setupEffect, baselineEffect])
-        let final = snapshot("fresh:setup:baseline", [invocation.setup, invocation.baseline],
-                             [setupEffect, baselineEffect, rejectionEffect])
-        let context = sha256(Data("\(invocation.reducer)\u{0}\(invocation.stage)".utf8))
-        print("VECTOR_RECEIPT v3 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) transcriptSha256=\(sha256(invocation.transcript)) contextSha256=\(context) initialSnapshotSha256=\(initial) baselineSnapshotSha256=\(baseline) finalSnapshotSha256=\(final) effectSha256=\(sha256(try! JSONSerialization.data(withJSONObject: rejectionEffect, options: [.sortedKeys]))) outcome=reject_and_fail_closed")
+        let baselineEffects = try! JSONSerialization.data(withJSONObject: [baselineEffect], options: [.sortedKeys])
+        print("VECTOR_RECEIPT v3 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) transcriptSha256=\(sha256(invocation.transcript)) initialSnapshotSha256=\(initial) baselineSnapshotSha256=\(baseline) finalSnapshotSha256=\(baseline) baselineEffectsSha256=\(sha256(baselineEffects)) outcome=reject_and_fail_closed")
     }
     static func receipt(_ id: String) {
         precondition(!id.isEmpty)

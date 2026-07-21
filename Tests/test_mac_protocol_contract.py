@@ -243,9 +243,9 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
         expected = {
             "schemaVersion": 1,
-            "protocolCommit": "2811a5e75f330f2ae6823c4ff31508a95f7c5ad4",
+            "protocolCommit": "d5a95ed98f7568bef61556c218082b799b3b9160",
             "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-            "normativeManifestDigest": "6c879394a8ab60fb945ab76a2e5863c8d7a24f78e996995d11cf9470d36c4601",
+            "normativeManifestDigest": "c62b190ae5d24c22b8a4383435f588bcd7bd52de80cf346ee9c9e88598bbf03c",
         }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         self.assertEqual(pin, expected)
@@ -344,15 +344,19 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_mac_rejection_receipts_are_observed_operation_evidence_v3(self):
         self.assertIn("VECTOR_RECEIPT v3", HARNESS)
         for field in (
-            "transcriptSha256=", "contextSha256=", "initialSnapshotSha256=",
-            "baselineSnapshotSha256=", "finalSnapshotSha256=", "effectSha256=",
+            "transcriptSha256=", "initialSnapshotSha256=",
+            "baselineSnapshotSha256=", "finalSnapshotSha256=",
+            "baselineEffectsSha256=",
         ):
             self.assertIn(field, HARNESS)
+        self.assertNotIn("contextSha256", HARNESS)
+        self.assertNotIn("effectSha256", HARNESS)
         self.assertNotIn("MacProtocolRecipe", HARNESS)
         self.assertNotIn("mutationSha256=", HARNESS)
         self.assertIn('Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer"]', HARNESS)
         self.assertIn('Self.isClosedTranscript(operations)', HARNESS)
         self.assertIn('sha256(caseData) == arguments[3]', HARNESS)
+        self.assertIn('let baselineEffects = try! JSONSerialization.data(withJSONObject: [baselineEffect], options: [.sortedKeys])', HARNESS)
 
 
 if __name__ == "__main__":

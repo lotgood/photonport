@@ -61,24 +61,32 @@ def run_matrix(mac, ios, protocol, expected, output):
 
 class MatrixReceiptParserTest(unittest.TestCase):
     def setUp(self):
-        setup, baseline, mutation = b"setup", b"baseline", b"mutation"
-        setup_hash, baseline_hash = MATRIX.digest(setup), MATRIX.digest(baseline)
+        reducer = "PairingExchangeState.receiveOpening"
+        setup = {
+            "reducer": reducer, "attemptID": "mac-case:setup", "deviceInstallID": "mac-case:setup",
+            "now": 2, "openingVersion": 3, "macPublicKeyBase64": "AAECAwQFBgcICQoLDA0ODw==",
+            "macNonceBase64": "AAECAwQFBgcICQoLDA0ODw==",
+            "deviceNonceBase64": "AAECAwQFBgcICQoLDA0ODw==", "fixtureID": "mac-case:setup",
+        }
+        baseline = {**setup, "attemptID": "mac-case:baseline", "deviceInstallID": "mac-case:baseline", "fixtureID": "mac-case:baseline"}
+        mutation = {**setup, "attemptID": "mac-case:mutation", "deviceInstallID": "mac-case:mutation", "now": 0, "fixtureID": "mac-case:mutation"}
+        setup_hash, baseline_hash = MATRIX.digest(MATRIX.canonical_bytes(setup)), MATRIX.digest(MATRIX.canonical_bytes(baseline))
         ownership = {"consumerPlatform": "mac-client", "direction": "ios-to-mac", "stage": "session-init-response"}
-        initial = {"reducer": "mac-protocol-consumer", "state": "fresh:setup", "time": 1, "acceptedInputs": [setup_hash], "effects": [{"type": "accepted-event", "role": "setup", "inputSha256": setup_hash}]}
-        baseline_snapshot = {"reducer": "mac-protocol-consumer", "state": "fresh:setup:baseline", "time": 1, "acceptedInputs": [setup_hash, baseline_hash], "effects": initial["effects"] + [{"type": "accepted-event", "role": "baseline", "inputSha256": baseline_hash}]}
+        initial = {"reducer": reducer, "state": "fresh:setup", "time": 1, "acceptedInputs": [setup_hash], "effects": [{"type": "accepted-event", "role": "setup", "inputSha256": setup_hash}]}
+        baseline_snapshot = {"reducer": reducer, "state": "fresh:setup:baseline", "time": 1, "acceptedInputs": [setup_hash, baseline_hash], "effects": initial["effects"] + [{"type": "accepted-event", "role": "baseline", "inputSha256": baseline_hash}]}
         operations = [
             {"op": "initialize", "state": "fresh", "time": 0},
-            {"op": "consume", "role": "setup", "inputBase64": "c2V0dXA="},
+            {"op": "consume", "role": "setup", "fixture": setup},
             {"op": "advance-time", "to": 1},
             {"op": "clone-checkpoint", "name": "pre-baseline"},
-            {"op": "consume", "role": "baseline", "inputBase64": "YmFzZWxpbmU="},
+            {"op": "consume", "role": "baseline", "fixture": baseline},
             {"op": "assert-accepted"},
             {"op": "clone-checkpoint", "name": "post-baseline"},
-            {"op": "consume", "role": "mutation", "inputBase64": "bXV0YXRpb24="},
+            {"op": "consume", "role": "mutation", "fixture": mutation},
             {"op": "assert-rejected", "checkpoint": "post-baseline"},
         ]
         self.cases = [{
-            "id": "mac-case", "ownership": ownership, "reducer": "mac-protocol-consumer", "message": "session",
+            "id": "mac-case", "ownership": ownership, "reducer": reducer, "message": "session",
             "outcome": "reject_and_fail_closed", "operations": operations,
             "expected": {
                 "transcriptSha256": MATRIX.digest(MATRIX.canonical_bytes(operations)),
@@ -101,16 +109,30 @@ class MatrixReceiptParserTest(unittest.TestCase):
         receipts = MATRIX.consumer_vector_receipts(self.receipt(), "mac-client", self.cases)
         self.assertEqual(receipts["mac-case"]["transcriptSha256"], self.cases[0]["expected"]["transcriptSha256"])
 
-    def test_rejects_setup_omission_reorder_mutation_alias_and_baseline_byte_drift(self):
+    def test_rejects_setup_omission_reorder_mutation_alias_and_baseline_fixture_drift(self):
         for replacement in (
             self.cases[0]["operations"][1:],
             self.cases[0]["operations"][:1] + [self.cases[0]["operations"][2], self.cases[0]["operations"][1]] + self.cases[0]["operations"][3:],
-            self.cases[0]["operations"][:7] + [{"op": "consume", "role": "mutation", "inputBase64": "YmFzZWxpbmU="}] + self.cases[0]["operations"][8:],
-            self.cases[0]["operations"][:4] + [{"op": "consume", "role": "baseline", "inputBase64": "Ynl0ZS1kcmlmdA=="}] + self.cases[0]["operations"][5:],
+            self.cases[0]["operations"][:7] + [{"op": "consume", "role": "mutation", "fixture": self.cases[0]["operations"][4]["fixture"]}] + self.cases[0]["operations"][8:],
+            self.cases[0]["operations"][:4] + [{"op": "consume", "role": "baseline", "fixture": {**self.cases[0]["operations"][4]["fixture"], "fixtureID": "byte-drift"}}] + self.cases[0]["operations"][5:],
         ):
             case = dict(self.cases[0])
             case["operations"] = replacement
             with self.subTest(operations=replacement):
+                with self.assertRaises(ValueError):
+                    MATRIX.derived_case_hashes(case)
+    def test_rejects_reducer_specific_fixture_shape_corruption(self):
+        setup = self.cases[0]["operations"][1]["fixture"]
+        for fixture in (
+            {key: value for key, value in setup.items() if key != "fixtureID"},
+            {**setup, "unexpected": "field"},
+            {**setup, "reducer": "RuntimeFrameReducer.reduce"},
+        ):
+            case = dict(self.cases[0])
+            case["operations"] = self.cases[0]["operations"][:1] + [
+                {"op": "consume", "role": "setup", "fixture": fixture},
+            ] + self.cases[0]["operations"][2:]
+            with self.subTest(fixture=fixture):
                 with self.assertRaises(ValueError):
                     MATRIX.derived_case_hashes(case)
 

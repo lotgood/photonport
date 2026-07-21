@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run and freeze the deterministic M3 cross-repo production interop matrix."""
 import argparse
-import base64
 import copy
 import hashlib
 import json
@@ -15,6 +14,24 @@ VERIFIER = Path(__file__).resolve().with_name("verify-cross-repo-compatibility.p
 EXPECTED_PIN_KEYS = {"schemaVersion", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"}
 NEGATIVE_FRAME = b"\x00\x00\x00\x00"
 VECTOR_RECEIPT_PREFIX = "VECTOR_RECEIPT "
+FIXTURE_FIELDS = {
+    "PairingExchangeState.receiveOpening": ("attemptID", "deviceInstallID", "now", "openingVersion", "macPublicKeyBase64", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "SessionAdmissionReducer.reduce": ("messageKind", "version", "sessionID", "macInstallID", "deviceInstallID", "macNonceBase64", "deviceNonceBase64", "proofBase64", "fixtureID"),
+    "SessionAdmissionReducer.reduceSessionOpen": ("version", "sessionID", "macInstallID", "deviceInstallID", "macNonceBase64", "deviceNonceBase64", "primaryProofBase64", "fixtureID"),
+    "SessionAdmissionReducer.reduceChannelOpen": ("version", "sessionID", "channel", "purpose", "nonceBase64", "proofBase64", "fixtureID"),
+    "ProtocolBuildPinReducer.reduce": ("pinVersion", "compatibilityDigest", "expectedCompatibilityDigest", "fixtureID"),
+    "RuntimeFrameReducer.reduce": ("headerBase64", "payloadBase64", "contextBase64", "frameType", "declaredLength", "cap", "fixtureID"),
+    "RuntimeMediaReducer.reduce": ("frameBase64", "codec", "width", "height", "isKeyframe", "supportsHDR", "cap", "fixtureID"),
+    "PrimaryLivenessReducer.reduce": ("event", "now", "lastAuthenticatedAt", "leaseSeconds", "fixtureID"),
+    "CredentialStoreReducer.reduce": ("credentialID", "accessibility", "synchronizable", "status", "policy", "fixtureID"),
+    "ManagedUSBPrefaceReducer.consumeMagic": ("magicBase64", "deadline", "now", "deviceInstallID", "purpose", "tokenBase64", "fixtureID"),
+    "ManagedUSBPrefaceReducer.bindInit": ("version", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "credentialBase64", "proofBase64", "now", "fixtureID"),
+    "ManagedUSBPrefaceReducer.bindFinish": ("version", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "bindingBase64", "proofBase64", "now", "fixtureID"),
+    "ManagedUSBKeyScheduleReducer.primary": ("bindingBase64", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "ManagedUSBKeyScheduleReducer.audio": ("bindingBase64", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "ManagedUSBKeyScheduleReducer.wifiRejected": ("transport", "purpose", "bindingBase64", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "ManagedUSBRecordReducer.consume": ("recordState", "bodyBase64", "cap", "purpose", "sequence", "nonceBase64", "fixtureID"),
+}
 
 
 def digest(data):
@@ -101,6 +118,16 @@ def canonical_bytes(value):
         raise ValueError("value is not canonicalizable") from exc
 
 
+def typed_fixture_hash(reducer, fixture):
+    """Validate a closed reducer-specific fixture and hash its canonical input."""
+    fields = FIXTURE_FIELDS.get(reducer)
+    if not isinstance(fixture, dict) or fields is None or set(fixture) != {"reducer", *fields}:
+        raise ValueError("transcript typed fixture fields are invalid")
+    if fixture["reducer"] != reducer:
+        raise ValueError("transcript typed fixture reducer is invalid")
+    return digest(canonical_bytes(fixture))
+
+
 def transcript_snapshot(reducer, state, time, accepted, effects):
     return {
         "reducer": reducer,
@@ -123,7 +150,7 @@ def derived_case_hashes(case):
         raise ValueError("transcript operation order is invalid")
     reducer, state, time, accepted, effects, checkpoints, last = case["reducer"], None, None, [], [], {}, None
     initial = baseline = final = None
-    allowed = {"op", "state", "time", "role", "inputBase64", "to", "name", "checkpoint"}
+    allowed = {"op", "state", "time", "role", "fixture", "to", "name", "checkpoint"}
     for index, operation in enumerate(operations):
         if not isinstance(operation, dict) or set(operation) - allowed:
             raise ValueError("transcript operation fields are invalid")
@@ -142,15 +169,9 @@ def derived_case_hashes(case):
                 raise ValueError("transcript checkpoint is invalid")
             checkpoints[operation["name"]] = transcript_snapshot(reducer, state, time, accepted, effects)
         elif op == "consume":
-            if set(operation) != {"op", "role", "inputBase64"} or operation["role"] not in {"setup", "baseline", "mutation"}:
+            if set(operation) != {"op", "role", "fixture"} or operation["role"] not in {"setup", "baseline", "mutation"}:
                 raise ValueError("transcript consume is invalid")
-            try:
-                payload = base64.b64decode(operation["inputBase64"], validate=True)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("transcript input is not strict base64") from exc
-            if not payload:
-                raise ValueError("transcript input is empty")
-            input_hash = digest(payload)
+            input_hash = typed_fixture_hash(reducer, operation["fixture"])
             role = operation["role"]
             if role == "mutation":
                 if len(accepted) != 2 or input_hash in accepted:
