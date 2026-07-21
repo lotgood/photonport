@@ -646,7 +646,7 @@ def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, nega
             protocol,
             [
                 sys.executable, "-m", "unittest",
-                "tests.test_protocol.ProtocolTests.test_every_negative_vector_is_exercised",
+                "tests.test_protocol.ProtocolTests.test_every_negative_vector_executes_in_its_reference_reducer",
                 "-v",
             ],
             "suite-protocol-negative-vectors",
