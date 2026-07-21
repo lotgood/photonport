@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run and freeze the deterministic M3 cross-repo production interop matrix."""
 import argparse
+import base64
+import copy
 import hashlib
 import json
 import os
@@ -92,94 +94,147 @@ def run(argv, cwd, log_dir, label, *, stdin=None):
     }
 
 
-def recipe_bytes(recipe):
-    import base64
-    if not isinstance(recipe, dict):
-        raise ValueError("recipe is not an object")
-    if set(recipe) == {"tag", "bytesBase64"} and recipe["tag"] == "raw-framed-bytes-v1":
-        return base64.b64decode(recipe["bytesBase64"], validate=True)
-    if set(recipe) == {"tag", "events"} and recipe["tag"] == "stateful-event-sequence-v1":
-        events = recipe["events"]
-        if not isinstance(events, list) or len(events) < 2:
-            raise ValueError("stateful recipe has no setup and baseline")
-        baseline = events[-1]
-        if not isinstance(baseline, dict) or set(baseline) != {"kind", "bytesBase64"} or baseline["kind"] != "baseline":
-            raise ValueError("stateful recipe baseline is not final")
-        setups = events[:-1]
-        if any(not isinstance(event, dict) or set(event) != {"kind", "bytesBase64"} or event["kind"] != "setup" for event in setups):
-            raise ValueError("stateful recipe setup is missing, reordered, or malformed")
-        decoded = [base64.b64decode(event["bytesBase64"], validate=True) for event in events]
-        return decoded[-1]
-    # Retain legacy decoding only for Mac-owned unit fixtures.
-    if set(recipe) != {"tag", "value"}:
-        raise ValueError("recipe fields are not exact")
-    tag, value = recipe["tag"], recipe["value"]
-    if tag == "canonical-json-v1" and isinstance(value, dict):
+def canonical_bytes(value):
+    try:
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    if tag == "base64-bytes-v1" and isinstance(value, str):
-        return base64.b64decode(value, validate=True)
-    if tag == "hex-bytes-v1" and isinstance(value, str) and len(value) % 2 == 0:
-        return bytes.fromhex(value)
-    raise ValueError("unsupported recipe tag or value")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("value is not canonicalizable") from exc
+
+
+def transcript_snapshot(reducer, state, time, accepted, effects):
+    return {
+        "reducer": reducer,
+        "state": state,
+        "time": time,
+        "acceptedInputs": list(accepted),
+        "effects": copy.deepcopy(effects),
+    }
+
 
 def derived_case_hashes(case):
-    expected = case["expected"]
-    context = expected["context"]
+    """Execute the Protocol operation transcript without consulting expected effects."""
+    operations = case.get("operations")
+    order = [
+        "initialize", "consume", "advance-time", "clone-checkpoint",
+        "consume", "assert-accepted", "clone-checkpoint", "consume",
+        "assert-rejected",
+    ]
+    if not isinstance(operations, list) or [item.get("op") if isinstance(item, dict) else None for item in operations] != order:
+        raise ValueError("transcript operation order is invalid")
+    reducer, state, time, accepted, effects, checkpoints, last = case["reducer"], None, None, [], [], {}, None
+    initial = baseline = final = None
+    allowed = {"op", "state", "time", "role", "inputBase64", "to", "name", "checkpoint"}
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, dict) or set(operation) - allowed:
+            raise ValueError("transcript operation fields are invalid")
+        op = operation["op"]
+        if op == "initialize":
+            if set(operation) != {"op", "state", "time"} or state is not None or not isinstance(operation["state"], str) or not operation["state"] or operation["time"] != 0:
+                raise ValueError("transcript initialization is invalid")
+            state, time = operation["state"], 0
+        elif op == "advance-time":
+            if set(operation) != {"op", "to"} or not isinstance(operation["to"], int) or isinstance(operation["to"], bool) or operation["to"] <= time:
+                raise ValueError("transcript time advance is invalid")
+            time = operation["to"]
+            initial = transcript_snapshot(reducer, state, time, accepted, effects)
+        elif op == "clone-checkpoint":
+            if set(operation) != {"op", "name"} or operation["name"] not in {"pre-baseline", "post-baseline"} or operation["name"] in checkpoints:
+                raise ValueError("transcript checkpoint is invalid")
+            checkpoints[operation["name"]] = transcript_snapshot(reducer, state, time, accepted, effects)
+        elif op == "consume":
+            if set(operation) != {"op", "role", "inputBase64"} or operation["role"] not in {"setup", "baseline", "mutation"}:
+                raise ValueError("transcript consume is invalid")
+            try:
+                payload = base64.b64decode(operation["inputBase64"], validate=True)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("transcript input is not strict base64") from exc
+            if not payload:
+                raise ValueError("transcript input is empty")
+            input_hash = digest(payload)
+            role = operation["role"]
+            if role == "mutation":
+                if len(accepted) != 2 or input_hash in accepted:
+                    raise ValueError("mutation aliases setup or baseline")
+                last = "rejected"
+                final = transcript_snapshot(reducer, state, time, accepted, effects)
+            else:
+                if (role == "setup" and accepted) or (role == "baseline" and len(accepted) != 1):
+                    raise ValueError("transcript setup/baseline sequence is invalid")
+                accepted.append(input_hash)
+                state += ":" + role
+                effects.append({"type": "accepted-event", "role": role, "inputSha256": input_hash})
+                last = "accepted"
+                if role == "baseline":
+                    baseline = transcript_snapshot(reducer, state, time, accepted, effects)
+        elif op == "assert-accepted":
+            if set(operation) != {"op"} or last != "accepted":
+                raise ValueError("transcript baseline acceptance is invalid")
+        elif op == "assert-rejected":
+            if set(operation) != {"op", "checkpoint"} or operation["checkpoint"] != "post-baseline" or last != "rejected":
+                raise ValueError("transcript mutation rejection is invalid")
+            if checkpoints.get("pre-baseline") is None or checkpoints.get("post-baseline") is None or final != checkpoints["post-baseline"]:
+                raise ValueError("transcript rejection changed state")
+        else:
+            raise ValueError("transcript operation is unsupported")
+    if initial is None or baseline is None or final is None:
+        raise ValueError("transcript snapshots are incomplete")
     derived = {
-        "baselineSha256": digest(recipe_bytes(case["baseline"])),
-        "inputSha256": digest(recipe_bytes(case["mutation"])),
-        "contextSha256": digest(json.dumps(context, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")),
-        "initialEffectSha256": expected["initialEffectSha256"],
-        "finalEffectSha256": expected["finalEffectSha256"],
+        "transcriptSha256": digest(canonical_bytes(operations)),
+        "initialSnapshotSha256": digest(canonical_bytes(initial)),
+        "baselineSnapshotSha256": digest(canonical_bytes(baseline)),
+        "finalSnapshotSha256": digest(canonical_bytes(final)),
+        "baselineEffectsSha256": digest(canonical_bytes(baseline["effects"][-1:])),
     }
-    if any(expected.get(field) != value for field, value in derived.items()):
-        raise ValueError("Protocol digest echo drift: " + case["id"])
+    expected = case.get("expected")
+    if not isinstance(expected, dict) or set(expected) != {"transcriptSha256", "initialSnapshot", "baselineSnapshot", "finalSnapshot", "baselineEffects"}:
+        raise ValueError("Protocol expected transcript fields are invalid")
+    if (
+        expected["transcriptSha256"] != derived["transcriptSha256"]
+        or expected["initialSnapshot"] != initial
+        or expected["baselineSnapshot"] != baseline
+        or expected["finalSnapshot"] != final
+        or expected["baselineEffects"] != baseline["effects"][-1:]
+    ):
+        raise ValueError("Protocol transcript expectation drift: " + case["id"])
     return derived
 
+
 def consumer_vector_receipts(stdout, platform, cases):
-    """Parse exact v2 consumer receipts bound to closed Protocol recipes."""
+    """Parse exact v3 observations and independently compare them to the local model."""
     try:
         lines = stdout.decode("utf-8", "strict").splitlines()
-    except UnicodeDecodeError:
-        raise ValueError("consumer suite output is not valid UTF-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("consumer suite output is not valid UTF-8") from exc
     expected = {case["id"]: case for case in cases if case["ownership"]["consumerPlatform"] == platform}
     receipts = {}
     for line in lines:
         if not line.startswith(VECTOR_RECEIPT_PREFIX):
             continue
         fields = line.split(" ")
-        receipt_fields = ("caseId", "owner", "reducer", "stage", "baselineSha256", "inputSha256", "contextSha256", "initialEffectSha256", "finalEffectSha256", "outcome")
-        if len(fields) != len(receipt_fields) + 2 or fields[0:2] != ["VECTOR_RECEIPT", "v2"]:
-            raise ValueError("malformed v2 consumer receipt: " + line)
+        receipt_fields = ("caseId", "owner", "reducer", "stage", "transcriptSha256", "initialSnapshotSha256", "baselineSnapshotSha256", "finalSnapshotSha256", "baselineEffectsSha256", "outcome")
+        if len(fields) != len(receipt_fields) + 2 or fields[0:2] != ["VECTOR_RECEIPT", "v3"]:
+            raise ValueError("malformed v3 consumer receipt: " + line)
         pairs = {}
         for expected_field, field in zip(receipt_fields, fields[2:]):
             key, separator, value = field.partition("=")
             if key != expected_field or not separator or not value:
-                raise ValueError("v2 consumer receipt fields are not exact: " + line)
+                raise ValueError("v3 consumer receipt fields are not exact: " + line)
             pairs[key] = value
         case_id = pairs["caseId"]
         if case_id in receipts:
-            raise ValueError("duplicate consumer receipt ID: " + case_id)
+            raise ValueError("duplicate or aliased consumer receipt ID: " + case_id)
         case = expected.get(case_id)
         if case is None:
             raise ValueError("consumer receipt is not owned by " + platform + ": " + case_id)
         ownership = case["ownership"]
-        if pairs["owner"] != platform or pairs["stage"] != ownership["stage"]:
-            raise ValueError("consumer receipt owner/stage does not match metadata: " + case_id)
-        if pairs["reducer"] != case["reducer"]:
-            raise ValueError("consumer receipt reducer does not match closed catalog: " + case_id)
+        if pairs["owner"] != platform or pairs["stage"] != ownership["stage"] or pairs["reducer"] != case["reducer"]:
+            raise ValueError("consumer receipt symbol/owner/stage does not match transcript: " + case_id)
         if pairs["outcome"] != "reject_and_fail_closed":
             raise ValueError("consumer receipt outcome is not fail-closed: " + case_id)
         derived = derived_case_hashes(case)
         if any(pairs[field] != value for field, value in derived.items()):
-            raise ValueError("consumer receipt digest does not match derived recipe: " + case_id)
-        receipts[case_id] = {
-            "id": case_id,
-            "ownership": ownership,
-            "reducer": case["reducer"],
-            "expected": case["expected"],
-            **derived,
-        }
+            raise ValueError("consumer observation does not match independently derived transcript: " + case_id)
+        receipts[case_id] = {"id": case_id, "ownership": ownership, "reducer": case["reducer"], **derived}
     return receipts
 
 
@@ -444,20 +499,22 @@ def load_negative_cases(protocol_root):
             or ownership.get("direction") not in allowed_directions
             or ownership.get("stage") not in allowed_stages
             or not isinstance(expected, dict)
-            or set(expected) != {"context", "baselineSha256", "inputSha256", "contextSha256", "initialEffectSha256", "finalEffectSha256"}
+            or set(expected) != {"transcriptSha256", "initialSnapshot", "baselineSnapshot", "finalSnapshot", "baselineEffects"}
             or not isinstance(case.get("reducer"), str) or not case["reducer"]
+            or not isinstance(case.get("operations"), list)
         ):
             raise SystemExit("FAIL_CLOSED: negative vector case fields are invalid: " + case_id)
         try:
             if (
-                not isinstance(expected["context"], dict)
-                or expected["context"].get("reducer", {}).get("symbol") != case["reducer"]
-                or any(not isinstance(expected[field], str) or len(expected[field]) != 64 or any(c not in "0123456789abcdef" for c in expected[field]) for field in ("baselineSha256", "inputSha256", "contextSha256", "initialEffectSha256", "finalEffectSha256"))
+                not isinstance(expected["transcriptSha256"], str)
+                or len(expected["transcriptSha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in expected["transcriptSha256"])
+                or any(not isinstance(expected[field], (dict, list)) or not expected[field] for field in ("initialSnapshot", "baselineSnapshot", "finalSnapshot", "baselineEffects"))
             ):
-                raise ValueError("expected recipe digest fields are invalid")
+                raise ValueError("expected transcript fields are invalid")
             derived_case_hashes(case)
         except (TypeError, ValueError) as exc:
-            raise SystemExit("FAIL_CLOSED: negative vector recipe is invalid: " + case_id + ": " + str(exc)) from exc
+            raise SystemExit("FAIL_CLOSED: negative vector transcript is invalid: " + case_id + ": " + str(exc)) from exc
         identifiers.add(case_id)
         cases.append(case)
     return cases

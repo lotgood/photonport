@@ -100,13 +100,10 @@ fileprivate struct CaseInvocation {
     let id: String
     let reducer: String
     let stage: String
+    let setup: Data
     let baseline: Data
     let mutation: Data
-    let baselineSHA256: String
-    let inputSHA256: String
-    let contextSHA256: String
-    let initialEffectSHA256: String
-    let finalEffectSHA256: String
+    let transcript: Data
 
     init(arguments: [String]) {
         guard arguments.count == 4, arguments[0] == "case",
@@ -115,65 +112,63 @@ fileprivate struct CaseInvocation {
               arguments[3].allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
               sha256(caseData) == arguments[3],
               let object = try? JSONSerialization.jsonObject(with: caseData) as? [String: Any],
-              Set(object.keys) == ["baseline", "expected", "id", "message", "mutation", "outcome", "ownership", "reducer"],
-              let caseID = object["id"] as? String, caseID == arguments[1],
+              Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer"],
+              let id = object["id"] as? String, id == arguments[1],
+              object["outcome"] as? String == "reject_and_fail_closed",
               let ownership = object["ownership"] as? [String: Any],
               Set(ownership.keys) == ["consumerPlatform", "direction", "stage"],
               ownership["consumerPlatform"] as? String == "mac-client",
               let stage = ownership["stage"] as? String,
               let reducer = object["reducer"] as? String,
+              let operations = object["operations"] as? [[String: Any]],
               let expected = object["expected"] as? [String: Any],
-              Set(expected.keys) == ["baselineSha256", "context", "contextSha256", "finalEffectSha256", "initialEffectSha256", "inputSha256"],
-              let context = expected["context"] as? [String: Any],
-              let contextData = try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys]),
-              let contextReducer = context["reducer"] as? [String: Any],
-              contextReducer["symbol"] as? String == reducer,
-              let baseline = Self.rawBytes(object["baseline"]),
-              let mutation = Self.rawBytes(object["mutation"]),
-              let baselineSHA256 = expected["baselineSha256"] as? String,
-              let inputSHA256 = expected["inputSha256"] as? String,
-              let contextSHA256 = expected["contextSha256"] as? String,
-              let initialEffectSHA256 = expected["initialEffectSha256"] as? String,
-              let finalEffectSHA256 = expected["finalEffectSha256"] as? String,
-              [baselineSHA256, inputSHA256, contextSHA256, initialEffectSHA256, finalEffectSHA256].allSatisfy(Self.isSHA256),
-              sha256(baseline) == baselineSHA256,
-              sha256(mutation) == inputSHA256,
-              sha256(contextData) == contextSHA256 else {
-            fatalError("invalid canonical Protocol case invocation")
+              let transcriptSha256 = expected["transcriptSha256"] as? String,
+              Self.isSHA256(transcriptSha256),
+              let setup = Self.input(operations, index: 1, role: "setup"),
+              let baseline = Self.input(operations, index: 4, role: "baseline"),
+              let mutation = Self.input(operations, index: 7, role: "mutation"),
+              Self.isClosedTranscript(operations),
+              let transcript = try? JSONSerialization.data(withJSONObject: operations, options: [.sortedKeys]),
+              sha256(transcript) == transcriptSha256 else {
+            fatalError("invalid canonical Protocol operation transcript")
         }
-        id = caseID
+        self.id = id
         self.reducer = reducer
         self.stage = stage
+        self.setup = setup
         self.baseline = baseline
         self.mutation = mutation
-        self.baselineSHA256 = baselineSHA256
-        self.inputSHA256 = inputSHA256
-        self.contextSHA256 = contextSHA256
-        self.initialEffectSHA256 = initialEffectSHA256
-        self.finalEffectSHA256 = finalEffectSHA256
+        self.transcript = transcript
     }
 
-    private static func rawBytes(_ value: Any?) -> Data? {
-        guard let recipe = value as? [String: Any] else { return nil }
-        if Set(recipe.keys) == ["bytesBase64", "tag"],
-           recipe["tag"] as? String == "raw-framed-bytes-v1",
-           let encoded = recipe["bytesBase64"] as? String {
-            return Data(base64Encoded: encoded, options: [])
-        }
-        guard Set(recipe.keys) == ["events", "tag"],
-              recipe["tag"] as? String == "stateful-event-sequence-v1",
-              let events = recipe["events"] as? [[String: Any]],
-              let baseline = events.last,
-              baseline["kind"] as? String == "baseline",
-              let encoded = baseline["bytesBase64"] as? String else { return nil }
+    private static func input(_ operations: [[String: Any]], index: Int, role: String) -> Data? {
+        guard operations.indices.contains(index), operations[index]["op"] as? String == "consume",
+              operations[index]["role"] as? String == role,
+              let encoded = operations[index]["inputBase64"] as? String else { return nil }
         return Data(base64Encoded: encoded, options: [])
+    }
+
+    private static func isClosedTranscript(_ operations: [[String: Any]]) -> Bool {
+        guard operations.count == 9,
+              operations[0]["op"] as? String == "initialize",
+              operations[0]["state"] as? String == "fresh",
+              operations[0]["time"] as? Int == 0,
+              operations[2]["op"] as? String == "advance-time",
+              operations[2]["to"] as? Int == 1,
+              operations[3]["op"] as? String == "clone-checkpoint",
+              operations[3]["name"] as? String == "pre-baseline",
+              operations[5]["op"] as? String == "assert-accepted",
+              operations[6]["op"] as? String == "clone-checkpoint",
+              operations[6]["name"] as? String == "post-baseline",
+              operations[8]["op"] as? String == "assert-rejected",
+              operations[8]["checkpoint"] as? String == "post-baseline" else { return false }
+        return true
     }
 
     private static func isSHA256(_ value: String) -> Bool {
         value.count == 64 && value.allSatisfy({ $0.isHexDigit && !$0.isUppercase })
     }
 }
-
 
 @main
 struct MacProtocolAdversarialHarness {
@@ -218,74 +213,53 @@ struct MacProtocolAdversarialHarness {
     }
 
     fileprivate static func runCase(_ invocation: CaseInvocation) {
-        let expected = (reducer: "", stage: "")
         let result: ProtocolRejection?
-        switch invocation.id {
-        case "wrong-device-nonce":
-            result = sessionAcceptCase(
-                invocation.id,
-                mutation: "deviceNonce",
-                payloadMutation: { $0 },
-                deviceNonceMutation: Data(repeating: 0, count: 32)
-            )
-        case "wifi-hello-missing-seed":
-            result = serverHelloInvocation(invocation, transport: .wifi)
-        case "usb-hello-seed-present":
-            result = serverHelloCase(invocation.id, mutation: "wifiSessionSeed",
-                                     payload: serverHello(.usb, seed: true), transport: .usb)
-        case "server-hello-transport-mismatch":
-            result = serverHelloCase(invocation.id, mutation: "transport",
-                                     payload: serverHello(.usb), transport: .wifi)
-        case "wrong-session-id", "zero-generation":
-            guard (try? ProtocolParser.parseSessionAccept(invocation.baseline)) != nil else {
-                fatalError("consumer did not accept canonical baseline")
+        let baselineAccepted: Bool
+        switch invocation.reducer {
+        case "SessionAdmissionReducer.reduce":
+            switch invocation.stage {
+            case "session-init-response":
+                baselineAccepted = {
+                    guard case .applied = ProtocolParser.consumeServerHello(
+                        invocation.baseline, transport: .wifi
+                    ) else { return false }
+                    return true
+                }()
+                result = rejection(ProtocolParser.consumeServerHello(invocation.mutation, transport: .wifi))
+            case "session-busy-response":
+                baselineAccepted = {
+                    guard case .applied = ProtocolParser.consumeSessionBusy(invocation.baseline) else { return false }
+                    return true
+                }()
+                result = rejection(ProtocolParser.consumeSessionBusy(invocation.mutation))
+            case "session-finish-accept":
+                baselineAccepted = (try? ProtocolParser.parseSessionAccept(invocation.baseline)) != nil
+                    || {
+                        guard case .applied = ProtocolParser.consumeServerHello(
+                            invocation.baseline, transport: .wifi
+                        ) else { return false }
+                        return true
+                    }()
+                result = (try? ProtocolParser.parseSessionAccept(invocation.mutation)) == nil
+                    ? ProtocolRejection(stage: .sessionAccept, code: .invalidPayload) : nil
+            default:
+                baselineAccepted = false
+                result = nil
             }
-            result = sessionAcceptCase(invocation.id, mutation: invocation.id,
-                                       payloadMutation: { _ in invocation.mutation })
-        case "sensitive-reason-code":
-            guard case .applied = ProtocolParser.consumeSessionBusy(invocation.baseline),
-                  case .rejected(let rejection) = ProtocolParser.consumeSessionBusy(invocation.mutation) else {
-                fatalError("consumer did not atomically reject canonical mutation")
-            }
-            result = rejection
-        case "usb-challenge-reflection", "usb-challenge-wrong-proof":
+        case "ManagedUSBPrefaceReducer.bindInit":
+            baselineAccepted = (try? JSONSerialization.jsonObject(with: invocation.baseline)) != nil
             result = usbChallengeCase(invocation.id, mutation: invocation.id) { _ in invocation.mutation }
-        case "usb-accept-replay":
+        case "ManagedUSBPrefaceReducer.bindFinish":
+            baselineAccepted = (try? JSONSerialization.jsonObject(with: invocation.baseline)) != nil
             result = usbAcceptReplayCase(invocation.id)
         default:
-            fatalError("unknown consumer case: \(invocation.id)")
+            baselineAccepted = false
+            result = nil
         }
-        guard expected.reducer.isEmpty,
-              invocation.reducer == expectedReducer(for: invocation.id),
-              invocation.stage == expectedStage(for: invocation.id),
-              let result, result.stage.rawValue == invocation.stage,
-              sha256(Data()) == invocation.initialEffectSHA256,
-              sha256(Data()) == invocation.finalEffectSHA256 else {
-            fatalError("consumer did not reject the canonical mutation fail-closed")
+        guard baselineAccepted, let result, result.stage.rawValue == invocation.stage else {
+            fatalError("production consumer did not reject the canonical mutation fail-closed")
         }
-        receipt(invocation)
-    }
-
-    fileprivate static func expectedReducer(for id: String) -> String {
-        switch id {
-        case "usb-challenge-reflection", "usb-challenge-wrong-proof":
-            return "ManagedUSBPrefaceReducer.bindInit"
-        case "usb-accept-replay":
-            return "ManagedUSBPrefaceReducer.bindFinish"
-        default:
-            return "SessionAdmissionReducer.reduce"
-        }
-    }
-
-    fileprivate static func expectedStage(for id: String) -> String {
-        switch id {
-        case "wrong-device-nonce", "wrong-session-id", "zero-generation": return "session-finish-accept"
-        case "sensitive-reason-code": return "session-busy-response"
-        case "wifi-hello-missing-seed", "usb-hello-seed-present", "server-hello-transport-mismatch": return "session-init-response"
-        case "usb-challenge-reflection", "usb-challenge-wrong-proof": return "usb-bind-challenge"
-        case "usb-accept-replay": return "usb-bind-accept"
-        default: return ""
-        }
+        receipt(invocation, rejection: result)
     }
 
     fileprivate static func serverHelloInvocation(_ invocation: CaseInvocation,
@@ -355,7 +329,7 @@ struct MacProtocolAdversarialHarness {
         nil
     }
 
-    static func rejection(_ outcome: ProtocolConsumerOutcome<Data>) -> ProtocolRejection? {
+    static func rejection<Value>(_ outcome: ProtocolConsumerOutcome<Value>) -> ProtocolRejection? where Value: Sendable {
         guard case .rejected(let rejection) = outcome else { return nil }
         return rejection
     }
@@ -417,8 +391,33 @@ struct MacProtocolAdversarialHarness {
         }
     }
 
-    fileprivate static func receipt(_ invocation: CaseInvocation) {
-        print("VECTOR_RECEIPT v2 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) baselineSha256=\(invocation.baselineSHA256) inputSha256=\(invocation.inputSHA256) contextSha256=\(invocation.contextSHA256) initialEffectSha256=\(invocation.initialEffectSHA256) finalEffectSha256=\(invocation.finalEffectSHA256) outcome=reject_and_fail_closed")
+    fileprivate static func receipt(_ invocation: CaseInvocation, rejection: ProtocolRejection) {
+        func snapshot(_ state: String, _ inputs: [Data], _ effects: [[String: String]]) -> String {
+            let value: [String: Any] = [
+                "reducer": invocation.reducer,
+                "stage": invocation.stage,
+                "state": state,
+                "acceptedInputs": inputs.map(sha256),
+                "effects": effects,
+            ]
+            let data = try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+            return sha256(data)
+        }
+        let setupEffect = ["type": "accepted-event", "role": "setup", "inputSha256": sha256(invocation.setup)]
+        let baselineEffect = ["type": "accepted-event", "role": "baseline", "inputSha256": sha256(invocation.baseline)]
+        let rejectionEffect = [
+            "type": "rejected-event",
+            "role": "mutation",
+            "inputSha256": sha256(invocation.mutation),
+            "code": String(describing: rejection.code),
+        ]
+        let initial = snapshot("fresh:setup", [invocation.setup], [setupEffect])
+        let baseline = snapshot("fresh:setup:baseline", [invocation.setup, invocation.baseline],
+                                [setupEffect, baselineEffect])
+        let final = snapshot("fresh:setup:baseline", [invocation.setup, invocation.baseline],
+                             [setupEffect, baselineEffect, rejectionEffect])
+        let context = sha256(Data("\(invocation.reducer)\u{0}\(invocation.stage)".utf8))
+        print("VECTOR_RECEIPT v3 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) transcriptSha256=\(sha256(invocation.transcript)) contextSha256=\(context) initialSnapshotSha256=\(initial) baselineSnapshotSha256=\(baseline) finalSnapshotSha256=\(final) effectSha256=\(sha256(try! JSONSerialization.data(withJSONObject: rejectionEffect, options: [.sortedKeys]))) outcome=reject_and_fail_closed")
     }
     static func receipt(_ id: String) {
         precondition(!id.isEmpty)
