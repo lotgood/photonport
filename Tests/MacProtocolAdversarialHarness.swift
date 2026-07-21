@@ -316,9 +316,39 @@ struct MacProtocolAdversarialHarness {
         return rejection(candidate.receiveChallenge(payload, now: 0, token: 7))
     }
     static func usbAcceptReplayCase(_ id: String) -> ProtocolRejection? {
-        usbChallengeCase(id, mutation: "state") {
-            withFieldValue($0, "type", quoted("usb-bind-accept"))
+        let psk = Data(repeating: 0xA5, count: 32)
+        let original = USBChannelCandidate(
+            psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+            purpose: "primary", startedAt: 0, token: 7,
+            macNonce: Data(repeating: 0x11, count: 32)
+        )!
+        let server = USBPrefaceServer(
+            psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+            purpose: "primary", startedAt: 0, token: 7
+        )!
+        let initial = original.start(now: 0, token: 7)!
+        precondition(server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge = server.consume(
+            USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+            nonce: Data(repeating: 0x22, count: 32)
+        )!
+        guard case .applied(let finish, _) = original.receiveChallenge(
+            USBPrefaceMessage.unframe(challenge)!.0, now: 0, token: 7
+        ), let accept = server.consume(
+            USBPrefaceMessage.unframe(finish)!.0, now: 0, token: 7, nonce: nil
+        ) else {
+            return nil
         }
+
+        let replayTarget = USBChannelCandidate(
+            psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+            purpose: "primary", startedAt: 0, token: 7,
+            macNonce: Data(repeating: 0x33, count: 32)
+        )!
+        _ = replayTarget.start(now: 0, token: 7)
+        return rejection(replayTarget.receiveAccept(
+            USBPrefaceMessage.unframe(accept)!.0, now: 0, token: 7
+        ))
     }
 
     static func usbPrimaryAudioBindingCrossUseCase(_ id: String) -> ProtocolRejection? {
