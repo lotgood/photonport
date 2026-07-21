@@ -111,12 +111,12 @@ class MacProtocolContractTests(unittest.TestCase):
 
     def test_accept_proof_is_fail_closed_before_binding(self):
         handler = swift_private_function(SENDER, "handleSessionAccept")
-        self.assertRegex(handler, r"ProtocolParser\.parseVerifiedSessionAccept")
+        self.assertRegex(handler, r"ProtocolParser\.consumeVerifiedSessionAccept")
         verified_accept = swift_function(PARSER, "parseVerifiedSessionAccept")
         self.assertIn("SessionCrypto.constantTimeEqual(proof, expected)", verified_accept)
         self.assertIn("guard SessionCrypto.constantTimeEqual(proof, expected) else", verified_accept)
         self.assertIn("pendingStreamSession = nil", handler)
-        self.assertLess(handler.index("parseVerifiedSessionAccept"), handler.index("pendingStreamSession = nil"))
+        self.assertLess(handler.index("consumeVerifiedSessionAccept"), handler.index("pendingStreamSession = nil"))
 
     def test_project_yml_tracks_mac_source_tree_and_keeps_ios_separate(self):
         self.assertTrue(PARSER_PATH.exists(), "Mac/ProtocolParser.swift must be a tracked production source")
@@ -131,12 +131,17 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("Mac/ProtocolParser.swift", swiftc_inputs(HARNESS_SCRIPT))
         self.assertIn("Tests/MacProtocolAdversarialHarness.swift", swiftc_inputs(HARNESS_SCRIPT))
 
-    def test_harness_calls_production_parser_without_policy_adapter(self):
-        self.assertNotRegex(HARNESS, r"\b(Adapter|PolicyAdapter)\b")
-        for symbol in ("ProtocolParser", "framedPayloadLength", "parsePairCommit", "parseSessionAccept", "parseChannelOpen"):
-            self.assertIn(symbol, HARNESS)
-        self.assertRegex(HARNESS, r"parseSessionAccept[\s\S]*?!= nil")
-
+    def test_harness_consumes_runtime_outcomes_without_a_facade(self):
+        self.assertNotIn("MacProtocolConsumers", HARNESS)
+        self.assertNotIn("MacProtocolConsumerResult", HARNESS)
+        self.assertIn("ProtocolConsumerOutcome", HARNESS)
+        self.assertIn("consumeServerHello", HARNESS)
+        self.assertIn("consumeVerifiedSessionAccept", HARNESS)
+        self.assertIn("receiveChallenge", HARNESS)
+        self.assertIn("AppliedProtocolBytes", PARSER)
+        self.assertIn("ProtocolConsumerOutcome", PAIRING)
+        self.assertIn("consumeControl", SENDER)
+        self.assertIn("consumeVerifiedSessionAccept", SENDER)
     def test_parser_caps_are_exact_and_legacy_mebibyte_receives_are_gone(self):
         for cap in ("65_535", "262_144", "16_777_216"):
             self.assertRegex(PARSER, rf"=\s*{cap}\b")
@@ -222,9 +227,9 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
         expected = {
             "schemaVersion": 1,
-            "protocolCommit": "52cc335422183c68ee46d7f9dc9b52e16895ed65",
+            "protocolCommit": "9f10742b3f79d6f160e02df13e45d2b32502d73c",
             "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-            "normativeManifestDigest": "aff7ef1d27de776a6637f1b631661cca272a5289165206f81ed404e0db444a36",
+            "normativeManifestDigest": "11633924d6f5bee2e30a00393dcfa98744b89dab359fc5def0373ae2dc8767be",
         }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         self.assertEqual(pin, expected)
@@ -258,7 +263,7 @@ class MacProtocolContractTests(unittest.TestCase):
 
         receive_audio_hello = swift_private_function(SENDER, "receiveAudioServerHello")
         self.assertLess(receive_audio_hello.index("ProtocolParser.framedPayloadLength"), receive_audio_hello.index("conn.receive(minimumIncompleteLength: bodyLength"))
-        self.assertLess(receive_audio_hello.index("ProtocolParser.validatePayload"), receive_audio_hello.index("ProtocolParser.parseServerHello"))
+        self.assertLess(receive_audio_hello.index("ProtocolParser.validatePayload"), receive_audio_hello.index("ProtocolParser.consumeServerHello"))
 
         pairing_receive = swift_function(PAIRING, "receive")
         pairing_length = pairing_receive.index("ProtocolParser.framedPayloadLength")

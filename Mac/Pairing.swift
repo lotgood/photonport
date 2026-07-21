@@ -631,21 +631,26 @@ enum PairingWire {
 
     /// Reads exactly one framed JSON message.
     static func receive<T: Decodable & Sendable>(_ type: T.Type, on conn: NWConnection,
-                                      completion: @escaping (T?) -> Void) {
+                                                  completion: @escaping (ProtocolConsumerOutcome<T>) -> Void) {
         conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { data, _, _, err in
-            guard let data, data.count == 4, err == nil else { return completion(nil) }
+            guard let data, data.count == 4, err == nil else {
+                return completion(.rejected(ProtocolRejection(stage: .pairCommit, code: .invalidFrame)))
+            }
             do {
                 let len = try ProtocolParser.framedPayloadLength(from: data, kind: .pairing)
                 conn.receive(minimumIncompleteLength: len, maximumLength: len) { payload, _, _, err in
                     guard let payload, err == nil,
                           (try? ProtocolParser.validatePayload(payload, expectedLength: len, kind: .pairing)) != nil,
                           let decoded = try? PairingWire.decode(type, from: payload) else {
-                        return completion(nil)
+                        return completion(.rejected(ProtocolRejection(stage: .pairCommit, code: .invalidPayload)))
                     }
-                    completion(decoded)
+                    completion(.applied(
+                        value: decoded,
+                        evidence: AppliedProtocolBytes(stage: .pairCommit, bytes: payload)
+                    ))
                 }
             } catch {
-                completion(nil)
+                completion(.rejected(ProtocolRejection(stage: .pairCommit, code: .invalidFrame)))
             }
         }
     }
@@ -942,8 +947,9 @@ enum PairingClient {
                     conn.send(content: commitFrame, completion: .contentProcessed { _ in })
                     // Receive the device's commitment BEFORE revealing our
                     // opening — this ordering is what stops SAS grinding.
-                    PairingWire.receive(PairCommit.self, on: conn) { dc in
-                        guard let dc, dc.v == PairingCrypto.version,
+                    PairingWire.receive(PairCommit.self, on: conn) { outcome in
+                        guard case .applied(let dc, _) = outcome,
+                              dc.v == PairingCrypto.version,
                               let deviceCommit = Data(base64Encoded: dc.commit),
                               deviceCommit.count == 32
                         else { return fail(.protocolError) }
@@ -954,8 +960,9 @@ enum PairingClient {
                             nonce: macNonce.base64EncodedString())
                         guard let frame = PairingWire.frame(hello) else { return fail(.protocolError) }
                         conn.send(content: frame, completion: .contentProcessed { _ in })
-                        PairingWire.receive(PairHello.self, on: conn) { peer in
-                            guard let peer, peer.v == PairingCrypto.version, peer.role == "device",
+                        PairingWire.receive(PairHello.self, on: conn) { outcome in
+                            guard case .applied(let peer, _) = outcome,
+                                  peer.v == PairingCrypto.version, peer.role == "device",
                                   let devicePub = Data(base64Encoded: peer.pub), devicePub.count == 32,
                                   let deviceNonce = Data(base64Encoded: peer.nonce), deviceNonce.count == 16,
                                   let deviceKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: devicePub),
@@ -1008,74 +1015,6 @@ final class ContinuationGate {
         return true
     }
 }
-// MARK: - Authoritative Mac protocol consumers
-//
-// These results are returned only after a receiving boundary rejects its input.
-struct MacProtocolConsumerResult: Equatable, Sendable {
-    let vector: String
-    let mutation: String
-    let stage: String
-    let outcome: String
-
-    static func rejected(_ vector: String, mutation: String,
-                         stage: String) -> MacProtocolConsumerResult {
-        MacProtocolConsumerResult(
-            vector: vector, mutation: mutation, stage: stage, outcome: "rejected"
-        )
-    }
-}
-
-enum MacProtocolConsumers {
-    static func sessionInitResponse(_ payload: Data, transport: ProtocolParser.Transport,
-                                    expectedDeviceNonce: Data? = nil, vector: String,
-                                    mutation: String) -> MacProtocolConsumerResult? {
-        guard let hello = try? ProtocolParser.parseServerHello(payload, transport: transport),
-              expectedDeviceNonce == nil || hello.deviceNonce == expectedDeviceNonce else {
-            return .rejected(vector, mutation: mutation, stage: "session-init-response")
-        }
-        return nil
-    }
-
-    static func sessionFinishAccept(_ payload: Data, primaryKey: SymmetricKey,
-                                    macInstallID: String, deviceInstallID: String,
-                                    macNonce: Data, deviceNonce: Data,
-                                    vector: String, mutation: String,
-                                    stage: String = "session-finish-accept") -> MacProtocolConsumerResult? {
-        guard (try? ProtocolParser.parseVerifiedSessionAccept(
-            payload, primaryKey: primaryKey, macInstallID: macInstallID,
-            deviceInstallID: deviceInstallID, macNonce: macNonce,
-            deviceNonce: deviceNonce)) != nil else {
-            return .rejected(vector, mutation: mutation, stage: stage)
-        }
-        return nil
-    }
-
-    static func sessionBusyResponse(_ payload: Data, vector: String,
-                                    mutation: String) -> MacProtocolConsumerResult? {
-        guard (try? ProtocolParser.parseSessionBusy(payload)) != nil else {
-            return .rejected(vector, mutation: mutation, stage: "session-busy-response")
-        }
-        return nil
-    }
-
-    static func mediaInbound(annexB: Data, keyframe: Bool, codec: String,
-                             vector: String, mutation: String) -> MacProtocolConsumerResult? {
-        let startCode = Data([0, 0, 0, 1])
-        let hasH264Parameters = annexB.contains(startCode + Data([0x67])) &&
-            annexB.contains(startCode + Data([0x68]))
-        let hasHEVCParameters = annexB.contains(startCode + Data([0x40])) &&
-            annexB.contains(startCode + Data([0x42])) &&
-            annexB.contains(startCode + Data([0x44]))
-        let h264RandomAccess = annexB.contains(startCode + Data([0x65]))
-        let hevcRandomAccess = annexB.contains(startCode + Data([0x26]))
-        let valid = codec == "h264"
-            ? (!h264RandomAccess || keyframe && hasH264Parameters)
-            : (!hevcRandomAccess || keyframe && hasHEVCParameters)
-        return valid ? nil : .rejected(vector, mutation: mutation, stage: "media-inbound")
-    }
-
-}
-
 /// Mac-side candidate wrapper. It exposes direction-specific receive methods so
 /// a server challenge can never be accepted in the accept state, and vice versa.
 final class USBChannelCandidate {
@@ -1094,19 +1033,23 @@ final class USBChannelCandidate {
         client.start(now: now, token: token)
     }
 
-    func receiveChallenge(_ payload: Data, now: TimeInterval, token: UInt64,
-                          vector: String, mutation: String) -> MacProtocolConsumerResult? {
-        guard client.consume(payload, now: now, token: token) != nil else {
-            return .rejected(vector, mutation: mutation, stage: "usb-bind-challenge")
+    func receiveChallenge(_ payload: Data, now: TimeInterval, token: UInt64) -> ProtocolConsumerOutcome<Data> {
+        guard let response = client.consume(payload, now: now, token: token) else {
+            return .rejected(ProtocolRejection(stage: .usbChallenge, code: .invalidPayload))
         }
-        return nil
+        return .applied(
+            value: response,
+            evidence: AppliedProtocolBytes(stage: .usbChallenge, bytes: payload)
+        )
     }
 
-    func receiveAccept(_ payload: Data, now: TimeInterval, token: UInt64,
-                       vector: String, mutation: String) -> MacProtocolConsumerResult? {
-        guard client.consume(payload, now: now, token: token) != nil else {
-            return .rejected(vector, mutation: mutation, stage: "usb-bind-accept")
+    func receiveAccept(_ payload: Data, now: TimeInterval, token: UInt64) -> ProtocolConsumerOutcome<Data> {
+        guard let response = client.consume(payload, now: now, token: token) else {
+            return .rejected(ProtocolRejection(stage: .usbAccept, code: .invalidPayload))
         }
-        return nil
+        return .applied(
+            value: response,
+            evidence: AppliedProtocolBytes(stage: .usbAccept, bytes: payload)
+        )
     }
 }

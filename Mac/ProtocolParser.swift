@@ -3,6 +3,41 @@
 
 import Foundation
 import CryptoKit
+enum ProtocolConsumerStage: String, Sendable {
+    case pairCommit = "pairing-inbound"
+    case serverHello = "session-init-response"
+    case sessionAccept = "session-finish-accept"
+    case sessionBusy = "session-busy-response"
+    case control = "session-control"
+    case usbChallenge = "usb-bind-challenge"
+    case usbAccept = "usb-bind-accept"
+}
+
+enum ProtocolRejectionCode: Sendable {
+    case invalidFrame, invalidPayload
+}
+
+struct AppliedProtocolBytes: Equatable, Sendable {
+    let stage: ProtocolConsumerStage
+    let bytes: Data
+    let sha256: Data
+
+    init(stage: ProtocolConsumerStage, bytes: Data) {
+        self.stage = stage
+        self.bytes = bytes
+        self.sha256 = Data(SHA256.hash(data: bytes))
+    }
+}
+
+struct ProtocolRejection: Sendable {
+    let stage: ProtocolConsumerStage
+    let code: ProtocolRejectionCode
+}
+
+enum ProtocolConsumerOutcome<Value: Sendable>: Sendable {
+    case applied(value: Value, evidence: AppliedProtocolBytes)
+    case rejected(ProtocolRejection)
+}
 
 enum ProtocolParser {
     enum FrameKind { case pairing, session, audioControl, audioData, videoData }
@@ -29,13 +64,13 @@ enum ProtocolParser {
         let wifiSessionSeed: Data?
     }
 
-    struct VerifiedSessionAccept {
+    struct VerifiedSessionAccept: Sendable {
         let message: SessionAccept
         let sessionID: Data
         let channelSecret: SymmetricKey
     }
 
-    enum Control {
+    enum Control: Sendable {
         case ping(id: UInt64, t: Double)
         case pong(id: UInt64, t: Double)
         case stats(fps: Double, bitrate: Double, dropped: UInt64, raw: String)
@@ -139,6 +174,17 @@ enum ProtocolParser {
         let seed = transport == .wifi ? try base64(try string(object, "wifiSessionSeed"), bytes: 32) : nil
         return ServerHello(pixelsWide: width, pixelsHigh: height, scale: scale, device: device, id: try string(object, "id"), maxFps: fps, hdr: hdr, deviceNonce: deviceNonce, wifiSessionSeed: seed)
     }
+    static func consumeServerHello(_ data: Data, transport: Transport) -> ProtocolConsumerOutcome<ServerHello> {
+        do {
+            return .applied(
+                value: try parseServerHello(data, transport: transport),
+                evidence: AppliedProtocolBytes(stage: .serverHello, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .serverHello, code: .invalidPayload))
+        }
+    }
+
 
     static func parseSessionAccept(_ data: Data) throws -> SessionAccept {
         guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
@@ -165,6 +211,37 @@ enum ProtocolParser {
             macNonce: macNonce, deviceNonce: deviceNonce)
         guard SessionCrypto.constantTimeEqual(proof, expected) else { throw ParseError.value }
         return VerifiedSessionAccept(message: message, sessionID: sessionID, channelSecret: secret)
+    }
+    static func consumeVerifiedSessionAccept(
+        _ data: Data,
+        primaryKey: SymmetricKey,
+        macInstallID: String,
+        deviceInstallID: String,
+        macNonce: Data,
+        deviceNonce: Data
+    ) -> ProtocolConsumerOutcome<VerifiedSessionAccept> {
+        do {
+            return .applied(
+                value: try parseVerifiedSessionAccept(
+                    data, primaryKey: primaryKey, macInstallID: macInstallID,
+                    deviceInstallID: deviceInstallID, macNonce: macNonce, deviceNonce: deviceNonce
+                ),
+                evidence: AppliedProtocolBytes(stage: .sessionAccept, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .sessionAccept, code: .invalidPayload))
+        }
+    }
+
+    static func consumeSessionBusy(_ data: Data) -> ProtocolConsumerOutcome<SessionBusy> {
+        do {
+            return .applied(
+                value: try parseSessionBusy(data),
+                evidence: AppliedProtocolBytes(stage: .sessionBusy, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .sessionBusy, code: .invalidPayload))
+        }
     }
 
     static func parseSessionBusy(_ data: Data) throws -> SessionBusy {
@@ -239,6 +316,16 @@ enum ProtocolParser {
             return .sessionBusy(try parseSessionBusy(data))
         default:
             throw ParseError.value
+        }
+    }
+    static func consumeControl(_ data: Data, transport: Transport) -> ProtocolConsumerOutcome<Control> {
+        do {
+            return .applied(
+                value: try parseControl(data, transport: transport),
+                evidence: AppliedProtocolBytes(stage: .control, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .control, code: .invalidPayload))
         }
     }
 

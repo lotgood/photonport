@@ -136,9 +136,9 @@ struct ProtocolBuildPin: Decodable, Equatable {
 
     private static let expected = ProtocolBuildPin(
         schemaVersion: 1,
-        protocolCommit: "52cc335422183c68ee46d7f9dc9b52e16895ed65",
+        protocolCommit: "9f10742b3f79d6f160e02df13e45d2b32502d73c",
         compatibilityDigest: "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-        normativeManifestDigest: "aff7ef1d27de776a6637f1b631661cca272a5289165206f81ed404e0db444a36")
+        normativeManifestDigest: "11633924d6f5bee2e30a00393dcfa98744b89dab359fc5def0373ae2dc8767be")
 
     static func validate(at url: URL?) throws {
         guard let url else {
@@ -1522,13 +1522,20 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     expectedLength: payload.count,
                     kind: .audioControl
                 )) != nil,
-                let parsed = try? ProtocolParser.parseServerHello(
-                    payload,
-                    transport: tagged ? .wifi : .usb
-                ),
                 let session = self.boundStreamSession,
-                parsed.id == session.info.id,
                 let nonce = SessionCrypto.randomBytes(count: 32) else {
+                    conn.cancel()
+                    return
+                }
+                let parsed: ProtocolParser.ServerHello
+                switch ProtocolParser.consumeServerHello(payload, transport: tagged ? .wifi : .usb) {
+                case .applied(let value, _):
+                    parsed = value
+                case .rejected:
+                    conn.cancel()
+                    return
+                }
+                guard parsed.id == session.info.id else {
                     conn.cancel()
                     return
                 }
@@ -1959,14 +1966,23 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             return
         }
         guard let pending = pendingStreamSession,
-              let deviceID = pending.info.id,
-              let verified = try? ProtocolParser.parseVerifiedSessionAccept(
-                payload,
-                primaryKey: pending.primaryKey,
-                macInstallID: PairingStore.macInstallID,
-                deviceInstallID: deviceID,
-                macNonce: pending.macNonce,
-                deviceNonce: pending.deviceNonce) else {
+              let deviceID = pending.info.id else {
+            Log.info("session v3 accept invalid")
+            scheduleReconnect()
+            return
+        }
+        let verified: ProtocolParser.VerifiedSessionAccept
+        switch ProtocolParser.consumeVerifiedSessionAccept(
+            payload,
+            primaryKey: pending.primaryKey,
+            macInstallID: PairingStore.macInstallID,
+            deviceInstallID: deviceID,
+            macNonce: pending.macNonce,
+            deviceNonce: pending.deviceNonce
+        ) {
+        case .applied(let value, _):
+            verified = value
+        case .rejected:
             Log.info("session v3 accept invalid")
             scheduleReconnect()
             return
@@ -1999,7 +2015,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
 
     private func handleControl(_ payload: Data) {
-        guard let control = try? ProtocolParser.parseControl(payload, transport: sessionTransport) else {
+        let control: ProtocolParser.Control
+        switch ProtocolParser.consumeControl(payload, transport: sessionTransport) {
+        case .applied(let value, _):
+            control = value
+        case .rejected:
             Log.info("invalid control message (\(payload.count) bytes)")
             scheduleReconnect()
             return
