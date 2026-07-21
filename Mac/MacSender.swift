@@ -136,9 +136,9 @@ struct ProtocolBuildPin: Decodable, Equatable {
 
     private static let expected = ProtocolBuildPin(
         schemaVersion: 1,
-        protocolCommit: "8c331f3b2053a6822ff039aa4f910711fe9104bb",
+        protocolCommit: "a41e3003116047d0b833245029b219eeee9059c3",
         compatibilityDigest: "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-        normativeManifestDigest: "01c036b454a2cd1dd124bd5d12ecdca9343f74162bdc138ededcfdc3d4843d59")
+        normativeManifestDigest: "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd")
 
     static func validate(at url: URL?) throws {
         guard let url else {

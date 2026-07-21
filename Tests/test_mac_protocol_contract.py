@@ -144,11 +144,11 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_matrix_case_invocation_uses_closed_operation_transcripts_and_observed_receipts(self):
         self.assertIn('arguments.count == 4, arguments[0] == "case"', HARNESS)
         self.assertIn('<canonical-full-case-json>', HARNESS)
-        self.assertIn('Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer"]', HARNESS)
+        self.assertIn('Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer", "semantic"]', HARNESS)
         self.assertIn('Self.isClosedTranscript(operations)', HARNESS)
-        self.assertIn('Self.input(operations, index: 1, role: "setup")', HARNESS)
-        self.assertIn('Self.input(operations, index: 4, role: "baseline")', HARNESS)
-        self.assertIn('Self.input(operations, index: 7, role: "mutation")', HARNESS)
+        self.assertIn('Self.fixture(operations, index: 1, role: "setup")', HARNESS)
+        self.assertIn('Self.fixture(operations, index: 4, role: "baseline")', HARNESS)
+        self.assertIn('Self.fixture(operations, index: 7, role: "mutation")', HARNESS)
         self.assertIn('sha256(caseData) == arguments[3]', HARNESS)
         self.assertIn('sha256(transcript) == transcriptSha256', HARNESS)
         self.assertIn('initialSnapshotSha256=', HARNESS)
@@ -243,9 +243,9 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
         expected = {
             "schemaVersion": 1,
-            "protocolCommit": "8c331f3b2053a6822ff039aa4f910711fe9104bb",
+            "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
             "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-            "normativeManifestDigest": "01c036b454a2cd1dd124bd5d12ecdca9343f74162bdc138ededcfdc3d4843d59",
+            "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
         }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         self.assertEqual(pin, expected)
@@ -353,7 +353,7 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertNotIn("effectSha256", HARNESS)
         self.assertNotIn("MacProtocolRecipe", HARNESS)
         self.assertNotIn("mutationSha256=", HARNESS)
-        self.assertIn('Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer"]', HARNESS)
+        self.assertIn('Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer", "semantic"]', HARNESS)
         self.assertIn('Self.isClosedTranscript(operations)', HARNESS)
         self.assertIn('sha256(caseData) == arguments[3]', HARNESS)
         self.assertIn('let baselineEffects = try! JSONSerialization.data(withJSONObject: [baselineEffect], options: [.sortedKeys])', HARNESS)

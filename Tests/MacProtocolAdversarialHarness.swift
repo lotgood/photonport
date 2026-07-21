@@ -104,6 +104,11 @@ fileprivate struct CaseInvocation {
     let baseline: Data
     let mutation: Data
     let transcript: Data
+    let transcriptSha256: String
+    let changedField: String
+    let setupFixture: [String: Any]
+    let baselineFixture: [String: Any]
+    let mutationFixture: [String: Any]
 
     init(arguments: [String]) {
         guard arguments.count == 4, arguments[0] == "case",
@@ -112,7 +117,7 @@ fileprivate struct CaseInvocation {
               arguments[3].allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
               sha256(caseData) == arguments[3],
               let object = try? JSONSerialization.jsonObject(with: caseData) as? [String: Any],
-              Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer"],
+              Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer", "semantic"],
               let id = object["id"] as? String, id == arguments[1],
               object["outcome"] as? String == "reject_and_fail_closed",
               let ownership = object["ownership"] as? [String: Any],
@@ -120,13 +125,17 @@ fileprivate struct CaseInvocation {
               ownership["consumerPlatform"] as? String == "mac-client",
               let stage = ownership["stage"] as? String,
               let reducer = object["reducer"] as? String,
+              let semantic = object["semantic"] as? [String: Any],
+              Set(semantic.keys) == ["changedField", "mutation"],
+              let changedField = semantic["changedField"] as? String,
+              semantic["mutation"] as? String != nil,
               let operations = object["operations"] as? [[String: Any]],
               let expected = object["expected"] as? [String: Any],
               let transcriptSha256 = expected["transcriptSha256"] as? String,
               Self.isSHA256(transcriptSha256),
-              let setup = Self.input(operations, index: 1, role: "setup"),
-              let baseline = Self.input(operations, index: 4, role: "baseline"),
-              let mutation = Self.input(operations, index: 7, role: "mutation"),
+              let setupFixture = Self.fixture(operations, index: 1, role: "setup"),
+              let baselineFixture = Self.fixture(operations, index: 4, role: "baseline"),
+              let mutationFixture = Self.fixture(operations, index: 7, role: "mutation"),
               Self.isClosedTranscript(operations),
               let transcript = try? JSONSerialization.data(withJSONObject: operations, options: [.sortedKeys]),
               sha256(transcript) == transcriptSha256 else {
@@ -135,34 +144,35 @@ fileprivate struct CaseInvocation {
         self.id = id
         self.reducer = reducer
         self.stage = stage
-        self.setup = setup
-        self.baseline = baseline
-        self.mutation = mutation
+        self.setup = try! JSONSerialization.data(withJSONObject: setupFixture, options: [.sortedKeys])
+        self.baseline = try! JSONSerialization.data(withJSONObject: baselineFixture, options: [.sortedKeys])
+        self.mutation = try! JSONSerialization.data(withJSONObject: mutationFixture, options: [.sortedKeys])
         self.transcript = transcript
+        self.setupFixture = setupFixture
+        self.baselineFixture = baselineFixture
+        self.transcriptSha256 = transcriptSha256
+        self.changedField = changedField
+        self.mutationFixture = mutationFixture
     }
 
-    private static func input(_ operations: [[String: Any]], index: Int, role: String) -> Data? {
+    private static func fixture(_ operations: [[String: Any]], index: Int, role: String) -> [String: Any]? {
         guard operations.indices.contains(index), operations[index]["op"] as? String == "consume",
               operations[index]["role"] as? String == role,
-              let encoded = operations[index]["inputBase64"] as? String else { return nil }
-        return Data(base64Encoded: encoded, options: [])
+              let fixture = operations[index]["fixture"] as? [String: Any] else { return nil }
+        return fixture
     }
 
     private static func isClosedTranscript(_ operations: [[String: Any]]) -> Bool {
-        guard operations.count == 9,
-              operations[0]["op"] as? String == "initialize",
-              operations[0]["state"] as? String == "fresh",
-              operations[0]["time"] as? Int == 0,
-              operations[2]["op"] as? String == "advance-time",
-              operations[2]["to"] as? Int == 1,
-              operations[3]["op"] as? String == "clone-checkpoint",
-              operations[3]["name"] as? String == "pre-baseline",
-              operations[5]["op"] as? String == "assert-accepted",
-              operations[6]["op"] as? String == "clone-checkpoint",
-              operations[6]["name"] as? String == "post-baseline",
-              operations[8]["op"] as? String == "assert-rejected",
-              operations[8]["checkpoint"] as? String == "post-baseline" else { return false }
-        return true
+        operations.count == 9
+            && operations[0]["op"] as? String == "initialize"
+            && operations[1]["role"] as? String == "setup"
+            && operations[3]["op"] as? String == "clone-checkpoint"
+            && operations[4]["role"] as? String == "baseline"
+            && operations[5]["op"] as? String == "assert-accepted"
+            && operations[6]["op"] as? String == "clone-checkpoint"
+            && operations[7]["role"] as? String == "mutation"
+            && operations[8]["op"] as? String == "assert-rejected"
+            && operations[8]["checkpoint"] as? String == "post-baseline"
     }
 
     private static func isSHA256(_ value: String) -> Bool {
@@ -215,43 +225,34 @@ struct MacProtocolAdversarialHarness {
     fileprivate static func runCase(_ invocation: CaseInvocation) {
         let result: ProtocolRejection?
         let baselineAccepted: Bool
-        switch invocation.reducer {
-        case "SessionAdmissionReducer.reduce":
-            switch invocation.stage {
-            case "session-init-response":
-                baselineAccepted = {
-                    guard case .applied = ProtocolParser.consumeServerHello(
-                        invocation.baseline, transport: .wifi
-                    ) else { return false }
-                    return true
-                }()
-                result = rejection(ProtocolParser.consumeServerHello(invocation.mutation, transport: .wifi))
-            case "session-busy-response":
-                baselineAccepted = {
-                    guard case .applied = ProtocolParser.consumeSessionBusy(invocation.baseline) else { return false }
-                    return true
-                }()
-                result = rejection(ProtocolParser.consumeSessionBusy(invocation.mutation))
-            case "session-finish-accept":
-                baselineAccepted = (try? ProtocolParser.parseSessionAccept(invocation.baseline)) != nil
-                    || {
-                        guard case .applied = ProtocolParser.consumeServerHello(
-                            invocation.baseline, transport: .wifi
-                        ) else { return false }
-                        return true
-                    }()
-                result = (try? ProtocolParser.parseSessionAccept(invocation.mutation)) == nil
-                    ? ProtocolRejection(stage: .sessionAccept, code: .invalidPayload) : nil
-            default:
-                baselineAccepted = false
-                result = nil
+        switch (invocation.reducer, invocation.stage) {
+        case ("SessionAdmissionReducer.reduce", "session-init-response"):
+            let outcomes = [ProtocolParser.Transport.wifi, .usb].map { transport in
+                (
+                    serverHelloOutcome(invocation.baselineFixture, transport: transport),
+                    rejection(ProtocolParser.consumeServerHello(
+                        serverHelloPayload(invocation.mutationFixture, transport: transport, mutation: true),
+                        transport: transport
+                    ))
+                )
             }
-        case "ManagedUSBPrefaceReducer.bindInit":
-            baselineAccepted = (try? JSONSerialization.jsonObject(with: invocation.baseline)) != nil
-            result = usbChallengeCase(invocation.id, mutation: invocation.id) { _ in invocation.mutation }
-        case "ManagedUSBPrefaceReducer.bindFinish":
-            baselineAccepted = (try? JSONSerialization.jsonObject(with: invocation.baseline)) != nil
-            result = usbAcceptReplayCase(invocation.id)
+            baselineAccepted = outcomes.contains { $0.0 != nil }
+            result = outcomes.compactMap { $0.1 }.first
+        case ("SessionAdmissionReducer.reduce", "session-busy-response"):
+            baselineAccepted = sessionBusyOutcome(invocation.baselineFixture) != nil
+            result = rejection(ProtocolParser.consumeSessionBusy(sessionBusyPayload(invocation.mutationFixture)))
+        case ("SessionAdmissionReducer.reduce", "session-finish-accept"):
+            baselineAccepted = {
+                if case .applied = sessionAcceptOutcome(invocation.baselineFixture) { return true }
+                return false
+            }()
+            result = rejection(sessionAcceptMutationOutcome(invocation.baselineFixture, invocation.mutationFixture))
+        case ("ManagedUSBPrefaceReducer.bindInit", "usb-bind-challenge"):
+            baselineAccepted = usbChallengeOutcome(invocation.baselineFixture, proof: invocation.baselineFixture["proofBase64"] as? String) != nil
+            result = usbChallengeOutcome(invocation.baselineFixture, proof: invocation.mutationFixture["proofBase64"] as? String).flatMap(rejection)
+        case ("ManagedUSBPrefaceReducer.bindFinish", "usb-bind-accept"):
+            baselineAccepted = usbAcceptOutcome(invocation.baselineFixture, proof: invocation.baselineFixture["proofBase64"] as? String) != nil
+            result = usbAcceptOutcome(invocation.baselineFixture, proof: invocation.mutationFixture["proofBase64"] as? String).flatMap(rejection)
         default:
             baselineAccepted = false
             result = nil
@@ -260,6 +261,130 @@ struct MacProtocolAdversarialHarness {
             fatalError("production consumer did not reject the canonical mutation fail-closed")
         }
         receipt(invocation, rejection: result)
+    }
+
+    private static func fixtureString(_ fixture: [String: Any], _ name: String) -> String {
+        guard let value = fixture[name] as? String else { fatalError("missing fixture field \(name)") }
+        return value
+    }
+
+    private static func fixtureBytes(_ fixture: [String: Any], _ name: String, count: Int) -> Data {
+        let value = fixtureString(fixture, name)
+        guard let decoded = Data(base64Encoded: value) else { fatalError("invalid fixture field \(name)") }
+        let digest = Data(SHA256.hash(data: decoded))
+        return count == digest.count ? digest : Data(digest.prefix(count))
+    }
+
+    private static func fixtureID(_ fixture: [String: Any], _ name: String) -> Data {
+        Data(SHA256.hash(data: Data(fixtureString(fixture, name).utf8)).prefix(16))
+    }
+
+    private static func serverHelloPayload(_ fixture: [String: Any], transport: ProtocolParser.Transport,
+                                           mutation: Bool = false) -> Data {
+        let includesSeed = transport == .wifi ? !mutation : mutation
+        let seedBytes = fixture["transportSeedBase64"] as? String != nil
+            ? fixtureBytes(fixture, "transportSeedBase64", count: 32)
+            : fixtureBytes(fixture, "deviceNonceBase64", count: 32)
+        let seed = includesSeed ? ",\"wifiSessionSeed\":\"\(seedBytes.base64EncodedString())\"" : ""
+        let wireTransport: String
+        if mutation, fixture["transport"] as? String == "mismatched-transport" {
+            wireTransport = transport == .wifi ? "usb" : "wifi"
+        } else {
+            wireTransport = transport == .wifi ? "wifi" : "usb"
+        }
+        return json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"\(wireTransport)\",\"deviceNonce\":\"\(fixtureBytes(fixture, "deviceNonceBase64", count: 32).base64EncodedString())\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"\(fixtureString(fixture, "deviceInstallID"))\",\"maxFps\":120,\"hdr\":true\(seed)}")
+    }
+
+    private static func serverHelloOutcome(_ fixture: [String: Any], transport: ProtocolParser.Transport) -> ProtocolConsumerOutcome<ProtocolParser.ServerHello>? {
+        let outcome = ProtocolParser.consumeServerHello(serverHelloPayload(fixture, transport: transport), transport: transport)
+        guard case .applied = outcome else { return nil }
+        return outcome
+    }
+
+    private static func sessionBusyPayload(_ fixture: [String: Any]) -> Data {
+        let reason = fixtureString(fixture, "reasonCode") == "busy" ? "session_busy" : fixtureString(fixture, "reasonCode")
+        return json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"\(reason)\"}")
+    }
+
+    private static func sessionBusyOutcome(_ fixture: [String: Any]) -> ProtocolConsumerOutcome<SessionBusy>? {
+        let outcome = ProtocolParser.consumeSessionBusy(sessionBusyPayload(fixture))
+        guard case .applied = outcome else { return nil }
+        return outcome
+    }
+
+    private static func sessionAcceptOutcome(_ fixture: [String: Any]) -> ProtocolConsumerOutcome<ProtocolParser.VerifiedSessionAccept> {
+        let key = SymmetricKey(data: fixtureBytes(fixture, "proofBase64", count: 32))
+        let macNonce = fixtureBytes(fixture, "macNonceBase64", count: 32)
+        let deviceNonce = fixtureBytes(fixture, "deviceNonceBase64", count: 32)
+        let sessionID = fixtureID(fixture, "sessionID")
+        let generation = fixture["generation"] as? Int ?? 1
+        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sessionID, generation: UInt64(max(generation, 1)))
+        let proof = SessionCrypto.acceptProof(key: secret, sessionID: sessionID, generation: UInt64(max(generation, 1)),
+                                              macInstallID: fixtureString(fixture, "macInstallID"),
+                                              deviceInstallID: fixtureString(fixture, "deviceInstallID"),
+                                              macNonce: macNonce, deviceNonce: deviceNonce)
+        let payload = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":\(generation),\"acceptProof\":\"\(proof.base64EncodedString())\"}")
+        return ProtocolParser.consumeVerifiedSessionAccept(payload, primaryKey: key,
+            macInstallID: fixtureString(fixture, "macInstallID"), deviceInstallID: fixtureString(fixture, "deviceInstallID"),
+            macNonce: macNonce, deviceNonce: deviceNonce)
+    }
+    private static func sessionAcceptMutationOutcome(_ baseline: [String: Any],
+                                                     _ mutation: [String: Any]) -> ProtocolConsumerOutcome<ProtocolParser.VerifiedSessionAccept> {
+        let key = SymmetricKey(data: fixtureBytes(baseline, "proofBase64", count: 32))
+        let macNonce = fixtureBytes(baseline, "macNonceBase64", count: 32)
+        let baselineDeviceNonce = fixtureBytes(baseline, "deviceNonceBase64", count: 32)
+        let deviceNonce = fixtureBytes(mutation, "deviceNonceBase64", count: 32)
+        let sessionID = fixtureID(mutation, "sessionID")
+        let generation = mutation["generation"] as? Int ?? 1
+        let baselineSessionID = fixtureID(baseline, "sessionID")
+        let baselineSecret = SessionCrypto.channelSecret(primaryKey: key, sessionID: baselineSessionID, generation: 1)
+        let proof = SessionCrypto.acceptProof(key: baselineSecret, sessionID: baselineSessionID, generation: 1,
+                                              macInstallID: fixtureString(baseline, "macInstallID"),
+                                              deviceInstallID: fixtureString(baseline, "deviceInstallID"),
+                                              macNonce: macNonce, deviceNonce: baselineDeviceNonce)
+        let payload = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":\(generation),\"acceptProof\":\"\(proof.base64EncodedString())\"}")
+        return ProtocolParser.consumeVerifiedSessionAccept(payload, primaryKey: key,
+            macInstallID: fixtureString(baseline, "macInstallID"), deviceInstallID: fixtureString(baseline, "deviceInstallID"),
+            macNonce: macNonce, deviceNonce: deviceNonce)
+    }
+    private static func usbChallengeOutcome(_ fixture: [String: Any], proof: String?) -> ProtocolConsumerOutcome<Data>? {
+        let psk = fixtureBytes(fixture, "credentialBase64", count: 32)
+        let macNonce = fixtureBytes(fixture, "macNonceBase64", count: 32)
+        let macID = fixtureString(fixture, "macInstallID"), deviceID = fixtureString(fixture, "deviceInstallID")
+        guard let candidate = USBChannelCandidate(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                                  purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7, macNonce: macNonce),
+              let server = USBPrefaceServer(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                            purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7),
+              let initial = candidate.start(now: 0, token: 7),
+              server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7),
+              let challenge = server.consume(USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+                                             nonce: fixtureBytes(fixture, "deviceNonceBase64", count: 32)) else {
+            return nil
+        }
+        let payload = proof == fixture["proofBase64"] as? String ? USBPrefaceMessage.unframe(challenge)!.0
+            : withFieldValue(USBPrefaceMessage.unframe(challenge)!.0, "proof", quoted(fixtureBytes(["proofBase64": proof!], "proofBase64", count: 32).base64EncodedString()))
+        return candidate.receiveChallenge(payload, now: 0, token: 7)
+    }
+
+    private static func usbAcceptOutcome(_ fixture: [String: Any], proof: String?) -> ProtocolConsumerOutcome<Data>? {
+        let psk = fixtureBytes(fixture, "bindingBase64", count: 32)
+        let macNonce = fixtureBytes(fixture, "macNonceBase64", count: 32)
+        let macID = fixtureString(fixture, "macInstallID"), deviceID = fixtureString(fixture, "deviceInstallID")
+        guard let candidate = USBChannelCandidate(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                                  purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7, macNonce: macNonce),
+              let server = USBPrefaceServer(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                            purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7),
+              let initial = candidate.start(now: 0, token: 7),
+              server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7),
+              let challenge = server.consume(USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+                                             nonce: fixtureBytes(fixture, "deviceNonceBase64", count: 32)),
+              case .applied(let finish, _) = candidate.receiveChallenge(USBPrefaceMessage.unframe(challenge)!.0, now: 0, token: 7),
+              let accept = server.consume(USBPrefaceMessage.unframe(finish)!.0, now: 0, token: 7, nonce: nil) else {
+            return nil
+        }
+        let payload = proof == fixture["proofBase64"] as? String ? USBPrefaceMessage.unframe(accept)!.0
+            : withFieldValue(USBPrefaceMessage.unframe(accept)!.0, "proof", quoted(fixtureBytes(["proofBase64": proof!], "proofBase64", count: 32).base64EncodedString()))
+        return candidate.receiveAccept(payload, now: 0, token: 7)
     }
 
     fileprivate static func serverHelloInvocation(_ invocation: CaseInvocation,
@@ -409,7 +534,7 @@ struct MacProtocolAdversarialHarness {
         let baseline = snapshot("fresh:setup:baseline", [invocation.setup, invocation.baseline],
                                 [setupEffect, baselineEffect])
         let baselineEffects = try! JSONSerialization.data(withJSONObject: [baselineEffect], options: [.sortedKeys])
-        print("VECTOR_RECEIPT v3 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) transcriptSha256=\(sha256(invocation.transcript)) initialSnapshotSha256=\(initial) baselineSnapshotSha256=\(baseline) finalSnapshotSha256=\(baseline) baselineEffectsSha256=\(sha256(baselineEffects)) outcome=reject_and_fail_closed")
+        print("VECTOR_RECEIPT v3 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) transcriptSha256=\(invocation.transcriptSha256) initialSnapshotSha256=\(initial) baselineSnapshotSha256=\(baseline) finalSnapshotSha256=\(baseline) baselineEffectsSha256=\(sha256(baselineEffects)) outcome=reject_and_fail_closed")
     }
     static func receipt(_ id: String) {
         precondition(!id.isEmpty)

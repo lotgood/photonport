@@ -69,7 +69,7 @@ class MatrixReceiptParserTest(unittest.TestCase):
             "deviceNonceBase64": "AAECAwQFBgcICQoLDA0ODw==", "fixtureID": "mac-case:setup",
         }
         baseline = {**setup, "attemptID": "mac-case:baseline", "deviceInstallID": "mac-case:baseline", "fixtureID": "mac-case:baseline"}
-        mutation = {**setup, "attemptID": "mac-case:mutation", "deviceInstallID": "mac-case:mutation", "now": 0, "fixtureID": "mac-case:mutation"}
+        mutation = {**baseline, "now": 0}
         setup_hash, baseline_hash = MATRIX.digest(MATRIX.canonical_bytes(setup)), MATRIX.digest(MATRIX.canonical_bytes(baseline))
         ownership = {"consumerPlatform": "mac-client", "direction": "ios-to-mac", "stage": "session-init-response"}
         initial = {"reducer": reducer, "state": "fresh:setup", "time": 1, "acceptedInputs": [setup_hash], "effects": [{"type": "accepted-event", "role": "setup", "inputSha256": setup_hash}]}
@@ -88,6 +88,7 @@ class MatrixReceiptParserTest(unittest.TestCase):
         self.cases = [{
             "id": "mac-case", "ownership": ownership, "reducer": reducer, "message": "session",
             "outcome": "reject_and_fail_closed", "operations": operations,
+            "semantic": {"changedField": "now", "mutation": "mac-case"},
             "expected": {
                 "transcriptSha256": MATRIX.digest(MATRIX.canonical_bytes(operations)),
                 "initialSnapshot": initial, "baselineSnapshot": baseline_snapshot,
@@ -135,6 +136,34 @@ class MatrixReceiptParserTest(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 with self.assertRaises(ValueError):
                     MATRIX.derived_case_hashes(case)
+    def test_rejects_semantic_id_mismatch_extra_changed_field_and_expected_echo(self):
+        cases = []
+        id_mismatch = dict(self.cases[0])
+        id_mismatch["semantic"] = {**id_mismatch["semantic"], "mutation": "other-case"}
+        cases.append(id_mismatch)
+
+        wrong_field = dict(self.cases[0])
+        wrong_field["semantic"] = {**wrong_field["semantic"], "changedField": "version"}
+        cases.append(wrong_field)
+
+        extra_change = dict(self.cases[0])
+        mutation = {**extra_change["operations"][7]["fixture"], "openingVersion": 2}
+        extra_change["operations"] = extra_change["operations"][:7] + [
+            {"op": "consume", "role": "mutation", "fixture": mutation},
+        ] + extra_change["operations"][8:]
+        cases.append(extra_change)
+
+        expected_echo = dict(self.cases[0])
+        expected_echo["expected"] = {
+            **expected_echo["expected"],
+            "baselineSnapshot": expected_echo["expected"]["initialSnapshot"],
+        }
+        cases.append(expected_echo)
+
+        for case in cases:
+            with self.subTest(case=case):
+                with self.assertRaises(ValueError):
+                    MATRIX.derived_case_hashes(case)
 
     def test_rejects_forged_stage_symbol_effect_and_snapshot_hashes(self):
         for field, value in (
@@ -155,6 +184,7 @@ class MatrixReceiptParserTest(unittest.TestCase):
             self.receipt() + self.receipt(),
             self.receipt()[:-1] + " alias=parser\n".encode(),
             b"VECTOR_RECEIPT v3 caseId=mac-case\n",
+            self.receipt().replace(b"VECTOR_RECEIPT v3 ", b"VECTOR_RECEIPT v2 "),
         ):
             with self.subTest(stdout=stdout):
                 with self.assertRaises(ValueError):

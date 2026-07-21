@@ -32,6 +32,28 @@ FIXTURE_FIELDS = {
     "ManagedUSBKeyScheduleReducer.wifiRejected": ("transport", "purpose", "bindingBase64", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
     "ManagedUSBRecordReducer.consume": ("recordState", "bodyBase64", "cap", "purpose", "sequence", "nonceBase64", "fixtureID"),
 }
+FIXTURE_FIELD_SHAPES = {
+    "SessionAdmissionReducer.reduce": (
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"],
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("generation",),
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("transport",),
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("transportSeedBase64",),
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("reasonCode",),
+    ),
+    "ManagedUSBPrefaceReducer.consumeMagic": (
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.consumeMagic"],
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.consumeMagic"] + ("extraFrame",),
+    ),
+    "ManagedUSBPrefaceReducer.bindInit": (
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.bindInit"],
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.bindInit"] + ("type",),
+    ),
+    "ManagedUSBRecordReducer.consume": (
+        FIXTURE_FIELDS["ManagedUSBRecordReducer.consume"],
+        FIXTURE_FIELDS["ManagedUSBRecordReducer.consume"] + ("tagBase64",),
+        FIXTURE_FIELDS["ManagedUSBRecordReducer.consume"] + ("direction",),
+    ),
+}
 
 
 def digest(data):
@@ -121,7 +143,12 @@ def canonical_bytes(value):
 def typed_fixture_hash(reducer, fixture):
     """Validate a closed reducer-specific fixture and hash its canonical input."""
     fields = FIXTURE_FIELDS.get(reducer)
-    if not isinstance(fixture, dict) or fields is None or set(fixture) != {"reducer", *fields}:
+    shapes = FIXTURE_FIELD_SHAPES.get(reducer, (fields,))
+    if (
+        not isinstance(fixture, dict)
+        or fields is None
+        or set(fixture) not in ({"reducer", *shape} for shape in shapes)
+    ):
         raise ValueError("transcript typed fixture fields are invalid")
     if fixture["reducer"] != reducer:
         raise ValueError("transcript typed fixture reducer is invalid")
@@ -139,7 +166,7 @@ def transcript_snapshot(reducer, state, time, accepted, effects):
 
 
 def derived_case_hashes(case):
-    """Execute the Protocol operation transcript without consulting expected effects."""
+    """Replay a typed Protocol transcript without trusting its expected receipt."""
     operations = case.get("operations")
     order = [
         "initialize", "consume", "advance-time", "clone-checkpoint",
@@ -150,8 +177,9 @@ def derived_case_hashes(case):
         raise ValueError("transcript operation order is invalid")
     reducer, state, time, accepted, effects, checkpoints, last = case["reducer"], None, None, [], [], {}, None
     initial = baseline = final = None
+    baseline_fixture = mutation_fixture = None
     allowed = {"op", "state", "time", "role", "fixture", "to", "name", "checkpoint"}
-    for index, operation in enumerate(operations):
+    for operation in operations:
         if not isinstance(operation, dict) or set(operation) - allowed:
             raise ValueError("transcript operation fields are invalid")
         op = operation["op"]
@@ -171,9 +199,11 @@ def derived_case_hashes(case):
         elif op == "consume":
             if set(operation) != {"op", "role", "fixture"} or operation["role"] not in {"setup", "baseline", "mutation"}:
                 raise ValueError("transcript consume is invalid")
-            input_hash = typed_fixture_hash(reducer, operation["fixture"])
+            fixture = operation["fixture"]
+            input_hash = typed_fixture_hash(reducer, fixture)
             role = operation["role"]
             if role == "mutation":
+                mutation_fixture = fixture
                 if len(accepted) != 2 or input_hash in accepted:
                     raise ValueError("mutation aliases setup or baseline")
                 last = "rejected"
@@ -186,6 +216,7 @@ def derived_case_hashes(case):
                 effects.append({"type": "accepted-event", "role": role, "inputSha256": input_hash})
                 last = "accepted"
                 if role == "baseline":
+                    baseline_fixture = fixture
                     baseline = transcript_snapshot(reducer, state, time, accepted, effects)
         elif op == "assert-accepted":
             if set(operation) != {"op"} or last != "accepted":
@@ -197,6 +228,23 @@ def derived_case_hashes(case):
                 raise ValueError("transcript rejection changed state")
         else:
             raise ValueError("transcript operation is unsupported")
+    semantic = case.get("semantic")
+    if (
+        not isinstance(semantic, dict)
+        or set(semantic) != {"changedField", "mutation"}
+        or not isinstance(semantic["changedField"], str)
+        or not semantic["changedField"]
+        or semantic["mutation"] != case.get("id")
+        or baseline_fixture is None
+        or mutation_fixture is None
+    ):
+        raise ValueError("transcript semantic contract is invalid")
+    changed = {
+        field for field in set(baseline_fixture) | set(mutation_fixture)
+        if baseline_fixture.get(field) != mutation_fixture.get(field)
+    }
+    if changed != {semantic["changedField"]}:
+        raise ValueError("transcript mutation does not match semantic changedField")
     if initial is None or baseline is None or final is None:
         raise ValueError("transcript snapshots are incomplete")
     derived = {
