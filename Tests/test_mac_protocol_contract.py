@@ -141,6 +141,19 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("AppliedProtocolBytes", PARSER)
         self.assertIn("ProtocolConsumerOutcome", PAIRING)
         self.assertIn("consumeControl", SENDER)
+    def test_matrix_case_invocation_is_full_case_bound_and_receipts_are_v2_complete(self):
+        self.assertIn('arguments.count == 4, arguments[0] == "case"', HARNESS)
+        self.assertIn('<canonical-full-case-json>', HARNESS)
+        self.assertIn('Set(object.keys) == ["baseline", "expected", "id", "message", "mutation", "outcome", "ownership", "reducer"]', HARNESS)
+        self.assertIn('sha256(caseData) == arguments[3]', HARNESS)
+        self.assertIn('sha256(baseline) == baselineSHA256', HARNESS)
+        self.assertIn('sha256(mutation) == inputSHA256', HARNESS)
+        self.assertIn('sha256(contextData) == contextSHA256', HARNESS)
+        self.assertIn('initialEffectSha256=', HARNESS)
+        self.assertIn('finalEffectSha256=', HARNESS)
+        self.assertNotIn("MacProtocolRecipe", HARNESS)
+        self.assertNotIn("LEGACY_CASE", HARNESS)
+        self.assertIn('<canonical-full-case-json>', HARNESS_SCRIPT)
         self.assertIn("consumeVerifiedSessionAccept", SENDER)
     def test_parser_caps_are_exact_and_legacy_mebibyte_receives_are_gone(self):
         for cap in ("65_535", "262_144", "16_777_216"):
@@ -325,16 +338,17 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("Mac/ProtocolParser.swift", swiftc_inputs(HARNESS_SCRIPT))
         self.assertNotRegex(HARNESS_SCRIPT, r"Tests/(?:ProtocolParser|ParserAdapter|.*Protocol.*Clone)\.swift")
         self.assertNotRegex(HARNESS, r"\b(?:ProtocolParserClone|ParserAdapter|PolicyAdapter|struct\s+ProtocolParser|enum\s+ProtocolParser)\b")
-    def test_mac_rejection_receipts_are_closed_protocol_recipe_evidence_v2(self):
-        self.assertIn("private static let catalog", PAIRING)
-        self.assertIn("MacProtocolRecipe.load", HARNESS)
+    def test_mac_rejection_receipts_are_full_case_evidence_v2(self):
         self.assertIn("VECTOR_RECEIPT v2", HARNESS)
-        self.assertIn("baselineSha256=", HARNESS)
-        self.assertIn("inputSha256=", HARNESS)
-        self.assertIn("contextSha256=", HARNESS)
+        for field in (
+            "baselineSha256=", "inputSha256=", "contextSha256=",
+            "initialEffectSha256=", "finalEffectSha256=",
+        ):
+            self.assertIn(field, HARNESS)
+        self.assertNotIn("MacProtocolRecipe", HARNESS)
         self.assertNotIn("mutationSha256=", HARNESS)
-        self.assertIn('Set(object.keys) == ["tag", "value"]', HARNESS)
-        self.assertIn('object["tag"] as? String == "canonical-json-v1"', HARNESS)
+        self.assertIn('Set(object.keys) == ["baseline", "expected", "id", "message", "mutation", "outcome", "ownership", "reducer"]', HARNESS)
+        self.assertIn('sha256(caseData) == arguments[3]', HARNESS)
 
 
 if __name__ == "__main__":

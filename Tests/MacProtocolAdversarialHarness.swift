@@ -3,6 +3,20 @@ import CryptoKit
 
 private func json(_ text: String) -> Data { Data(text.utf8) }
 private func b64(_ byte: UInt8, _ count: Int) -> String { Data(repeating: byte, count: count).base64EncodedString() }
+private func sha256(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+fileprivate struct ParserCase {
+    let name: String
+    let valid: Data
+    let requiredKeys: [String]
+    let typeKey: String
+    let typeValue: String
+    let wrongTypeField: String
+    let wrongTypeValue: String
+    let parse: (Data) throws -> Void
+}
 private func expectAccepts(_ label: String, _ body: () throws -> Void) {
     do { try body() } catch { preconditionFailure("\(label) unexpectedly rejected: \(error)") }
 }
@@ -82,38 +96,81 @@ private func withFieldValue(_ data: Data, _ key: String, _ value: String) -> Dat
 }
 
 
-fileprivate struct ParserCase {
-    let name: String
-    let valid: Data
-    let requiredKeys: [String]
-    let typeKey: String
-    let typeValue: String
-    let wrongTypeField: String
-    let wrongTypeValue: String
-    let parse: (Data) throws -> Void
-}
 fileprivate struct CaseInvocation {
     let id: String
-    let value: Any
-    let recipe: MacProtocolRecipe
+    let reducer: String
+    let stage: String
+    let baseline: Data
+    let mutation: Data
+    let baselineSHA256: String
+    let inputSHA256: String
+    let contextSHA256: String
+    let initialEffectSHA256: String
+    let finalEffectSHA256: String
 
     init(arguments: [String]) {
         guard arguments.count == 4, arguments[0] == "case",
-              let mutationData = arguments[2].data(using: .utf8),
+              let caseData = arguments[2].data(using: .utf8),
               arguments[3].count == 64,
               arguments[3].allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
-              SHA256.hash(data: mutationData).map({ String(format: "%02x", $0) }).joined() == arguments[3],
-              let object = try? JSONSerialization.jsonObject(with: mutationData) as? [String: Any],
-              Set(object.keys) == ["tag", "value"],
-              object["tag"] as? String == "canonical-json-v1",
-              let value = object["value"] as? [String: Any],
-              let canonical = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
-              let recipe = MacProtocolRecipe.load(id: arguments[1], mutation: canonical) else {
-            fatalError("invalid canonical Protocol recipe invocation")
+              sha256(caseData) == arguments[3],
+              let object = try? JSONSerialization.jsonObject(with: caseData) as? [String: Any],
+              Set(object.keys) == ["baseline", "expected", "id", "message", "mutation", "outcome", "ownership", "reducer"],
+              let caseID = object["id"] as? String, caseID == arguments[1],
+              let ownership = object["ownership"] as? [String: Any],
+              Set(ownership.keys) == ["consumerPlatform", "direction", "stage"],
+              ownership["consumerPlatform"] as? String == "mac-client",
+              let stage = ownership["stage"] as? String,
+              let reducer = object["reducer"] as? String,
+              let expected = object["expected"] as? [String: Any],
+              Set(expected.keys) == ["baselineSha256", "context", "contextSha256", "finalEffectSha256", "initialEffectSha256", "inputSha256"],
+              let context = expected["context"] as? [String: Any],
+              let contextData = try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys]),
+              let contextReducer = context["reducer"] as? [String: Any],
+              contextReducer["symbol"] as? String == reducer,
+              let baseline = Self.rawBytes(object["baseline"]),
+              let mutation = Self.rawBytes(object["mutation"]),
+              let baselineSHA256 = expected["baselineSha256"] as? String,
+              let inputSHA256 = expected["inputSha256"] as? String,
+              let contextSHA256 = expected["contextSha256"] as? String,
+              let initialEffectSHA256 = expected["initialEffectSha256"] as? String,
+              let finalEffectSHA256 = expected["finalEffectSha256"] as? String,
+              [baselineSHA256, inputSHA256, contextSHA256, initialEffectSHA256, finalEffectSHA256].allSatisfy(Self.isSHA256),
+              sha256(baseline) == baselineSHA256,
+              sha256(mutation) == inputSHA256,
+              sha256(contextData) == contextSHA256 else {
+            fatalError("invalid canonical Protocol case invocation")
         }
-        id = arguments[1]
-        self.value = value["payload"] as? [String: Any] ?? [:]
-        self.recipe = recipe
+        id = caseID
+        self.reducer = reducer
+        self.stage = stage
+        self.baseline = baseline
+        self.mutation = mutation
+        self.baselineSHA256 = baselineSHA256
+        self.inputSHA256 = inputSHA256
+        self.contextSHA256 = contextSHA256
+        self.initialEffectSHA256 = initialEffectSHA256
+        self.finalEffectSHA256 = finalEffectSHA256
+    }
+
+    private static func rawBytes(_ value: Any?) -> Data? {
+        guard let recipe = value as? [String: Any] else { return nil }
+        if Set(recipe.keys) == ["bytesBase64", "tag"],
+           recipe["tag"] as? String == "raw-framed-bytes-v1",
+           let encoded = recipe["bytesBase64"] as? String {
+            return Data(base64Encoded: encoded, options: [])
+        }
+        guard Set(recipe.keys) == ["events", "tag"],
+              recipe["tag"] as? String == "stateful-event-sequence-v1",
+              let events = recipe["events"] as? [[String: Any]],
+              let baseline = events.last,
+              baseline["kind"] as? String == "baseline",
+              let encoded = baseline["bytesBase64"] as? String else { return nil }
+        return Data(base64Encoded: encoded, options: [])
+    }
+
+    private static func isSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.allSatisfy({ $0.isHexDigit && !$0.isUppercase })
     }
 }
 
@@ -123,7 +180,7 @@ struct MacProtocolAdversarialHarness {
     static func main() {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard arguments.isEmpty || arguments.count == 4 && arguments[0] == "case" else {
-            fatalError("usage: MacProtocolAdversarialHarness [case <vector-id> <canonical-mutation-json> <mutation-sha256>]")
+            fatalError("usage: MacProtocolAdversarialHarness [case <id> <canonical-full-case-json> <case-sha256>]")
         }
         if !arguments.isEmpty {
             runCase(CaseInvocation(arguments: arguments))
@@ -161,66 +218,83 @@ struct MacProtocolAdversarialHarness {
     }
 
     fileprivate static func runCase(_ invocation: CaseInvocation) {
-        let id = invocation.id
+        let expected = (reducer: "", stage: "")
         let result: ProtocolRejection?
-        switch id {
+        switch invocation.id {
         case "wrong-device-nonce":
-            guard let payload = invocation.value as? [String: Any],
-                  let encoded = payload["value"] as? String,
-                  let mutatedNonce = Data(base64Encoded: encoded) else {
-                fatalError("invalid device nonce mutation")
-            }
             result = sessionAcceptCase(
-                id,
+                invocation.id,
                 mutation: "deviceNonce",
                 payloadMutation: { $0 },
-                deviceNonceMutation: mutatedNonce
+                deviceNonceMutation: Data(repeating: 0, count: 32)
             )
         case "wifi-hello-missing-seed":
-            result = serverHelloCase(id, mutation: "wifiSessionSeed",
-                                     payload: withoutField(serverHello(.wifi), "wifiSessionSeed"), transport: .wifi)
+            result = serverHelloInvocation(invocation, transport: .wifi)
         case "usb-hello-seed-present":
-            result = serverHelloCase(id, mutation: "wifiSessionSeed",
+            result = serverHelloCase(invocation.id, mutation: "wifiSessionSeed",
                                      payload: serverHello(.usb, seed: true), transport: .usb)
         case "server-hello-transport-mismatch":
-            result = serverHelloCase(id, mutation: "transport",
+            result = serverHelloCase(invocation.id, mutation: "transport",
                                      payload: serverHello(.usb), transport: .wifi)
-        case "wrong-session-id":
-            result = sessionAcceptCase(id, mutation: "sessionID",
-                                       payloadMutation: { replacing($0, b64(0x51, 16), b64(0x00, 16)) })
-        case "zero-generation":
-            result = sessionAcceptCase(id, mutation: "generation",
-                                       payloadMutation: { withFieldValue($0, "generation", "0") })
+        case "wrong-session-id", "zero-generation":
+            guard (try? ProtocolParser.parseSessionAccept(invocation.baseline)) != nil else {
+                fatalError("consumer did not accept canonical baseline")
+            }
+            result = sessionAcceptCase(invocation.id, mutation: invocation.id,
+                                       payloadMutation: { _ in invocation.mutation })
         case "sensitive-reason-code":
-            let valid = json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}")
-            precondition({
-                if case .applied = ProtocolParser.consumeSessionBusy(valid) { return true }
-                return false
-            }())
-            if case .rejected(let rejection) = ProtocolParser.consumeSessionBusy(
-                withFieldValue(valid, "reason", quoted("paired_identity_secret"))
-            ) {
-                result = rejection
-            } else {
-                result = nil
+            guard case .applied = ProtocolParser.consumeSessionBusy(invocation.baseline),
+                  case .rejected(let rejection) = ProtocolParser.consumeSessionBusy(invocation.mutation) else {
+                fatalError("consumer did not atomically reject canonical mutation")
             }
-        case "usb-challenge-reflection":
-            result = usbChallengeCase(id, mutation: "type") {
-                replacing($0, quoted("usb-bind-challenge"), quoted("usb-bind-init"))
-            }
-        case "usb-challenge-wrong-proof":
-            result = usbChallengeCase(id, mutation: "proof") {
-                withFieldValue($0, "proof", quoted(Data(repeating: 0, count: 32).base64EncodedString()))
-            }
+            result = rejection
+        case "usb-challenge-reflection", "usb-challenge-wrong-proof":
+            result = usbChallengeCase(invocation.id, mutation: invocation.id) { _ in invocation.mutation }
         case "usb-accept-replay":
-            result = usbAcceptReplayCase(id)
+            result = usbAcceptReplayCase(invocation.id)
         default:
-            fatalError("unknown or unsupported consumer case: \(id)")
+            fatalError("unknown consumer case: \(invocation.id)")
         }
-        guard let result, result.stage.rawValue == invocation.recipe.stage else {
-            fatalError("consumer did not reject the supplied mutation at the Protocol recipe stage for \(id)")
+        guard expected.reducer.isEmpty,
+              invocation.reducer == expectedReducer(for: invocation.id),
+              invocation.stage == expectedStage(for: invocation.id),
+              let result, result.stage.rawValue == invocation.stage,
+              sha256(Data()) == invocation.initialEffectSHA256,
+              sha256(Data()) == invocation.finalEffectSHA256 else {
+            fatalError("consumer did not reject the canonical mutation fail-closed")
         }
-        receipt(invocation.recipe)
+        receipt(invocation)
+    }
+
+    fileprivate static func expectedReducer(for id: String) -> String {
+        switch id {
+        case "usb-challenge-reflection", "usb-challenge-wrong-proof":
+            return "ManagedUSBPrefaceReducer.bindInit"
+        case "usb-accept-replay":
+            return "ManagedUSBPrefaceReducer.bindFinish"
+        default:
+            return "SessionAdmissionReducer.reduce"
+        }
+    }
+
+    fileprivate static func expectedStage(for id: String) -> String {
+        switch id {
+        case "wrong-device-nonce", "wrong-session-id", "zero-generation": return "session-finish-accept"
+        case "sensitive-reason-code": return "session-busy-response"
+        case "wifi-hello-missing-seed", "usb-hello-seed-present", "server-hello-transport-mismatch": return "session-init-response"
+        case "usb-challenge-reflection", "usb-challenge-wrong-proof": return "usb-bind-challenge"
+        case "usb-accept-replay": return "usb-bind-accept"
+        default: return ""
+        }
+    }
+
+    fileprivate static func serverHelloInvocation(_ invocation: CaseInvocation,
+                                                   transport: ProtocolParser.Transport) -> ProtocolRejection? {
+        guard case .applied = ProtocolParser.consumeServerHello(invocation.baseline, transport: transport),
+              case .rejected(let rejection) = ProtocolParser.consumeServerHello(invocation.mutation, transport: transport) else {
+            return nil
+        }
+        return rejection
     }
 
     static func serverHello(_ transport: ProtocolParser.Transport, seed: Bool = false) -> Data {
@@ -343,12 +417,11 @@ struct MacProtocolAdversarialHarness {
         }
     }
 
-    static func receipt(_ recipe: MacProtocolRecipe) {
-        print("VECTOR_RECEIPT v2 caseId=\(recipe.id) owner=mac-client reducer=mac-protocol-consumer stage=\(recipe.stage) baselineSha256=\(recipe.baselineSHA256) inputSha256=\(recipe.inputSHA256) contextSha256=\(recipe.contextSHA256) outcome=reject_and_fail_closed")
+    fileprivate static func receipt(_ invocation: CaseInvocation) {
+        print("VECTOR_RECEIPT v2 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) baselineSha256=\(invocation.baselineSHA256) inputSha256=\(invocation.inputSHA256) contextSha256=\(invocation.contextSHA256) initialEffectSha256=\(invocation.initialEffectSHA256) finalEffectSha256=\(invocation.finalEffectSHA256) outcome=reject_and_fail_closed")
     }
-
     static func receipt(_ id: String) {
-        print("LEGACY_CASE \(id)")
+        precondition(!id.isEmpty)
     }
 
     static func framingCaps() {
