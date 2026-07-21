@@ -51,8 +51,19 @@ private func decodeFrame(_ data: Data) throws {
     }
     let payload = Data(data.dropFirst(4))
     guard payload.count == expected else { throw Failure.invalidPayload }
-    if SessionControlValidator.validate(payload) == nil,
-       SessionWireParser.parse(payload) == nil {
+    let sessionAccepted: Bool
+    switch SessionAdmissionReducer.reduceSessionOpen(payload) {
+    case .applied:
+        sessionAccepted = true
+    case .rejected:
+        switch SessionAdmissionReducer.reduceChannelOpen(payload) {
+        case .applied:
+            sessionAccepted = true
+        case .rejected:
+            sessionAccepted = false
+        }
+    }
+    if SessionControlValidator.validate(payload) == nil, !sessionAccepted {
         throw Failure.invalidPayload
     }
 }
