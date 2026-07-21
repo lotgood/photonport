@@ -219,20 +219,29 @@ class MacProtocolContractTests(unittest.TestCase):
         for symbol in ("parseGenerationSnapshot", "GenerationStore", "SessionOwnershipState"):
             self.assertEqual(sum(source.count(symbol) for source in mac_sources), 0, symbol)
 
-    def test_build_pin_values_and_mac_resource_inclusion_are_exact(self):
+    def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
+        expected = {
+            "schemaVersion": 1,
+            "protocolCommit": "52cc335422183c68ee46d7f9dc9b52e16895ed65",
+            "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+            "normativeManifestDigest": "aff7ef1d27de776a6637f1b631661cca272a5289165206f81ed404e0db444a36",
+        }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(
-            pin,
-            {
-                "schemaVersion": 1,
-                "protocolCommit": "1f7d0ef052e13c3be3fe5c1658f002da0449d340",
-                "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-                "normativeManifestDigest": "1711266e97dc06b1877ca75838f8e788d6519ba4c258e060119aff0dbc2d4033",
-            },
-        )
+        self.assertEqual(pin, expected)
         self.assertNotIn("protocolTag", pin)
-        self.assertIn('protocolCommit: "1f7d0ef052e13c3be3fe5c1658f002da0449d340"', SENDER)
-        self.assertIn('normativeManifestDigest: "1711266e97dc06b1877ca75838f8e788d6519ba4c258e060119aff0dbc2d4033"', SENDER)
+
+        runtime_expected = {
+            "schemaVersion": int(re.search(r"schemaVersion:\s*(\d+)", SENDER).group(1)),
+            "protocolCommit": re.search(r'protocolCommit:\s*"([^"]+)"', SENDER).group(1),
+            "compatibilityDigest": re.search(r'compatibilityDigest:\s*"([^"]+)"', SENDER).group(1),
+            "normativeManifestDigest": re.search(r'normativeManifestDigest:\s*"([^"]+)"', SENDER).group(1),
+        }
+        self.assertEqual(pin, runtime_expected)
+        self.assertIn("guard pin == expected else", SENDER)
+
+        stale = {**pin, "protocolCommit": "1f7d0ef052e13c3be3fe5c1658f002da0449d340"}
+        self.assertNotEqual(stale, runtime_expected)
+        self.assertIn("throw SessionAdmissionError.invalidProtocolBuildPin", SENDER)
         self.assertIn('Bundle.main.url(forResource: "ProtocolBuildPin"', SENDER)
         self.assertIn("try ProtocolBuildPin.validate(at: pinURL)", SENDER)
 
