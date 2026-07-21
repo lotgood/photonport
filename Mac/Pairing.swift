@@ -93,6 +93,38 @@ struct SessionChannelOpen: Codable, Sendable {
     let nonce: String
     let proof: String
 }
+/// Closed Protocol recipes owned by the Mac consumer.  Callers supply only
+/// canonical mutation bytes; the catalog fixes every receipt field.
+struct MacProtocolRecipe: Sendable {
+    let id: String
+    let stage: String
+    let baselineSHA256: String
+    let inputSHA256: String
+    let contextSHA256: String
+
+    static func load(id: String, mutation: Data) -> MacProtocolRecipe? {
+        guard let recipe = catalog[id],
+              SHA256.hash(data: mutation).hexString == recipe.inputSHA256 else { return nil }
+        return recipe
+    }
+
+    private static let catalog: [String: MacProtocolRecipe] = [
+        "wrong-device-nonce": .init(id: "wrong-device-nonce", stage: "session-finish-accept", baselineSHA256: "da493ae85a9916a57b0aaf8caf3509bdf2545113ed9e0a46d7f8d7bcafc11125", inputSHA256: "b5b9fbf6684e0d60a024f69ac090001f92e778c903f5d75c944ba81876d7b3ab", contextSHA256: "886aafc578efe37715cf4940508321e6cadfba70ab280ae74ae1f17136b51c24"),
+        "wrong-session-id": .init(id: "wrong-session-id", stage: "session-finish-accept", baselineSHA256: "f4aa803cc6be091cc0c70a63ab37520c8469280493236eed9787fbee2c57d958", inputSHA256: "95c8f12ef85819529476ac647a086e49c7f1a756c7c5068cd79810b98f029f66", contextSHA256: "beed367810e448c1290ee9713ba8ef85796046d772e155cb3b7c10f3700d3b04"),
+        "zero-generation": .init(id: "zero-generation", stage: "session-finish-accept", baselineSHA256: "f4aa803cc6be091cc0c70a63ab37520c8469280493236eed9787fbee2c57d958", inputSHA256: "a911858ccc7d4459256cf419bbb7f8534819066684148f3748a683bf3beae834", contextSHA256: "beed367810e448c1290ee9713ba8ef85796046d772e155cb3b7c10f3700d3b04"),
+        "sensitive-reason-code": .init(id: "sensitive-reason-code", stage: "session-busy-response", baselineSHA256: "3a0af0cb9609435cd6116b23a83332f10572d4c5dfe69e54c14a64d59aa75e5f", inputSHA256: "0564f383fc5a89e0873d9cdb185d1232552ccc081447856c293620d1ba19fa90", contextSHA256: "c3857204166ee33db44783ff1b997feb979aad8ff8ce385b75166dcd7e82252b"),
+        "wifi-hello-missing-seed": .init(id: "wifi-hello-missing-seed", stage: "session-init-response", baselineSHA256: "da493ae85a9916a57b0aaf8caf3509bdf2545113ed9e0a46d7f8d7bcafc11125", inputSHA256: "00f0036f1919261c8ffd6e4a1d24fe2c3e44df8a57057969adcb16e52ce2458d", contextSHA256: "d51fb6d50f2788554970a7a8d688d5d12e9f022acb60eed3127651ba6444807a"),
+        "usb-hello-seed-present": .init(id: "usb-hello-seed-present", stage: "session-init-response", baselineSHA256: "da493ae85a9916a57b0aaf8caf3509bdf2545113ed9e0a46d7f8d7bcafc11125", inputSHA256: "fe608ff274b264b25abd8bbd2fc225e57d3a9cb67bc4ec1fba632c09cb4a1484", contextSHA256: "d51fb6d50f2788554970a7a8d688d5d12e9f022acb60eed3127651ba6444807a"),
+        "server-hello-transport-mismatch": .init(id: "server-hello-transport-mismatch", stage: "session-init-response", baselineSHA256: "da493ae85a9916a57b0aaf8caf3509bdf2545113ed9e0a46d7f8d7bcafc11125", inputSHA256: "14c794971174c9a07575e4449786e14175b2acb85925cca812b03ee5f03eccc9", contextSHA256: "d51fb6d50f2788554970a7a8d688d5d12e9f022acb60eed3127651ba6444807a"),
+        "usb-challenge-reflection": .init(id: "usb-challenge-reflection", stage: "usb-bind-challenge", baselineSHA256: "db7d8e4c48c82dce6c8a14cce3fb9e80df0b299201dd12874260c63786827917", inputSHA256: "caec40696e59cbc9cb053d95255e56def1eec2a247e78a64509b1ff207711ef1", contextSHA256: "62b028e4faa1d62d72defbb621fe983155b7618b2cdaca22eb09c93d7609ce32"),
+        "usb-challenge-wrong-proof": .init(id: "usb-challenge-wrong-proof", stage: "usb-bind-challenge", baselineSHA256: "db7d8e4c48c82dce6c8a14cce3fb9e80df0b299201dd12874260c63786827917", inputSHA256: "18f3ae1ce012a17c7e63a472b0df0384435961fe1ef8bc8124c50673d903fd16", contextSHA256: "62b028e4faa1d62d72defbb621fe983155b7618b2cdaca22eb09c93d7609ce32"),
+        "usb-accept-replay": .init(id: "usb-accept-replay", stage: "usb-bind-accept", baselineSHA256: "ad37dd094016d137016e198577b9c31d670a8f2eefadcf1fdd49d0016c1a63b9", inputSHA256: "5b7b8862326d2c2ab5d21dda12738be8a68d8f884458a512e84ff0e6d4f78755", contextSHA256: "45cd2e0ad4a209ab7b535c01bc509481d82d0dd4392cbfa07852c1cd6bc37c9c"),
+    ]
+}
+
+private extension SHA256Digest {
+    var hexString: String { map { String(format: "%02x", $0) }.joined() }
+}
 
 /// Controller-owned session state. A generation is a lease: asynchronous
 /// Keeping this reducer independent from Network.framework makes the busy,

@@ -61,78 +61,76 @@ def run_matrix(mac, ios, protocol, expected, output):
 
 class MatrixReceiptParserTest(unittest.TestCase):
     def setUp(self):
-        self.cases = [
-            {
-                "id": "mac-case",
-                "ownership": {
-                    "consumerPlatform": "mac-client",
-                    "direction": "ios-to-mac",
-                    "stage": "session-init-response",
+        self.cases = []
+        for case_id, platform, stage, reducer in (
+            ("mac-case", "mac-client", "session-init-response", "mac-protocol-consumer"),
+            ("ios-case", "ios-server", "framing-inbound", "ios-protocol-consumer"),
+        ):
+            baseline = {"tag": "canonical-json-v1", "value": {"message": case_id, "payload": {"accepted": True}}}
+            mutation = {"tag": "canonical-json-v1", "value": {"message": case_id, "payload": {"dimension": "nonce", "value": "mutated"}}}
+            ownership = {"consumerPlatform": platform, "direction": "ios-to-mac", "stage": stage}
+            context = {"message": case_id, "ownership": ownership}
+            self.cases.append({
+                "id": case_id, "ownership": ownership, "baseline": baseline, "mutation": mutation,
+                "expected": {
+                    "baselineSha256": MATRIX.digest(MATRIX.recipe_bytes(baseline)),
+                    "inputSha256": MATRIX.digest(MATRIX.recipe_bytes(mutation)),
+                    "contextSha256": MATRIX.digest(json.dumps(context, sort_keys=True, separators=(",", ":")).encode()),
+                    "context": context,
                 },
-                "mutation": {"dimension": "nonce", "value": "mutated"},
-            },
-            {
-                "id": "ios-case",
-                "ownership": {
-                    "consumerPlatform": "ios-server",
-                    "direction": "mac-to-ios",
-                    "stage": "framing-inbound",
-                },
-                "mutation": {"dimension": "utf8", "value": "ff"},
-            },
-        ]
-    def receipt(self, case, *, digest=None):
-        _, expected_digest = MATRIX.canonical_mutation(case["mutation"])
-        return (
-            f"VECTOR_RECEIPT consumer {case['id']} mutation={case['mutation']['dimension']} "
-            f"mutationSha256={expected_digest if digest is None else digest} "
-            f"stage={case['ownership']['stage']} outcome=rejected\n"
-        ).encode()
+                "reducer": reducer,
+            })
 
+    def receipt(self, **overrides):
+        case = self.cases[0]
+        fields = {
+            "caseId": case["id"], "owner": "mac-client", "reducer": case["reducer"],
+            "stage": case["ownership"]["stage"], **MATRIX.derived_case_hashes(case),
+            "outcome": "reject_and_fail_closed",
+        }
+        fields.update(overrides)
+        return ("VECTOR_RECEIPT v2 " + " ".join(f"{key}={value}" for key, value in fields.items()) + "\n").encode()
 
     def test_accepts_exact_metadata_bound_receipt(self):
-        receipts = MATRIX.consumer_vector_receipts(
-            self.receipt(self.cases[0]),
-            "mac-client",
-            self.cases,
-        )
-        _, digest = MATRIX.canonical_mutation(self.cases[0]["mutation"])
-        self.assertEqual(
-            receipts,
-            {
-                "mac-case": {
-                    "id": "mac-case",
-                    "ownership": self.cases[0]["ownership"],
-                    "mutation": self.cases[0]["mutation"],
-                    "mutationSha256": digest,
-                }
-            },
-        )
+        receipts = MATRIX.consumer_vector_receipts(self.receipt(), "mac-client", self.cases)
+        self.assertEqual(receipts["mac-case"]["inputSha256"], self.cases[0]["expected"]["inputSha256"])
+    def test_recipe_tags_are_decoded_before_hashing(self):
+        self.assertEqual(MATRIX.recipe_bytes({"tag": "base64-bytes-v1", "value": "AAE="}), b"\x00\x01")
+        self.assertEqual(MATRIX.recipe_bytes({"tag": "hex-bytes-v1", "value": "00ff"}), b"\x00\xff")
+        with self.assertRaises(ValueError):
+            MATRIX.recipe_bytes({"tag": "base64-bytes-v1", "value": "not base64"})
 
-    def test_rejects_metadata_and_digest_drift(self):
-        _, digest = MATRIX.canonical_mutation(self.cases[0]["mutation"])
-        invalid = (
-            self.receipt(self.cases[1]),
-            self.receipt(self.cases[0], digest="0" * 64),
-            b"VECTOR_RECEIPT consumer mac-case mutation=wrong mutationSha256=" + digest.encode()
-            + b" stage=session-init-response outcome=rejected\n",
-            self.receipt(self.cases[0]) + self.receipt(self.cases[0]),
-        )
-        for stdout in invalid:
+    def test_rejects_protocol_digest_echo_drift(self):
+        self.cases[0]["expected"]["inputSha256"] = "0" * 64
+        with self.assertRaises(ValueError):
+            MATRIX.consumer_vector_receipts(self.receipt(), "mac-client", self.cases)
+
+    def test_rejects_forged_recipe_digests(self):
+        for field in ("baselineSha256", "inputSha256", "contextSha256"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    MATRIX.consumer_vector_receipts(self.receipt(**{field: "0" * 64}), "mac-client", self.cases)
+
+    def test_rejects_extra_wrong_platform_duplicate_stage_owner_and_reducer(self):
+        for stdout in (
+            self.receipt(caseId="ios-case"),
+            self.receipt(stage="wrong"),
+            self.receipt(owner="ios-server"),
+            self.receipt(reducer="generic-parser"),
+            self.receipt() + self.receipt(),
+            self.receipt()[:-1] + " alias=parser\n".encode(),
+            b"VECTOR_RECEIPT v2 owner=mac-client caseId=mac-case reducer=mac-protocol-consumer stage=session-init-response baselineSha256=x inputSha256=x contextSha256=x outcome=reject_and_fail_closed\n",
+        ):
             with self.subTest(stdout=stdout):
                 with self.assertRaises(ValueError):
                     MATRIX.consumer_vector_receipts(stdout, "mac-client", self.cases)
 
-    def test_rejects_malformed_and_non_rejected_receipts(self):
+    def test_rejects_malformed_non_fail_closed_and_protocol_producer_receipts(self):
         for stdout in (
-            b"VECTOR_RECEIPT consumer mac-case\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce stage=session-init-response outcome=accepted\n",
-            b"VECTOR_RECEIPT producer mac-case mutation=nonce mutationSha256=" + b"0" * 64
-            + b" stage=session-init-response outcome=rejected\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce mutationSha256=" + b"0" * 64
-            + b" stage=session-init-response outcome=rejected extra\n",
-            b"VECTOR_RECEIPT consumer mac-case mutation=nonce mutationSha256=" + b"0" * 64
-            + b" stage=session-init-response outcome=rejected\n\xff",
+            b"VECTOR_RECEIPT v2 caseId=mac-case\n",
+            self.receipt(outcome="rejected"),
+            b"VECTOR_RECEIPT producer mac-case\n",
+            self.receipt() + b"\xff",
         ):
             with self.subTest(stdout=stdout):
                 with self.assertRaises(ValueError):

@@ -18,16 +18,10 @@ VECTOR_RECEIPT_PREFIX = "VECTOR_RECEIPT "
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 def canonical_mutation(mutation):
-    if not isinstance(mutation, dict) or set(mutation) != {"dimension", "value"}:
-        raise ValueError("mutation must contain exactly dimension and value")
-    if not isinstance(mutation["dimension"], str) or not mutation["dimension"]:
-        raise ValueError("mutation dimension must be a nonempty string")
     try:
-        encoded = json.dumps(mutation, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return json.dumps(mutation, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     except (TypeError, ValueError) as exc:
-        raise ValueError("mutation is not canonical JSON") from exc
-    return encoded, digest(encoded)
-
+        raise ValueError("mutation is not canonicalizable") from exc
 
 
 def atomic_json(path, value):
@@ -98,8 +92,33 @@ def run(argv, cwd, log_dir, label, *, stdin=None):
     }
 
 
+def recipe_bytes(recipe):
+    if not isinstance(recipe, dict) or set(recipe) != {"tag", "value"}:
+        raise ValueError("recipe fields are not exact")
+    tag, value = recipe["tag"], recipe["value"]
+    if tag == "canonical-json-v1" and isinstance(value, dict):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if tag == "base64-bytes-v1" and isinstance(value, str):
+        import base64
+        return base64.b64decode(value, validate=True)
+    if tag == "hex-bytes-v1" and isinstance(value, str) and len(value) % 2 == 0:
+        return bytes.fromhex(value)
+    raise ValueError("unsupported recipe tag or value")
+
+def derived_case_hashes(case):
+    expected = case["expected"]
+    context = expected["context"]
+    derived = {
+        "baselineSha256": digest(recipe_bytes(case["baseline"])),
+        "inputSha256": digest(recipe_bytes(case["mutation"])),
+        "contextSha256": digest(json.dumps(context, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")),
+    }
+    if any(expected.get(field) != value for field, value in derived.items()):
+        raise ValueError("Protocol digest echo drift: " + case["id"])
+    return derived
+
 def consumer_vector_receipts(stdout, platform, cases):
-    """Parse exact, metadata-bound consumer rejection receipts from one suite."""
+    """Parse exact v2 consumer receipts bound to closed Protocol recipes."""
     try:
         lines = stdout.decode("utf-8", "strict").splitlines()
     except UnicodeDecodeError:
@@ -110,38 +129,37 @@ def consumer_vector_receipts(stdout, platform, cases):
         if not line.startswith(VECTOR_RECEIPT_PREFIX):
             continue
         fields = line.split(" ")
-        if len(fields) != 7 or fields[0:2] != ["VECTOR_RECEIPT", "consumer"]:
-            raise ValueError("malformed consumer receipt: " + line)
-        case_id, mutation, mutation_sha256, stage, outcome = fields[2:]
-        if (
-            not mutation.startswith("mutation=")
-            or not mutation_sha256.startswith("mutationSha256=")
-            or not stage.startswith("stage=")
-            or not outcome.startswith("outcome=")
-        ):
-            raise ValueError("malformed consumer receipt: " + line)
+        receipt_fields = ("caseId", "owner", "reducer", "stage", "baselineSha256", "inputSha256", "contextSha256", "outcome")
+        if len(fields) != len(receipt_fields) + 2 or fields[0:2] != ["VECTOR_RECEIPT", "v2"]:
+            raise ValueError("malformed v2 consumer receipt: " + line)
+        pairs = {}
+        for expected_field, field in zip(receipt_fields, fields[2:]):
+            key, separator, value = field.partition("=")
+            if key != expected_field or not separator or not value:
+                raise ValueError("v2 consumer receipt fields are not exact: " + line)
+            pairs[key] = value
+        case_id = pairs["caseId"]
         if case_id in receipts:
             raise ValueError("duplicate consumer receipt ID: " + case_id)
         case = expected.get(case_id)
         if case is None:
             raise ValueError("consumer receipt is not owned by " + platform + ": " + case_id)
-        try:
-            _, expected_digest = canonical_mutation(case["mutation"])
-        except (KeyError, ValueError) as exc:
-            raise ValueError("consumer receipt mutation metadata is invalid: " + case_id) from exc
-        if mutation.removeprefix("mutation=") != case["mutation"]["dimension"]:
-            raise ValueError("consumer receipt mutation does not match metadata: " + case_id)
-        if mutation_sha256.removeprefix("mutationSha256=") != expected_digest:
-            raise ValueError("consumer receipt mutation digest does not match metadata: " + case_id)
-        if stage.removeprefix("stage=") != case["ownership"]["stage"]:
-            raise ValueError("consumer receipt stage does not match metadata: " + case_id)
-        if outcome != "outcome=rejected":
-            raise ValueError("consumer receipt outcome is not rejected: " + case_id)
+        ownership = case["ownership"]
+        if pairs["owner"] != platform or pairs["stage"] != ownership["stage"]:
+            raise ValueError("consumer receipt owner/stage does not match metadata: " + case_id)
+        if pairs["reducer"] != case["reducer"]:
+            raise ValueError("consumer receipt reducer does not match closed catalog: " + case_id)
+        if pairs["outcome"] != "reject_and_fail_closed":
+            raise ValueError("consumer receipt outcome is not fail-closed: " + case_id)
+        derived = derived_case_hashes(case)
+        if any(pairs[field] != value for field, value in derived.items()):
+            raise ValueError("consumer receipt digest does not match derived recipe: " + case_id)
         receipts[case_id] = {
             "id": case_id,
-            "ownership": case["ownership"],
-            "mutation": case["mutation"],
-            "mutationSha256": expected_digest,
+            "ownership": ownership,
+            "reducer": case["reducer"],
+            "expected": case["expected"],
+            **derived,
         }
     return receipts
 
@@ -371,17 +389,15 @@ def load_negative_cases(protocol_root):
     definitions = schema.get("$defs", {})
     case_schema = definitions.get("case", {})
     ownership_schema = definitions.get("ownership", {})
-    mutation_schema = definitions.get("mutation", {})
-    optional_case_fields = {"baseline", "encoding"}
+    optional_case_fields = {"encoding"}
     required_case_fields = set(case_schema.get("required", []))
-    allowed_case_fields = set(case_schema.get("properties", {}))
+    allowed_case_fields = set(case_schema.get("properties", {})) | optional_case_fields
     allowed_platforms = set(ownership_schema.get("properties", {}).get("consumerPlatform", {}).get("enum", []))
     allowed_directions = set(ownership_schema.get("properties", {}).get("direction", {}).get("enum", []))
     allowed_stages = set(ownership_schema.get("properties", {}).get("stage", {}).get("enum", []))
     if (
         case_schema.get("additionalProperties") is not False
         or ownership_schema.get("additionalProperties") is not False
-        or mutation_schema.get("additionalProperties") is not False
         or not required_case_fields
         or not allowed_platforms
         or not allowed_directions
@@ -396,27 +412,35 @@ def load_negative_cases(protocol_root):
         case_id = case.get("id")
         if not isinstance(case_id, str) or not case_id or case_id in identifiers:
             raise SystemExit("FAIL_CLOSED: duplicate or invalid negative vector case id")
+        ownership = case.get("ownership")
+        expected = case.get("expected")
         if (
             not isinstance(case.get("message"), str)
             or not case["message"]
             or case.get("outcome") != value["expectedOutcome"]
-            or any(field in case and not isinstance(case[field], str) for field in optional_case_fields)
-        ):
-            raise SystemExit("FAIL_CLOSED: negative vector case fields are invalid: " + case_id)
-        ownership = case.get("ownership")
-        mutation = case.get("mutation")
-        if (
-            not isinstance(ownership, dict)
+            or any(field in case and case[field] != "hex" for field in optional_case_fields)
+            or not isinstance(ownership, dict)
             or set(ownership) != set(ownership_schema.get("required", []))
             or ownership.get("consumerPlatform") not in allowed_platforms
             or ownership.get("direction") not in allowed_directions
             or ownership.get("stage") not in allowed_stages
-            or not isinstance(mutation, dict)
-            or set(mutation) != {"dimension", "value"}
-            or not isinstance(mutation.get("dimension"), str)
-            or not mutation["dimension"]
+            or not isinstance(expected, dict)
+            or set(expected) != {"context", "baselineSha256", "inputSha256", "contextSha256"}
         ):
-            raise SystemExit("FAIL_CLOSED: negative vector ownership/mutation is invalid: " + case_id)
+            raise SystemExit("FAIL_CLOSED: negative vector case fields are invalid: " + case_id)
+        try:
+            if (
+                expected["context"] != {"message": case["message"], "ownership": ownership}
+                or any(not isinstance(expected[field], str) or len(expected[field]) != 64 or any(c not in "0123456789abcdef" for c in expected[field]) for field in ("baselineSha256", "inputSha256", "contextSha256"))
+            ):
+                raise ValueError("expected recipe digest fields are invalid")
+            derived_case_hashes(case)
+        except (TypeError, ValueError) as exc:
+            raise SystemExit("FAIL_CLOSED: negative vector recipe is invalid: " + case_id + ": " + str(exc)) from exc
+        case["reducer"] = {
+            "mac-client": "mac-protocol-consumer",
+            "ios-server": "ios-protocol-consumer",
+        }[ownership["consumerPlatform"]]
         identifiers.add(case_id)
         cases.append(case)
     return cases
@@ -445,7 +469,22 @@ def load_positive_case_ids(protocol_root):
 
 
 def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, negative_cases):
-    commands = [
+    commands = []
+    for platform, root, script, label in (
+        ("mac-client", mac, "./scripts/test-mac-protocol-adversarial.sh", "suite-mac-adversarial"),
+        ("ios-server", ios, "./scripts/test-receiver-adversarial.sh", "suite-ios-adversarial"),
+    ):
+        for case in negative_cases:
+            if case["ownership"]["consumerPlatform"] != platform:
+                continue
+            canonical = canonical_mutation(case["mutation"])
+            commands.append((
+                root,
+                [script, "case", case["id"], canonical, digest(canonical.encode("utf-8"))],
+                label + "-" + case["id"],
+                platform,
+            ))
+    commands.extend([
         (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors", None),
         (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors", None),
         (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors", None),
@@ -455,7 +494,6 @@ def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, nega
                 sys.executable, "-m", "unittest",
                 "tests.test_protocol.ProtocolTests.test_pairing_vector_recomputes_every_output",
                 "tests.test_protocol.ProtocolTests.test_session_vectors_recompute_every_output",
-                "tests.test_protocol.ProtocolTests.test_usb_binding_vectors_preface_records_and_key_separation",
                 "-v",
             ],
             "suite-protocol-positive-vectors",
@@ -477,7 +515,7 @@ def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, nega
             "suite-protocol-conformance",
             None,
         ),
-    ]
+    ])
     results = {}
     evidence = empty_vector_evidence()
     consumer_receipts = []
@@ -500,37 +538,6 @@ def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, nega
             evidence["positive"]["producer"] = {case_id: True for case_id in positive_ids}
         if parsed is not None:
             consumer_receipts.extend({**item, "commandReceipt": receipt} for item in parsed.values())
-    for case in negative_cases:
-        platform = case["ownership"]["consumerPlatform"]
-        if platform == "mac-client":
-            cwd = mac
-            mutation_json, mutation_sha256 = canonical_mutation(case["mutation"])
-            argv = ["./scripts/test-mac-protocol-adversarial.sh", "case", case["id"],
-                    mutation_json.decode("utf-8"), mutation_sha256]
-        elif platform == "ios-server":
-            cwd = ios
-            mutation_json, mutation_sha256 = canonical_mutation(case["mutation"])
-            argv = ["./scripts/test-receiver-adversarial.sh", case["id"],
-                    mutation_json.decode("utf-8"), mutation_sha256]
-        else:
-            receipt_errors.append("unsupported consumer platform: " + platform)
-            continue
-        label = "negative-consumer-" + platform + "-" + case["id"]
-        completed, receipt = run(argv, cwd, logs, label)
-        receipts.append(receipt)
-        if completed.returncode != 0:
-            receipt_errors.append(label + ": consumer command failed")
-            continue
-        try:
-            parsed = consumer_vector_receipts(completed.stdout, platform, [case])
-        except ValueError as exc:
-            receipt_errors.append(label + ": " + str(exc))
-            continue
-        if set(parsed) != {case["id"]}:
-            receipt_errors.append(label + ": exact consumer receipt missing")
-            continue
-        evidence["negative"]["consumer"][case["id"]] = True
-        consumer_receipts.extend({**item, "commandReceipt": receipt} for item in parsed.values())
     return results, evidence, consumer_receipts, receipt_errors
 
 

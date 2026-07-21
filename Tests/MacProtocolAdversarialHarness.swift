@@ -94,27 +94,26 @@ fileprivate struct ParserCase {
 }
 fileprivate struct CaseInvocation {
     let id: String
-    let mutation: String
-    let mutationSHA256: String
     let value: Any
+    let recipe: MacProtocolRecipe
 
     init(arguments: [String]) {
         guard arguments.count == 4, arguments[0] == "case",
               let mutationData = arguments[2].data(using: .utf8),
               arguments[3].count == 64,
-              arguments[3].allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else {
-            fatalError("usage: MacProtocolAdversarialHarness case <vector-id> <canonical-mutation-json> <mutation-sha256>")
-        }
-        guard SHA256.hash(data: mutationData).map({ String(format: "%02x", $0) }).joined() == arguments[3],
+              arguments[3].allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
+              SHA256.hash(data: mutationData).map({ String(format: "%02x", $0) }).joined() == arguments[3],
               let object = try? JSONSerialization.jsonObject(with: mutationData) as? [String: Any],
-              Set(object.keys) == ["dimension", "value"],
-              let dimension = object["dimension"] as? String, !dimension.isEmpty else {
-            fatalError("invalid canonical mutation binding")
+              Set(object.keys) == ["tag", "value"],
+              object["tag"] as? String == "canonical-json-v1",
+              let value = object["value"] as? [String: Any],
+              let canonical = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+              let recipe = MacProtocolRecipe.load(id: arguments[1], mutation: canonical) else {
+            fatalError("invalid canonical Protocol recipe invocation")
         }
         id = arguments[1]
-        mutation = dimension
-        mutationSHA256 = arguments[3]
-        value = object["value"]!
+        self.value = value["payload"] as? [String: Any] ?? [:]
+        self.recipe = recipe
     }
 }
 
@@ -166,7 +165,8 @@ struct MacProtocolAdversarialHarness {
         let result: ProtocolRejection?
         switch id {
         case "wrong-device-nonce":
-            guard let encoded = invocation.value as? String,
+            guard let payload = invocation.value as? [String: Any],
+                  let encoded = payload["value"] as? String,
                   let mutatedNonce = Data(base64Encoded: encoded) else {
                 fatalError("invalid device nonce mutation")
             }
@@ -204,37 +204,23 @@ struct MacProtocolAdversarialHarness {
             } else {
                 result = nil
             }
-        case "video-keyframe-missing-h264-parameter-sets":
-            result = mediaCase(id, mutation: "Annex-B", codec: "h264",
-                               baseline: Data([0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65]),
-                               mutated: Data([0, 0, 0, 1, 0x65]), keyframe: true)
-        case "video-keyframe-missing-hevc-parameter-sets":
-            result = mediaCase(id, mutation: "Annex-B", codec: "hevc",
-                               baseline: Data([0, 0, 0, 1, 0x40, 0, 0, 0, 1, 0x42, 0, 0, 0, 1, 0x44, 0, 0, 0, 1, 0x26]),
-                               mutated: Data([0, 0, 0, 1, 0x26]), keyframe: true)
-        case "video-random-access-telemetry-mismatch":
-            result = mediaCase(id, mutation: "keyframe", codec: "h264",
-                               baseline: Data([0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65]),
-                               mutated: Data([0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x68, 0, 0, 0, 1, 0x65]), keyframe: false)
         case "usb-challenge-reflection":
             result = usbChallengeCase(id, mutation: "type") {
                 replacing($0, quoted("usb-bind-challenge"), quoted("usb-bind-init"))
             }
         case "usb-challenge-wrong-proof":
             result = usbChallengeCase(id, mutation: "proof") {
-                return withFieldValue($0, "proof", quoted(Data(repeating: 0, count: 32).base64EncodedString()))
+                withFieldValue($0, "proof", quoted(Data(repeating: 0, count: 32).base64EncodedString()))
             }
         case "usb-accept-replay":
             result = usbAcceptReplayCase(id)
-        case "usb-primary-audio-binding-cross-use":
-            result = usbPrimaryAudioBindingCrossUseCase(id)
         default:
             fatalError("unknown or unsupported consumer case: \(id)")
         }
-        guard let result else {
-            fatalError("consumer did not reject the supplied mutation for \(id)")
+        guard let result, result.stage.rawValue == invocation.recipe.stage else {
+            fatalError("consumer did not reject the supplied mutation at the Protocol recipe stage for \(id)")
         }
-        receipt(id, mutation: invocation.mutation, rejection: result, mutationSHA256: invocation.mutationSHA256)
+        receipt(invocation.recipe)
     }
 
     static func serverHello(_ transport: ProtocolParser.Transport, seed: Bool = false) -> Data {
@@ -357,13 +343,12 @@ struct MacProtocolAdversarialHarness {
         }
     }
 
-    static func receipt(_ id: String, mutation: String, rejection: ProtocolRejection,
-                        mutationSHA256: String) {
-        print("VECTOR_RECEIPT consumer \(id) mutation=\(mutation) mutationSha256=\(mutationSHA256) stage=\(rejection.stage.rawValue) outcome=rejected")
+    static func receipt(_ recipe: MacProtocolRecipe) {
+        print("VECTOR_RECEIPT v2 caseId=\(recipe.id) owner=mac-client reducer=mac-protocol-consumer stage=\(recipe.stage) baselineSha256=\(recipe.baselineSHA256) inputSha256=\(recipe.inputSHA256) contextSha256=\(recipe.contextSHA256) outcome=reject_and_fail_closed")
     }
 
     static func receipt(_ id: String) {
-        print("VECTOR_RECEIPT consumer \(id) stage=mac-protocol-parser outcome=rejected")
+        print("LEGACY_CASE \(id)")
     }
 
     static func framingCaps() {

@@ -227,9 +227,9 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
         expected = {
             "schemaVersion": 1,
-            "protocolCommit": "9f10742b3f79d6f160e02df13e45d2b32502d73c",
+            "protocolCommit": "4b98fca1994eb1a5e22cfda31dbca66068d7d4b0",
             "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-            "normativeManifestDigest": "11633924d6f5bee2e30a00393dcfa98744b89dab359fc5def0373ae2dc8767be",
+            "normativeManifestDigest": "ff8dd8ad95b605a72c8f685aebb9740dcd0dac78a3f318ad8c29708056a8b170",
         }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         self.assertEqual(pin, expected)
@@ -325,6 +325,16 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("Mac/ProtocolParser.swift", swiftc_inputs(HARNESS_SCRIPT))
         self.assertNotRegex(HARNESS_SCRIPT, r"Tests/(?:ProtocolParser|ParserAdapter|.*Protocol.*Clone)\.swift")
         self.assertNotRegex(HARNESS, r"\b(?:ProtocolParserClone|ParserAdapter|PolicyAdapter|struct\s+ProtocolParser|enum\s+ProtocolParser)\b")
+    def test_mac_rejection_receipts_are_closed_protocol_recipe_evidence_v2(self):
+        self.assertIn("private static let catalog", PAIRING)
+        self.assertIn("MacProtocolRecipe.load", HARNESS)
+        self.assertIn("VECTOR_RECEIPT v2", HARNESS)
+        self.assertIn("baselineSha256=", HARNESS)
+        self.assertIn("inputSha256=", HARNESS)
+        self.assertIn("contextSha256=", HARNESS)
+        self.assertNotIn("mutationSha256=", HARNESS)
+        self.assertIn('Set(object.keys) == ["tag", "value"]', HARNESS)
+        self.assertIn('object["tag"] as? String == "canonical-json-v1"', HARNESS)
 
 
 if __name__ == "__main__":
