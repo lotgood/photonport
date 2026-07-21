@@ -76,6 +76,8 @@ class MatrixReceiptParserTest(unittest.TestCase):
                     "baselineSha256": MATRIX.digest(MATRIX.recipe_bytes(baseline)),
                     "inputSha256": MATRIX.digest(MATRIX.recipe_bytes(mutation)),
                     "contextSha256": MATRIX.digest(json.dumps(context, sort_keys=True, separators=(",", ":")).encode()),
+                    "initialEffectSha256": MATRIX.digest(b""),
+                    "finalEffectSha256": MATRIX.digest(b""),
                     "context": context,
                 },
                 "reducer": reducer,
@@ -99,6 +101,25 @@ class MatrixReceiptParserTest(unittest.TestCase):
         self.assertEqual(MATRIX.recipe_bytes({"tag": "hex-bytes-v1", "value": "00ff"}), b"\x00\xff")
         with self.assertRaises(ValueError):
             MATRIX.recipe_bytes({"tag": "base64-bytes-v1", "value": "not base64"})
+    def test_rejects_omitted_or_reordered_stateful_setup(self):
+        valid = {
+            "tag": "stateful-event-sequence-v1",
+            "events": [
+                {"kind": "setup", "bytesBase64": "AAE="},
+                {"kind": "baseline", "bytesBase64": "AgM="},
+            ],
+        }
+        self.assertEqual(MATRIX.recipe_bytes(valid), b"\x02\x03")
+        for recipe in (
+            {"tag": "stateful-event-sequence-v1", "events": [{"kind": "baseline", "bytesBase64": "AgM="}]},
+            {"tag": "stateful-event-sequence-v1", "events": [
+                {"kind": "baseline", "bytesBase64": "AgM="},
+                {"kind": "setup", "bytesBase64": "AAE="},
+            ]},
+        ):
+            with self.subTest(recipe=recipe):
+                with self.assertRaises(ValueError):
+                    MATRIX.recipe_bytes(recipe)
 
     def test_rejects_protocol_digest_echo_drift(self):
         self.cases[0]["expected"]["inputSha256"] = "0" * 64
@@ -106,7 +127,7 @@ class MatrixReceiptParserTest(unittest.TestCase):
             MATRIX.consumer_vector_receipts(self.receipt(), "mac-client", self.cases)
 
     def test_rejects_forged_recipe_digests(self):
-        for field in ("baselineSha256", "inputSha256", "contextSha256"):
+        for field in ("baselineSha256", "inputSha256", "contextSha256", "initialEffectSha256", "finalEffectSha256"):
             with self.subTest(field=field):
                 with self.assertRaises(ValueError):
                     MATRIX.consumer_vector_receipts(self.receipt(**{field: "0" * 64}), "mac-client", self.cases)

@@ -17,11 +17,11 @@ VECTOR_RECEIPT_PREFIX = "VECTOR_RECEIPT "
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
-def canonical_mutation(mutation):
+def canonical_case(case):
     try:
-        return json.dumps(mutation, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(case, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     except (TypeError, ValueError) as exc:
-        raise ValueError("mutation is not canonicalizable") from exc
+        raise ValueError("case is not canonicalizable") from exc
 
 
 def atomic_json(path, value):
@@ -93,13 +93,30 @@ def run(argv, cwd, log_dir, label, *, stdin=None):
 
 
 def recipe_bytes(recipe):
-    if not isinstance(recipe, dict) or set(recipe) != {"tag", "value"}:
+    import base64
+    if not isinstance(recipe, dict):
+        raise ValueError("recipe is not an object")
+    if set(recipe) == {"tag", "bytesBase64"} and recipe["tag"] == "raw-framed-bytes-v1":
+        return base64.b64decode(recipe["bytesBase64"], validate=True)
+    if set(recipe) == {"tag", "events"} and recipe["tag"] == "stateful-event-sequence-v1":
+        events = recipe["events"]
+        if not isinstance(events, list) or len(events) < 2:
+            raise ValueError("stateful recipe has no setup and baseline")
+        baseline = events[-1]
+        if not isinstance(baseline, dict) or set(baseline) != {"kind", "bytesBase64"} or baseline["kind"] != "baseline":
+            raise ValueError("stateful recipe baseline is not final")
+        setups = events[:-1]
+        if any(not isinstance(event, dict) or set(event) != {"kind", "bytesBase64"} or event["kind"] != "setup" for event in setups):
+            raise ValueError("stateful recipe setup is missing, reordered, or malformed")
+        decoded = [base64.b64decode(event["bytesBase64"], validate=True) for event in events]
+        return decoded[-1]
+    # Retain legacy decoding only for Mac-owned unit fixtures.
+    if set(recipe) != {"tag", "value"}:
         raise ValueError("recipe fields are not exact")
     tag, value = recipe["tag"], recipe["value"]
     if tag == "canonical-json-v1" and isinstance(value, dict):
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if tag == "base64-bytes-v1" and isinstance(value, str):
-        import base64
         return base64.b64decode(value, validate=True)
     if tag == "hex-bytes-v1" and isinstance(value, str) and len(value) % 2 == 0:
         return bytes.fromhex(value)
@@ -112,6 +129,8 @@ def derived_case_hashes(case):
         "baselineSha256": digest(recipe_bytes(case["baseline"])),
         "inputSha256": digest(recipe_bytes(case["mutation"])),
         "contextSha256": digest(json.dumps(context, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")),
+        "initialEffectSha256": expected["initialEffectSha256"],
+        "finalEffectSha256": expected["finalEffectSha256"],
     }
     if any(expected.get(field) != value for field, value in derived.items()):
         raise ValueError("Protocol digest echo drift: " + case["id"])
@@ -129,7 +148,7 @@ def consumer_vector_receipts(stdout, platform, cases):
         if not line.startswith(VECTOR_RECEIPT_PREFIX):
             continue
         fields = line.split(" ")
-        receipt_fields = ("caseId", "owner", "reducer", "stage", "baselineSha256", "inputSha256", "contextSha256", "outcome")
+        receipt_fields = ("caseId", "owner", "reducer", "stage", "baselineSha256", "inputSha256", "contextSha256", "initialEffectSha256", "finalEffectSha256", "outcome")
         if len(fields) != len(receipt_fields) + 2 or fields[0:2] != ["VECTOR_RECEIPT", "v2"]:
             raise ValueError("malformed v2 consumer receipt: " + line)
         pairs = {}
@@ -425,22 +444,20 @@ def load_negative_cases(protocol_root):
             or ownership.get("direction") not in allowed_directions
             or ownership.get("stage") not in allowed_stages
             or not isinstance(expected, dict)
-            or set(expected) != {"context", "baselineSha256", "inputSha256", "contextSha256"}
+            or set(expected) != {"context", "baselineSha256", "inputSha256", "contextSha256", "initialEffectSha256", "finalEffectSha256"}
+            or not isinstance(case.get("reducer"), str) or not case["reducer"]
         ):
             raise SystemExit("FAIL_CLOSED: negative vector case fields are invalid: " + case_id)
         try:
             if (
-                expected["context"] != {"message": case["message"], "ownership": ownership}
-                or any(not isinstance(expected[field], str) or len(expected[field]) != 64 or any(c not in "0123456789abcdef" for c in expected[field]) for field in ("baselineSha256", "inputSha256", "contextSha256"))
+                not isinstance(expected["context"], dict)
+                or expected["context"].get("reducer", {}).get("symbol") != case["reducer"]
+                or any(not isinstance(expected[field], str) or len(expected[field]) != 64 or any(c not in "0123456789abcdef" for c in expected[field]) for field in ("baselineSha256", "inputSha256", "contextSha256", "initialEffectSha256", "finalEffectSha256"))
             ):
                 raise ValueError("expected recipe digest fields are invalid")
             derived_case_hashes(case)
         except (TypeError, ValueError) as exc:
             raise SystemExit("FAIL_CLOSED: negative vector recipe is invalid: " + case_id + ": " + str(exc)) from exc
-        case["reducer"] = {
-            "mac-client": "mac-protocol-consumer",
-            "ios-server": "ios-protocol-consumer",
-        }[ownership["consumerPlatform"]]
         identifiers.add(case_id)
         cases.append(case)
     return cases
@@ -477,7 +494,7 @@ def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, nega
         for case in negative_cases:
             if case["ownership"]["consumerPlatform"] != platform:
                 continue
-            canonical = canonical_mutation(case["mutation"])
+            canonical = canonical_case(case)
             commands.append((
                 root,
                 [script, "case", case["id"], canonical, digest(canonical.encode("utf-8"))],

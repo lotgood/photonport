@@ -227,9 +227,9 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
         expected = {
             "schemaVersion": 1,
-            "protocolCommit": "4b98fca1994eb1a5e22cfda31dbca66068d7d4b0",
+            "protocolCommit": "267cb472ee806f4f7a860ddcf1a36710b86939d4",
             "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-            "normativeManifestDigest": "ff8dd8ad95b605a72c8f685aebb9740dcd0dac78a3f318ad8c29708056a8b170",
+            "normativeManifestDigest": "1c1d7b97e51673053f6f17f2ac0667f3b1b4cd5299b544434b92f4e79ce2f9f4",
         }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         self.assertEqual(pin, expected)
