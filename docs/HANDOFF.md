@@ -1,18 +1,40 @@
 # PhotonPort handoff — state and remaining gates
 
-Last updated: 2026-07-14. This file is the single entry point for picking the
-release work back up. The full test-suite re-verification recorded on this date
-was green; it does not evidence external approval, signing, notarization, or
-publication. Machine-readable receipts live under `artifacts/`; durable goal
-state lives in `.gjc/ultragoal/` (local, not committed).
+Last updated: 2026-07-22. This file is the single entry point for picking the
+release work back up. On this date the authenticated-wire refactor was
+completed, physically verified against the tested pair, and extended with
+canonical ProRes 422; every automated suite and the cross-repo matrix are
+green at the tuple below. Nothing here evidences external approval, signing,
+notarization, or publication. Machine-readable receipts live under
+`artifacts/`; durable goal state lives in `.gjc/ultragoal/` (local, not
+committed).
+
+## Current source tuple and branch layout (2026-07-22)
+
+| Repository | Branch | Commit | Notes |
+|---|---|---|---|
+| `lotgood/photonport` | `refactor/complete` | `acdf8c2` (matrix tuple `9278aad`) | 57 commits ahead of `origin/main` |
+| `lotgood/photonport-ios` | `refactor/complete` | `cb6e9ac` | 46 commits ahead of `origin/main` |
+| `lotgood/photonport-protocol` | `refactor/complete` | `acae6f5` | 20 commits ahead of `origin/main` |
+
+What landed since 2026-07-14, all physically verified over USB on the tested
+pair: the session v3 authenticated USB wire (mandatory PSK preface +
+per-direction HMAC records), transport-explicit server-hello with single-use
+`wifiSessionSeed`, receiver-local cursor sprite, frame-admission tuning
+(65→73fps on HEVC), and canonical ProRes 422 Proxy/LT (USB-only,
+117–119fps at ~4ms p50 encode, receiver `dropped=0`). The
+`wip/broken-refactor-snapshot` branches in all three repos preserve a
+non-compiling intermediate worktree for archaeology only — never push or
+build them; `ooo/*` branches are orchestrator salvage lanes, also not for
+publication.
 
 ## Repository split
 
 | Repository | License | Role | State |
 |---|---|---|---|
 | `lotgood/photonport` (this repo) | GPL-3.0 | Mac sender + preserved historical iOS source | public, active |
-| `lotgood/photonport-ios` | MIT | standalone fresh iOS receiver | private; origin at `f648668`, local `a2313c0` (3 unpushed commits) |
-| `lotgood/photonport-protocol` | MIT | canonical pairing-v2 / session-v3 contract | private; origin at `c23d345`, local `2280861` (1 unpushed commit) |
+| `lotgood/photonport-ios` | MIT | standalone fresh iOS receiver | private; origin at `a2313c0`, local `refactor/complete` at `cb6e9ac` (46 unpushed commits) |
+| `lotgood/photonport-protocol` | MIT | canonical pairing-v2 / session-v3 contract | private; origin at `2280861`, local `refactor/complete` at `acae6f5` (20 unpushed commits) |
 
 The standalone iOS receiver is a provenance-cleared reconstruction: 47 shipped
 files, byte-verified MIT lineage, 1,267 similarity candidates independently
@@ -69,9 +91,12 @@ notarization result, or TestFlight result.
 
 Open decisions: publish timing for the two private repositories; pushing the
 sibling repos' local commits to their private origins — `Mac/ProtocolBuildPin.json`
-pins protocol commit `2280861`, which currently exists only in the local
-`photonport-protocol` clone; whether to push GitHub Pages/appcast for Mac
-auto-update before 0.1.0 signing.
+pins protocol commit `acae6f5`, which currently exists only in the local
+`photonport-protocol` clone, so the Mac tree cannot be rebuilt reproducibly
+from public sources until that repository is pushed; whether to push GitHub
+Pages/appcast for Mac auto-update before 0.1.0 signing. Note that pushing
+`main` here triggers `pages.yml` (site deploy) when its watched paths change —
+pushing code alone does not publish the site, but a release event does.
 
 ## How to re-verify everything
 

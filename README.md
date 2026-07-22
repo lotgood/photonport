@@ -80,7 +80,7 @@ the split as a completed release.
 
 | | Apple Sidecar | PhotonPort (tested pair) |
 |---|---|---|
-| Resolution | fixed scale | native 2816×2048 |
+| Resolution | fixed scale | native 2816×1940 |
 | Refresh | 60Hz | 120Hz (118fps delivered) |
 | Dynamic range | SDR | HDR — EDR compositing, HLG 10-bit |
 | Video latency | ~30ms | 5–6ms e2e p50 |
@@ -103,8 +103,15 @@ the split as a completed release.
   mapping over-brightened highlights on a high-headroom panel.
 - **ProRes over the wire (opt-in, USB only)** — intra-only ProRes 422 on the
   media engine's dedicated block bypasses the HEVC engine's throughput
-  ceiling (~430Mpx/s measured): native 120fps at ~4ms encode, ~330Mbps on a
-  measured ~1Gbps usbmux link.
+  ceiling (~430Mpx/s measured): native 120fps at ~4ms encode (p50, measured
+  end-to-end at 117–119fps with zero receiver drops), content-dependent
+  bitrate on a measured ~1Gbps usbmux link. ProRes is a canonical
+  session v3 codec — the receiver validates the exact frame size and `icpf`
+  tag and rejects ProRes on Wi-Fi.
+- **Authenticated USB** — USB is no longer trusted by locality: a mandatory
+  PSK-authenticated preface (usb-bind handshake) binds the channel to the
+  pairing credential, and every session/control/video/audio payload rides
+  per-direction HMAC-tagged records with strict sequence numbers.
 - **Audio tap routing** — a CoreAudio process tap (`mutedWhenTapped`,
   macOS 14.2+) mutes the Mac and forwards 5.3ms PCM buffers on a dedicated
   connection (its own TCP socket on USB, its own TLS connection over WiFi)
@@ -112,8 +119,9 @@ the split as a completed release.
   Bluetooth headphones, forwarding pauses and audio stays on the headphones.
 - **WiFi transport (pairing + TLS, transport-tuned)** — WiFi runs over
   TLS-PSK after a one-time SAS-numeric-comparison pairing (see Security). It can't carry the
-  USB-tier native-120fps HDR config — the HEVC encoder needs ~20ms/frame at
-  native res (ProRes isn't available off USB) and the radio's usable
+  USB-tier native-120fps HDR config — the HEVC Main10 encoder needs
+  ~30ms/frame p50 at native res on macOS 27 (ProRes isn't available off
+  USB) and the radio's usable
   bitrate is a fraction of usbmux — so WiFi is capped to 60fps and a
   reduced capture scale, with a hard encoder burst cap (DataRateLimits) and
   a deeper audio jitter buffer. Measured on the tested pair (−64dBm 5GHz):

@@ -5,15 +5,20 @@
 //                        (announced by the phone in a "hello" message) and
 //                        capture that — macOS gains a true second monitor.
 //
-// Pipeline:  ScreenCaptureKit -> VideoToolbox (H.264, or HEVC Main10 HLG when
-//            the receiver announces an EDR panel and the Mac runs macOS 15+)
+// Pipeline:  ScreenCaptureKit / CGDisplayStream-EDR -> VideoToolbox
+//            (H.264; HEVC Main10 HLG when the receiver announces an EDR
+//            panel; or intra-only ProRes 422 on USB via `prores proxy|lt`)
 //            -> framed TCP
 // Roles: the PHONE listens, the MAC connects (required for usbmux/USB).
 //
-// Wire protocol, Mac -> phone:
-//   [4-byte big-endian outer length]
-//   [4-byte big-endian telemetry JSON length][telemetry JSON][Annex-B payload]
-// Wire protocol, phone -> Mac: [4-byte big-endian length][JSON message]
+// Wire protocol, Mac -> phone (session v3):
+//   USB: PSK-authenticated preface (usb-bind), then every payload rides an
+//        HMAC-tagged record [4B BE length][8B BE sequence][payload][32B tag].
+//   WiFi: TLS-PSK; plain [4-byte big-endian outer length] frames.
+//   Video inner payload (either transport):
+//   [4-byte big-endian telemetry JSON length][telemetry JSON]
+//   [Annex-B NAL units, or one raw ProRes frame]
+// Wire protocol, phone -> Mac: framed JSON control (records on USB).
 
 import ScreenCaptureKit
 import IOSurface
