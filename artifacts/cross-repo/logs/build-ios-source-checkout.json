@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-rxyk4ur4/build/ios-source",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-fi2mbt2x/build/ios-source",
     "checkout",
     "--detach",
-    "cb6e9acb0633b36f5523e212ca4b095b0ac813e3"
+    "a56d2236bf4da61782d7aec8bd069a51584b5f55"
   ],
   "exitCode": 0,
   "label": "build-ios-source-checkout",
-  "stderr": "HEAD is now at cb6e9ac feat(receiver): decode canonical ProRes 422 video (USB only)\n",
+  "stderr": "HEAD is now at a56d223 chore: ignore build variants, pytest cache, and local agent state\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }
