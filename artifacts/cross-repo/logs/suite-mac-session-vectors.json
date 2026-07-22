@@ -5,6 +5,6 @@
   "exitCode": 0,
   "label": "suite-mac-session-vectors",
   "stderr": "",
-  "stdoutBytes": 43,
-  "stdoutSha256": "53902b9877d3c3d3ff1c547941f6c54e898389121efeb16b9e5ca95469262cc0"
+  "stdoutBytes": 256,
+  "stdoutSha256": "c365d39b5cec4f57a58d4af6acbbd2db742613ea1174cfde7bc7744c48fc10c1"
 }

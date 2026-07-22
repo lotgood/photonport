@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/build/ios-source",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-ge8gqumb/build/ios-source",
     "checkout",
     "--detach",
-    "a2313c0c26c4d98d366381357aabd6cd8e5e6d59"
+    "b0620ef21ec57b688a3b69b9f7f9a3f878f64dbd"
   ],
   "exitCode": 0,
   "label": "build-ios-source-checkout",
-  "stderr": "HEAD is now at a2313c0 Harden audio framing and channel authority\n",
+  "stderr": "HEAD is now at b0620ef test: bind negative vectors to iOS semantics\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

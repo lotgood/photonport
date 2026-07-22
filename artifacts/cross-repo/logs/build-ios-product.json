@@ -13,7 +13,7 @@
     "-destination",
     "generic/platform=iOS Simulator",
     "-derivedDataPath",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/build/ios-product",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-ge8gqumb/build/ios-product",
     "CODE_SIGNING_ALLOWED=NO",
     "build"
   ],

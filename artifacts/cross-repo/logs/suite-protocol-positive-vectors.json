@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/python3",
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
     "-m",
     "unittest",
     "tests.test_protocol.ProtocolTests.test_pairing_vector_recomputes_every_output",
@@ -9,7 +9,7 @@
   ],
   "exitCode": 0,
   "label": "suite-protocol-positive-vectors",
-  "stderr": "test_pairing_vector_recomputes_every_output (tests.test_protocol.ProtocolTests) ... ok\ntest_session_vectors_recompute_every_output (tests.test_protocol.ProtocolTests) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.005s\n\nOK\n",
-  "stdoutBytes": 0,
-  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  "stderr": "test_pairing_vector_recomputes_every_output (tests.test_protocol.ProtocolTests.test_pairing_vector_recomputes_every_output) ... ok\ntest_session_vectors_recompute_every_output (tests.test_protocol.ProtocolTests.test_session_vectors_recompute_every_output) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.004s\n\nOK\n",
+  "stdoutBytes": 268,
+  "stdoutSha256": "03bfb4cebe4da5afe8a36d83215bd3c135f99cc46b84bf7cf3649eb58aec785e"
 }

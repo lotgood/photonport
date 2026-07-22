@@ -4,11 +4,11 @@
     "clone",
     "--no-local",
     "/Users/ltg/workspace/photonport-ios",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/fresh-ios"
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-ge8gqumb/fresh-ios"
   ],
   "exitCode": 0,
   "label": "fresh-ios-clone",
-  "stderr": "Cloning into '/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/fresh-ios'...\n",
+  "stderr": "Cloning into '/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-ge8gqumb/fresh-ios'...\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

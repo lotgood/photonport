@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/fresh-protocol",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-ge8gqumb/fresh-protocol",
     "checkout",
     "--detach",
-    "2280861313b2363b673089637d1c1dc544e208d8"
+    "a41e3003116047d0b833245029b219eeee9059c3"
   ],
   "exitCode": 0,
   "label": "fresh-protocol-checkout",
-  "stderr": "HEAD is now at 2280861 protocol: define strict v3 admission contract\n",
+  "stderr": "HEAD is now at a41e300 spec: bind exact negative vector semantics\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

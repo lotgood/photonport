@@ -1,14 +1,14 @@
 {
   "argv": [
-    "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/python3",
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
     "-m",
     "unittest",
-    "tests.test_protocol.ProtocolTests.test_every_negative_vector_is_exercised",
+    "tests.test_protocol.ProtocolTests.test_every_negative_vector_executes_in_its_reference_reducer",
     "-v"
   ],
   "exitCode": 0,
   "label": "suite-protocol-negative-vectors",
-  "stderr": "test_every_negative_vector_is_exercised (tests.test_protocol.ProtocolTests) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nOK\n",
+  "stderr": "test_every_negative_vector_executes_in_its_reference_reducer (tests.test_protocol.ProtocolTests.test_every_negative_vector_executes_in_its_reference_reducer) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.004s\n\nOK\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

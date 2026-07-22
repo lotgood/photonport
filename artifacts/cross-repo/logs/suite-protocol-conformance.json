@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/python3",
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
     "-m",
     "unittest",
     "discover",
@@ -11,7 +11,7 @@
   ],
   "exitCode": 0,
   "label": "suite-protocol-conformance",
-  "stderr": "...........................\n----------------------------------------------------------------------\nRan 27 tests in 0.019s\n\nOK\n",
-  "stdoutBytes": 0,
-  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  "stderr": "...................................\n----------------------------------------------------------------------\nRan 35 tests in 0.024s\n\nOK\n",
+  "stdoutBytes": 392,
+  "stdoutSha256": "48713b6281b23676dacdf9ea0322aea6f78a423215c49ebafe538a4c1323ad9f"
 }

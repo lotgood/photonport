@@ -1,0 +1,2429 @@
+{
+  "builtPinEvidence": {
+    "builtProductPinSha256": {
+      "ios": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8",
+      "mac": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8"
+    },
+    "builtProductPins": {
+      "ios": {
+        "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
+        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "schemaVersion": 1
+      },
+      "mac": {
+        "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
+        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "schemaVersion": 1
+      }
+    },
+    "trackedConsumerPinSha256": {
+      "ios": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8",
+      "mac": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8"
+    },
+    "trackedConsumerPins": {
+      "ios": {
+        "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
+        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "schemaVersion": 1
+      },
+      "mac": {
+        "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
+        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "schemaVersion": 1
+      }
+    }
+  },
+  "commands": [
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-wrong-device-nonce",
+      "logPath": "logs/suite-mac-adversarial-wrong-device-nonce.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-wrong-session-id",
+      "logPath": "logs/suite-mac-adversarial-wrong-session-id.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-zero-generation",
+      "logPath": "logs/suite-mac-adversarial-zero-generation.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-sensitive-reason-code",
+      "logPath": "logs/suite-mac-adversarial-sensitive-reason-code.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-wifi-hello-missing-seed",
+      "logPath": "logs/suite-mac-adversarial-wifi-hello-missing-seed.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-usb-hello-seed-present",
+      "logPath": "logs/suite-mac-adversarial-usb-hello-seed-present.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-server-hello-transport-mismatch",
+      "logPath": "logs/suite-mac-adversarial-server-hello-transport-mismatch.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-usb-challenge-reflection",
+      "logPath": "logs/suite-mac-adversarial-usb-challenge-reflection.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-usb-challenge-wrong-proof",
+      "logPath": "logs/suite-mac-adversarial-usb-challenge-wrong-proof.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-adversarial-usb-accept-replay",
+      "logPath": "logs/suite-mac-adversarial-usb-accept-replay.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-commitment-reveal-mismatch",
+      "logPath": "logs/suite-ios-adversarial-commitment-reveal-mismatch.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-reveal-before-both-commitments",
+      "logPath": "logs/suite-ios-adversarial-reveal-before-both-commitments.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-duplicate-pairing-role",
+      "logPath": "logs/suite-ios-adversarial-duplicate-pairing-role.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-role-reflection",
+      "logPath": "logs/suite-ios-adversarial-role-reflection.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-wrong-mac-install-id",
+      "logPath": "logs/suite-ios-adversarial-wrong-mac-install-id.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-wrong-device-install-id",
+      "logPath": "logs/suite-ios-adversarial-wrong-device-install-id.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-wrong-mac-nonce",
+      "logPath": "logs/suite-ios-adversarial-wrong-mac-nonce.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-wrong-version",
+      "logPath": "logs/suite-ios-adversarial-wrong-version.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-wrong-channel",
+      "logPath": "logs/suite-ios-adversarial-wrong-channel.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-channel-nonce-replay",
+      "logPath": "logs/suite-ios-adversarial-channel-nonce-replay.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-primary-proof-field-order",
+      "logPath": "logs/suite-ios-adversarial-primary-proof-field-order.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-transport-ikm-cross-use",
+      "logPath": "logs/suite-ios-adversarial-transport-ikm-cross-use.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-audio-before-primary-timeout",
+      "logPath": "logs/suite-ios-adversarial-audio-before-primary-timeout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-compatibility-mismatch",
+      "logPath": "logs/suite-ios-adversarial-compatibility-mismatch.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-duplicate-json-key",
+      "logPath": "logs/suite-ios-adversarial-duplicate-json-key.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-invalid-utf8-json",
+      "logPath": "logs/suite-ios-adversarial-invalid-utf8-json.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-bad-length-prefix",
+      "logPath": "logs/suite-ios-adversarial-bad-length-prefix.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-invalid-base64",
+      "logPath": "logs/suite-ios-adversarial-invalid-base64.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-oversize-frame",
+      "logPath": "logs/suite-ios-adversarial-oversize-frame.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-pair-attempt-id-mismatch",
+      "logPath": "logs/suite-ios-adversarial-pair-attempt-id-mismatch.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-pair-commit-deadline",
+      "logPath": "logs/suite-ios-adversarial-pair-commit-deadline.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-pair-sas-confirm-deadline",
+      "logPath": "logs/suite-ios-adversarial-pair-sas-confirm-deadline.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-video-keyframe-missing-h264-parameter-sets",
+      "logPath": "logs/suite-ios-adversarial-video-keyframe-missing-h264-parameter-sets.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-video-keyframe-missing-hevc-parameter-sets",
+      "logPath": "logs/suite-ios-adversarial-video-keyframe-missing-hevc-parameter-sets.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-video-random-access-telemetry-mismatch",
+      "logPath": "logs/suite-ios-adversarial-video-random-access-telemetry-mismatch.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-unicode-scalar-257",
+      "logPath": "logs/suite-ios-adversarial-unicode-scalar-257.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-unicode-lone-surrogate",
+      "logPath": "logs/suite-ios-adversarial-unicode-lone-surrogate.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-primary-liveness-deadline",
+      "logPath": "logs/suite-ios-adversarial-primary-liveness-deadline.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-invalid-primary-traffic-no-refresh",
+      "logPath": "logs/suite-ios-adversarial-invalid-primary-traffic-no-refresh.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-secure-store-not-device-only",
+      "logPath": "logs/suite-ios-adversarial-secure-store-not-device-only.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-missing-magic",
+      "logPath": "logs/suite-ios-adversarial-usb-missing-magic.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-wrong-magic",
+      "logPath": "logs/suite-ios-adversarial-usb-wrong-magic.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-legacy-v3-downgrade",
+      "logPath": "logs/suite-ios-adversarial-usb-legacy-v3-downgrade.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-init-wrong-type",
+      "logPath": "logs/suite-ios-adversarial-usb-init-wrong-type.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-init-wrong-version",
+      "logPath": "logs/suite-ios-adversarial-usb-init-wrong-version.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-init-wrong-purpose",
+      "logPath": "logs/suite-ios-adversarial-usb-init-wrong-purpose.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-init-wrong-identity",
+      "logPath": "logs/suite-ios-adversarial-usb-init-wrong-identity.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-init-wrong-nonce",
+      "logPath": "logs/suite-ios-adversarial-usb-init-wrong-nonce.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-init-wrong-proof",
+      "logPath": "logs/suite-ios-adversarial-usb-init-wrong-proof.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-finish-reflection",
+      "logPath": "logs/suite-ios-adversarial-usb-finish-reflection.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-finish-wrong-proof",
+      "logPath": "logs/suite-ios-adversarial-usb-finish-wrong-proof.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-preface-extra-frame",
+      "logPath": "logs/suite-ios-adversarial-usb-preface-extra-frame.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-preface-timeout",
+      "logPath": "logs/suite-ios-adversarial-usb-preface-timeout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-unpaired-identity",
+      "logPath": "logs/suite-ios-adversarial-usb-unpaired-identity.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-primary-audio-binding-cross-use",
+      "logPath": "logs/suite-ios-adversarial-usb-primary-audio-binding-cross-use.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-wifi-psk-as-usb-ikm",
+      "logPath": "logs/suite-ios-adversarial-usb-wifi-psk-as-usb-ikm.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-binding-as-wifi-ikm",
+      "logPath": "logs/suite-ios-adversarial-usb-binding-as-wifi-ikm.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-audio-binding-inequality-rejected",
+      "logPath": "logs/suite-ios-adversarial-usb-audio-binding-inequality-rejected.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-record-sequence-replay",
+      "logPath": "logs/suite-ios-adversarial-usb-record-sequence-replay.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-record-sequence-skip",
+      "logPath": "logs/suite-ios-adversarial-usb-record-sequence-skip.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-record-tag-mutation",
+      "logPath": "logs/suite-ios-adversarial-usb-record-tag-mutation.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-record-payload-mutation",
+      "logPath": "logs/suite-ios-adversarial-usb-record-payload-mutation.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-record-wrong-direction-key",
+      "logPath": "logs/suite-ios-adversarial-usb-record-wrong-direction-key.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-adversarial-usb-record-overhead-in-semantic-cap",
+      "logPath": "logs/suite-ios-adversarial-usb-record-overhead-in-semantic-cap.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-mac-session-vectors",
+      "logPath": "logs/suite-mac-session-vectors.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-session-vectors",
+      "logPath": "logs/suite-ios-session-vectors.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-ios-pairing-vectors",
+      "logPath": "logs/suite-ios-pairing-vectors.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-protocol-positive-vectors",
+      "logPath": "logs/suite-protocol-positive-vectors.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-protocol-negative-vectors",
+      "logPath": "logs/suite-protocol-negative-vectors.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "suite-protocol-conformance",
+      "logPath": "logs/suite-protocol-conformance.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "build-mac-product",
+      "logPath": "logs/build-mac-product.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "build-ios-source-clone",
+      "logPath": "logs/build-ios-source-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "build-ios-source-checkout",
+      "logPath": "logs/build-ios-source-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "generate-ios-product-project",
+      "logPath": "logs/generate-ios-product-project.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "build-ios-product",
+      "logPath": "logs/build-ios-product.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "compile-mac-launcher",
+      "logPath": "logs/compile-mac-launcher.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "compile-ios-launcher-host",
+      "logPath": "logs/compile-ios-launcher-host.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-ping-encode",
+      "logPath": "logs/mac-to-ios-ping-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-ping-decode",
+      "logPath": "logs/mac-to-ios-ping-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-touch-encode",
+      "logPath": "logs/mac-to-ios-touch-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-touch-decode",
+      "logPath": "logs/mac-to-ios-touch-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-scroll-encode",
+      "logPath": "logs/mac-to-ios-scroll-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-scroll-decode",
+      "logPath": "logs/mac-to-ios-scroll-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-keyframe-encode",
+      "logPath": "logs/mac-to-ios-keyframe-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-keyframe-decode",
+      "logPath": "logs/mac-to-ios-keyframe-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-session-open-v3-encode",
+      "logPath": "logs/mac-to-ios-session-open-v3-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "mac-to-ios-session-open-v3-decode",
+      "logPath": "logs/mac-to-ios-session-open-v3-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-pong-encode",
+      "logPath": "logs/ios-to-mac-pong-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-pong-decode",
+      "logPath": "logs/ios-to-mac-pong-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-stats-encode",
+      "logPath": "logs/ios-to-mac-stats-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-stats-decode",
+      "logPath": "logs/ios-to-mac-stats-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-keyframe-encode",
+      "logPath": "logs/ios-to-mac-keyframe-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-keyframe-decode",
+      "logPath": "logs/ios-to-mac-keyframe-decode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-session-accept-v3-encode",
+      "logPath": "logs/ios-to-mac-session-accept-v3-encode.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "ios-to-mac-session-accept-v3-decode",
+      "logPath": "logs/ios-to-mac-session-accept-v3-decode.json"
+    },
+    {
+      "exitCode": 1,
+      "label": "negative-to-mac-zero-length",
+      "logPath": "logs/negative-to-mac-zero-length.json"
+    },
+    {
+      "exitCode": 1,
+      "label": "negative-to-ios-zero-length",
+      "logPath": "logs/negative-to-ios-zero-length.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "verifier-primary",
+      "logPath": "logs/verifier-primary.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "changed-pin-mac-clone",
+      "logPath": "logs/changed-pin-mac-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "changed-pin-mac-checkout",
+      "logPath": "logs/changed-pin-mac-checkout.json"
+    },
+    {
+      "exitCode": 1,
+      "label": "verifier-changed-pin-failure",
+      "logPath": "logs/verifier-changed-pin-failure.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-mac-clone",
+      "logPath": "logs/fresh-mac-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-mac-checkout",
+      "logPath": "logs/fresh-mac-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-ios-clone",
+      "logPath": "logs/fresh-ios-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-ios-checkout",
+      "logPath": "logs/fresh-ios-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-protocol-clone",
+      "logPath": "logs/fresh-protocol-clone.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "fresh-protocol-checkout",
+      "logPath": "logs/fresh-protocol-checkout.json"
+    },
+    {
+      "exitCode": 0,
+      "label": "verifier-fresh-path",
+      "logPath": "logs/verifier-fresh-path.json"
+    }
+  ],
+  "compatibilityReceipt": {
+    "path": "compatibility-report.json",
+    "sha256": "69cf7a3c6abcd37d8b5bbe4a7607c7abb13061401cfee8784e98d3b56cea7841"
+  },
+  "coverageContract": {
+    "enumeratedProtocolNegativeVectorIDs": [
+      "commitment-reveal-mismatch",
+      "reveal-before-both-commitments",
+      "duplicate-pairing-role",
+      "role-reflection",
+      "wrong-mac-install-id",
+      "wrong-device-install-id",
+      "wrong-mac-nonce",
+      "wrong-device-nonce",
+      "wrong-version",
+      "wrong-session-id",
+      "zero-generation",
+      "wrong-channel",
+      "channel-nonce-replay",
+      "primary-proof-field-order",
+      "transport-ikm-cross-use",
+      "audio-before-primary-timeout",
+      "compatibility-mismatch",
+      "sensitive-reason-code",
+      "duplicate-json-key",
+      "invalid-utf8-json",
+      "bad-length-prefix",
+      "invalid-base64",
+      "oversize-frame",
+      "pair-attempt-id-mismatch",
+      "pair-commit-deadline",
+      "pair-sas-confirm-deadline",
+      "wifi-hello-missing-seed",
+      "usb-hello-seed-present",
+      "server-hello-transport-mismatch",
+      "video-keyframe-missing-h264-parameter-sets",
+      "video-keyframe-missing-hevc-parameter-sets",
+      "video-random-access-telemetry-mismatch",
+      "unicode-scalar-257",
+      "unicode-lone-surrogate",
+      "primary-liveness-deadline",
+      "invalid-primary-traffic-no-refresh",
+      "secure-store-not-device-only",
+      "usb-missing-magic",
+      "usb-wrong-magic",
+      "usb-legacy-v3-downgrade",
+      "usb-init-wrong-type",
+      "usb-init-wrong-version",
+      "usb-init-wrong-purpose",
+      "usb-init-wrong-identity",
+      "usb-init-wrong-nonce",
+      "usb-init-wrong-proof",
+      "usb-challenge-reflection",
+      "usb-challenge-wrong-proof",
+      "usb-finish-reflection",
+      "usb-finish-wrong-proof",
+      "usb-accept-replay",
+      "usb-preface-extra-frame",
+      "usb-preface-timeout",
+      "usb-unpaired-identity",
+      "usb-primary-audio-binding-cross-use",
+      "usb-wifi-psk-as-usb-ikm",
+      "usb-binding-as-wifi-ikm",
+      "usb-audio-binding-inequality-rejected",
+      "usb-record-sequence-replay",
+      "usb-record-sequence-skip",
+      "usb-record-tag-mutation",
+      "usb-record-payload-mutation",
+      "usb-record-wrong-direction-key",
+      "usb-record-overhead-in-semantic-cap"
+    ],
+    "enumeratedProtocolPositiveVectorIDs": [
+      "pairing-v2:canonical",
+      "session-v3:wifi-psk",
+      "session-v3:usb-pairing-binding-primary",
+      "session-v3:usb-pairing-binding-audio",
+      "session-v3-frame:serverHelloUsb",
+      "session-v3-frame:serverHelloWifi",
+      "session-v3-frame:sessionOpenPayloadLength"
+    ],
+    "negativeConsumerReceiptMetadata": [
+      {
+        "baselineEffectsSha256": "2199103566f718c50bca6e4f705b0ff15aa157ddbca2adfd310bf1ad17cb9ae2",
+        "baselineSnapshotSha256": "4582243ebfefd51059c9c7bd10b5b068b15688270bc017f2f8108d665c7b3835",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-wrong-device-nonce",
+          "logPath": "logs/suite-mac-adversarial-wrong-device-nonce.json"
+        },
+        "finalSnapshotSha256": "4582243ebfefd51059c9c7bd10b5b068b15688270bc017f2f8108d665c7b3835",
+        "id": "wrong-device-nonce",
+        "initialSnapshotSha256": "fa8a0dd25bfd3ab20fbd73db58b273974c419e1508b15a55d092489c68816f17",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "session-finish-accept"
+        },
+        "reducer": "SessionAdmissionReducer.reduce",
+        "transcriptSha256": "5b6a52364f93d10bb4b9fbf128292a84a478e1338d60f6d0f9a1520f87b9ca04"
+      },
+      {
+        "baselineEffectsSha256": "42ad659d923ea01fba69a91d942df89d3f4ce9b7c71a2d882006a8498bf77630",
+        "baselineSnapshotSha256": "4200cfd610d029757a4be4cf4f970faeefea85018b6708adbaf8311ec24c7669",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-wrong-session-id",
+          "logPath": "logs/suite-mac-adversarial-wrong-session-id.json"
+        },
+        "finalSnapshotSha256": "4200cfd610d029757a4be4cf4f970faeefea85018b6708adbaf8311ec24c7669",
+        "id": "wrong-session-id",
+        "initialSnapshotSha256": "4cce0b77f3c26e84fb8b40560815a3a0b870ed92c1cf039c38c943720c0d0737",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "session-finish-accept"
+        },
+        "reducer": "SessionAdmissionReducer.reduce",
+        "transcriptSha256": "e56b4a51a34f077f9261e66d6185ff479713becf71b47019e8aa61307a3342a7"
+      },
+      {
+        "baselineEffectsSha256": "bc5a8e28ff61f070e33cd0097ee258cb85dfcdd8a61d1d1f331e78bc54462034",
+        "baselineSnapshotSha256": "c9a5511e25df29a79def9bf9defd686bd3e6de4c576fe21502a65addbb119e4c",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-zero-generation",
+          "logPath": "logs/suite-mac-adversarial-zero-generation.json"
+        },
+        "finalSnapshotSha256": "c9a5511e25df29a79def9bf9defd686bd3e6de4c576fe21502a65addbb119e4c",
+        "id": "zero-generation",
+        "initialSnapshotSha256": "3f7d2593d2b4e36e4cef5c4fcea1b1d7cab49b98c74eedec0b4e96eea4c49661",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "session-finish-accept"
+        },
+        "reducer": "SessionAdmissionReducer.reduce",
+        "transcriptSha256": "57a7f025d30502fa83131109f574530f5e2c65e9e14881bb92321e20db984c34"
+      },
+      {
+        "baselineEffectsSha256": "c7d48a480079db3f79ca53b1ecbe2e47580c76792a0e37631f35d737d57bc2a3",
+        "baselineSnapshotSha256": "da74210743137da398283c9d14fb90dbd66a54999f89b4673b49dbfcd62b394a",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-sensitive-reason-code",
+          "logPath": "logs/suite-mac-adversarial-sensitive-reason-code.json"
+        },
+        "finalSnapshotSha256": "da74210743137da398283c9d14fb90dbd66a54999f89b4673b49dbfcd62b394a",
+        "id": "sensitive-reason-code",
+        "initialSnapshotSha256": "9a68f6dc934b5d2e6671dde7ba89c283c4d4632af35e23fcfd48863d625cba57",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "session-busy-response"
+        },
+        "reducer": "SessionAdmissionReducer.reduce",
+        "transcriptSha256": "1107df3d010d0b577fc33635557bc9263075598abaefdb9b208fe546f836f41b"
+      },
+      {
+        "baselineEffectsSha256": "46e4ec78b8fe7c5b87feb7fa908c2ff2cdc6a20c342ea7992dc000a8fe671557",
+        "baselineSnapshotSha256": "9ab2aaf888b44f7211d13e5036ae61f57ea36588082acd62820b08cd97316b65",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-wifi-hello-missing-seed",
+          "logPath": "logs/suite-mac-adversarial-wifi-hello-missing-seed.json"
+        },
+        "finalSnapshotSha256": "9ab2aaf888b44f7211d13e5036ae61f57ea36588082acd62820b08cd97316b65",
+        "id": "wifi-hello-missing-seed",
+        "initialSnapshotSha256": "eedb0afd2756a127b92e7433677bb0d238711bbfdb3ccd471f55b63dd970e7d2",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "session-init-response"
+        },
+        "reducer": "SessionAdmissionReducer.reduce",
+        "transcriptSha256": "516cfa6784f7286bb2ee1b39532ca36c61fbf3ccfde079a3fd53b0b7490af502"
+      },
+      {
+        "baselineEffectsSha256": "304f21c27c03db4e262c6295f09d8bb24b52593cc688f026ecdaa4e7203b23ef",
+        "baselineSnapshotSha256": "e5c73c327ad2863485285f1b5fbc2e778dbbb0fafd74cc647418451e5105606c",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-usb-hello-seed-present",
+          "logPath": "logs/suite-mac-adversarial-usb-hello-seed-present.json"
+        },
+        "finalSnapshotSha256": "e5c73c327ad2863485285f1b5fbc2e778dbbb0fafd74cc647418451e5105606c",
+        "id": "usb-hello-seed-present",
+        "initialSnapshotSha256": "85001a68e9cba0b0e98b234d3fa38ffcfd6e19f0111e295b2ed31da96494b235",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "session-init-response"
+        },
+        "reducer": "SessionAdmissionReducer.reduce",
+        "transcriptSha256": "34e7957ff179cf4f78478ac77aa4a61d7a4e2ea9719da2fcbc7dad6a61c2a7f4"
+      },
+      {
+        "baselineEffectsSha256": "b28aaaef88abb2513051a211282b675a8a3f7b0d5bb21ffc63f864ebfa65bda4",
+        "baselineSnapshotSha256": "6ee77769606d79724caa33fad452dcc6ff14193c179bf513747bdddb30414d8b",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-server-hello-transport-mismatch",
+          "logPath": "logs/suite-mac-adversarial-server-hello-transport-mismatch.json"
+        },
+        "finalSnapshotSha256": "6ee77769606d79724caa33fad452dcc6ff14193c179bf513747bdddb30414d8b",
+        "id": "server-hello-transport-mismatch",
+        "initialSnapshotSha256": "4b39b13ab2303a9861c7be0a13cbbb4704976ab27bbefaae26441b88d0a13f65",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "session-init-response"
+        },
+        "reducer": "SessionAdmissionReducer.reduce",
+        "transcriptSha256": "bd2bac1d7e54fc3c267ef41faa5b57951405f3ee7c4fb123180df160062fde99"
+      },
+      {
+        "baselineEffectsSha256": "a63d891f9e5f684501fab4a8de3cfe7ac7092e4af7c5f3c96a1c0f744e062357",
+        "baselineSnapshotSha256": "1a19af49b368e007c7de0d07618ff0e8a6974bba00678b2b2161f12afcad2c86",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-usb-challenge-reflection",
+          "logPath": "logs/suite-mac-adversarial-usb-challenge-reflection.json"
+        },
+        "finalSnapshotSha256": "1a19af49b368e007c7de0d07618ff0e8a6974bba00678b2b2161f12afcad2c86",
+        "id": "usb-challenge-reflection",
+        "initialSnapshotSha256": "a7825fef63b8501f548a214103b6a841ab478a9913cc2860ba123918f6472f52",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "usb-bind-challenge"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "8b4d5e778622d13d915297ae896f96f5d21941c981d33583c51714f3f0b157e9"
+      },
+      {
+        "baselineEffectsSha256": "19b97e1094b65f498518080615191dd8a1e84ff0f420044cabd53d4a0db282fe",
+        "baselineSnapshotSha256": "3174eb3e7dcf5967a3df8321b10d6b0846c2da7a65af9ba241d226043a401646",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-usb-challenge-wrong-proof",
+          "logPath": "logs/suite-mac-adversarial-usb-challenge-wrong-proof.json"
+        },
+        "finalSnapshotSha256": "3174eb3e7dcf5967a3df8321b10d6b0846c2da7a65af9ba241d226043a401646",
+        "id": "usb-challenge-wrong-proof",
+        "initialSnapshotSha256": "9b4948c0ffbad42207dcde8dee4f823870b6600e26fdb85545edb7e93cb3b0a4",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "usb-bind-challenge"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "c846f2cb3848c365022babf374d0d3ea103c2996b84814bf12c2d2e01612296c"
+      },
+      {
+        "baselineEffectsSha256": "3f6ad8c2dea0b4bda5dcc7e442c06ee0f112e381ff9b8dc6e478e85363e0a2da",
+        "baselineSnapshotSha256": "e8fbf7287ff848710ca70d45b38f56e4e33aee3a69e5813dddeb5e25ffd717ca",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-mac-adversarial-usb-accept-replay",
+          "logPath": "logs/suite-mac-adversarial-usb-accept-replay.json"
+        },
+        "finalSnapshotSha256": "e8fbf7287ff848710ca70d45b38f56e4e33aee3a69e5813dddeb5e25ffd717ca",
+        "id": "usb-accept-replay",
+        "initialSnapshotSha256": "65dc6e71a712337463cf0645a3c9936a6031bcfc9192294b9ace8d8844804b7c",
+        "ownership": {
+          "consumerPlatform": "mac-client",
+          "direction": "ios-to-mac",
+          "stage": "usb-bind-accept"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindFinish",
+        "transcriptSha256": "268ec8c8b59397641a740763f0775752a16d179ba1ef0f3fc63f0960b6fe7e82"
+      },
+      {
+        "baselineEffectsSha256": "0605e268286eafef0db3af295b95f8bb298c99fc70484a4c76c2cf9cf7ac45d0",
+        "baselineSnapshotSha256": "23e7699f571d80acb788eeffb6242be70b5da0d4ece3b9ac92489c40864c691a",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-commitment-reveal-mismatch",
+          "logPath": "logs/suite-ios-adversarial-commitment-reveal-mismatch.json"
+        },
+        "finalSnapshotSha256": "23e7699f571d80acb788eeffb6242be70b5da0d4ece3b9ac92489c40864c691a",
+        "id": "commitment-reveal-mismatch",
+        "initialSnapshotSha256": "7462f7979df85d4ed74e3d89151c0c1a6597b246e75e44c574c40c62463b0d60",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "24aa75e49014e3bddc1e868543f06e707450aa5ae59a044c84e9fad463b58788"
+      },
+      {
+        "baselineEffectsSha256": "02c7a02a952d8895b9b448b01a5449d89fd1faf1ae8c4fe3671f3803b59c3b78",
+        "baselineSnapshotSha256": "3aa74758b615df99760b5245651182a7f40c99de07de09791521b0ad68c771b3",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-reveal-before-both-commitments",
+          "logPath": "logs/suite-ios-adversarial-reveal-before-both-commitments.json"
+        },
+        "finalSnapshotSha256": "3aa74758b615df99760b5245651182a7f40c99de07de09791521b0ad68c771b3",
+        "id": "reveal-before-both-commitments",
+        "initialSnapshotSha256": "8237623602316570a2b09240e9f60e353e31dd6b347dec05841f6268ecbd8962",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "4328a2c4280cc65e8a813ad5e029538f9e3aaddf0d302affdf47d908a1fd7337"
+      },
+      {
+        "baselineEffectsSha256": "5fa066c5613b123f2aa2f589c53b2f32dad37b4cd63a35d9374d1aae832c0596",
+        "baselineSnapshotSha256": "432c03536b0508c9528e84b3354868814edb3f0ea97fd1e73c65d45cce8da4a4",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-duplicate-pairing-role",
+          "logPath": "logs/suite-ios-adversarial-duplicate-pairing-role.json"
+        },
+        "finalSnapshotSha256": "432c03536b0508c9528e84b3354868814edb3f0ea97fd1e73c65d45cce8da4a4",
+        "id": "duplicate-pairing-role",
+        "initialSnapshotSha256": "bb2b73727f95b4ceae8ccac67d2a35dd243ee1ac8cca33d50aae19092c90028b",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "054d305b3c43fe137250d232211bc53ba1fd09ae65a5aad44fcd7af00793db20"
+      },
+      {
+        "baselineEffectsSha256": "20fb2c0a3209d8cc13f128ee8935b5e9d4d7e904b76388845adb86b60f3a134e",
+        "baselineSnapshotSha256": "b3c9d990bb05063aa8f5da0e80ba0c37c0f94443802159794b63fa77745a8d6c",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-role-reflection",
+          "logPath": "logs/suite-ios-adversarial-role-reflection.json"
+        },
+        "finalSnapshotSha256": "b3c9d990bb05063aa8f5da0e80ba0c37c0f94443802159794b63fa77745a8d6c",
+        "id": "role-reflection",
+        "initialSnapshotSha256": "ffbb96b94f921902ef48d11d3630b13af9a6bb56bb4e26d745e4a814a16f290d",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "c27b7a3163a43a84871e4ce546dae7074c6e1a792bb171fbcd2c5f1fd4818b0c"
+      },
+      {
+        "baselineEffectsSha256": "5607e6e40cc6cd9dbc78df1d94dbed77b2bc71c4c4afade992a9d8dc4e3dc985",
+        "baselineSnapshotSha256": "d2efcf467d04b8d8f5150301a9287e722732f504b2167d7c11137c2fd68c7d6c",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-wrong-mac-install-id",
+          "logPath": "logs/suite-ios-adversarial-wrong-mac-install-id.json"
+        },
+        "finalSnapshotSha256": "d2efcf467d04b8d8f5150301a9287e722732f504b2167d7c11137c2fd68c7d6c",
+        "id": "wrong-mac-install-id",
+        "initialSnapshotSha256": "62718962ced66f33abd3f18fd56e109e450f896ac0c25a5976a14618416f69a1",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "session-init-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceSessionOpen",
+        "transcriptSha256": "609b25d0411e09c90797b87a8f8ebdce8c73ebf36833c5b78aced8df4cea1ca0"
+      },
+      {
+        "baselineEffectsSha256": "8a47cd0b6169b1a877794ac2acbee3b25a2c1132838d6f772db80947de3482f2",
+        "baselineSnapshotSha256": "d12f7411628dffc9c8442b2ae9ccd17d29679a624c2a17becfbcb7899684e0db",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-wrong-device-install-id",
+          "logPath": "logs/suite-ios-adversarial-wrong-device-install-id.json"
+        },
+        "finalSnapshotSha256": "d12f7411628dffc9c8442b2ae9ccd17d29679a624c2a17becfbcb7899684e0db",
+        "id": "wrong-device-install-id",
+        "initialSnapshotSha256": "4f7833a59789d604bd09c025548b263cbedddbc9bed5f0ee60955b9f56683b53",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "session-init-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceSessionOpen",
+        "transcriptSha256": "b272f88c9363dc5c3867bc448f843e659505165ca5afcf50bdbd1502dad10d63"
+      },
+      {
+        "baselineEffectsSha256": "728887f336a117ce1c78ca6bf09243a198a3af2e567acdb9a40eb97f4edd088f",
+        "baselineSnapshotSha256": "6efef07ba8f90a301ed57bfb3ee5dab89c80bab14b224e0206dd378c7f31af66",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-wrong-mac-nonce",
+          "logPath": "logs/suite-ios-adversarial-wrong-mac-nonce.json"
+        },
+        "finalSnapshotSha256": "6efef07ba8f90a301ed57bfb3ee5dab89c80bab14b224e0206dd378c7f31af66",
+        "id": "wrong-mac-nonce",
+        "initialSnapshotSha256": "452a90507981aee1e97a02ea7bfc03ebf5a7ed073e69fd57ce96d8b14849b6dc",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "session-init-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceSessionOpen",
+        "transcriptSha256": "8115b3814fce1f34022430ae1a9167c79d9a05c3b81837d26a9474932257d058"
+      },
+      {
+        "baselineEffectsSha256": "bc771d737e6a6157dd24c45641159e5c40e2a76064db04729cabd56605d04f0d",
+        "baselineSnapshotSha256": "ced16f27ac0d773bb2e977ac8cd676a1cecda3f35514e0f0eb167c141da2888f",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-wrong-version",
+          "logPath": "logs/suite-ios-adversarial-wrong-version.json"
+        },
+        "finalSnapshotSha256": "ced16f27ac0d773bb2e977ac8cd676a1cecda3f35514e0f0eb167c141da2888f",
+        "id": "wrong-version",
+        "initialSnapshotSha256": "b465b0d2339af2adc65910a461971bba473036edb091ea10126d88a6856f30d4",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "session-init-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceSessionOpen",
+        "transcriptSha256": "aa5e3bda8d4cc95b1508e52803869ac9546ff4f95eadb214ad5492d38c022b0c"
+      },
+      {
+        "baselineEffectsSha256": "f435bb1a035351f8e0459189fb9c47ff00b5a5483a0b4283817e190a3e45f3a4",
+        "baselineSnapshotSha256": "fd8520a1d9a4dd2c5cbaf45b35202603579f28b450d034146d7197a5ca9360ca",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-wrong-channel",
+          "logPath": "logs/suite-ios-adversarial-wrong-channel.json"
+        },
+        "finalSnapshotSha256": "fd8520a1d9a4dd2c5cbaf45b35202603579f28b450d034146d7197a5ca9360ca",
+        "id": "wrong-channel",
+        "initialSnapshotSha256": "0e6d3897c1b51827d52cd32b2396b141598a0fd33721e4c66f25e9ad5ef47dc9",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "channel-open-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceChannelOpen",
+        "transcriptSha256": "b852e49162a783d67690c920189426319b665767332c651effa866e157aa0269"
+      },
+      {
+        "baselineEffectsSha256": "1184e4a4cc015058fe2dcfa3067f6b4da1ab05f9ea1ce7190902dabc1085ed1c",
+        "baselineSnapshotSha256": "4c61efdbc25aedda72a4d0911f3a30b41e22ef9b3387d4afd52b926275b2d9ad",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-channel-nonce-replay",
+          "logPath": "logs/suite-ios-adversarial-channel-nonce-replay.json"
+        },
+        "finalSnapshotSha256": "4c61efdbc25aedda72a4d0911f3a30b41e22ef9b3387d4afd52b926275b2d9ad",
+        "id": "channel-nonce-replay",
+        "initialSnapshotSha256": "e063b7bba9bfe66bc6a018afc046a85447462ef9f9ed0ade9d4a299b1d4cd13e",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "channel-open-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceChannelOpen",
+        "transcriptSha256": "297a5c3947be4653720c4d794bbb40e16101c4ceefa8d7289410671b1ae046aa"
+      },
+      {
+        "baselineEffectsSha256": "43cd4b82e168e3b993012a6aa95c182bd933916575914a1c4d21041d909f44a0",
+        "baselineSnapshotSha256": "0f8ebae01a4d3e882814f8bba1175a7c327fc457efd77648e98fa90635b12121",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-primary-proof-field-order",
+          "logPath": "logs/suite-ios-adversarial-primary-proof-field-order.json"
+        },
+        "finalSnapshotSha256": "0f8ebae01a4d3e882814f8bba1175a7c327fc457efd77648e98fa90635b12121",
+        "id": "primary-proof-field-order",
+        "initialSnapshotSha256": "09b3826e30365e19e26d1888e714cdd26be189c2f12497ca76808d2132759051",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "session-init-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceSessionOpen",
+        "transcriptSha256": "ca65730237a7bd29a0320aa96f281ea780a556fdb025db3ba72d7be8760cdd40"
+      },
+      {
+        "baselineEffectsSha256": "b27f8e474cd131988233068a05aa402ed7823d7e8014aa4246f73f93c4020dff",
+        "baselineSnapshotSha256": "61442ba81acfb0d263c58cbb5ed9578ee6722addbdc7549e90bd66a28e86e40b",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-transport-ikm-cross-use",
+          "logPath": "logs/suite-ios-adversarial-transport-ikm-cross-use.json"
+        },
+        "finalSnapshotSha256": "61442ba81acfb0d263c58cbb5ed9578ee6722addbdc7549e90bd66a28e86e40b",
+        "id": "transport-ikm-cross-use",
+        "initialSnapshotSha256": "c021cc6c0e17ccb1b33089ead4b7a12cbb0924d1002c56533b83d74b520d4dbd",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "session-init-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceSessionOpen",
+        "transcriptSha256": "28e129f4a87a2bcac030919f26bdebfb7eb23d4f2e6bb3770c3379719fb271ff"
+      },
+      {
+        "baselineEffectsSha256": "b9486507c837cdaf96354d7cb2cdb52ca7339b05aa0c70a12f66d572395a10f6",
+        "baselineSnapshotSha256": "b5e633fd9817e425b9e1475329ff255b5835f137852a1d98bce00cbd6e795821",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-audio-before-primary-timeout",
+          "logPath": "logs/suite-ios-adversarial-audio-before-primary-timeout.json"
+        },
+        "finalSnapshotSha256": "b5e633fd9817e425b9e1475329ff255b5835f137852a1d98bce00cbd6e795821",
+        "id": "audio-before-primary-timeout",
+        "initialSnapshotSha256": "03ee0749a167b4cc20aa76dfcb62f679edee41b84ceb22c9010ad87e152d7ca5",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "channel-open-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceChannelOpen",
+        "transcriptSha256": "b8feb5934937991b7de44bff706680d745c9a9a3122fa1ed9943fb07e6457d54"
+      },
+      {
+        "baselineEffectsSha256": "27164c93a06ab100f256a9000e5808bb845fc980071b6bb871b0dbb3d8908f74",
+        "baselineSnapshotSha256": "f715a334e91442de4a6444e154ea2175cb840cd508dc67215bab180e21922de3",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-compatibility-mismatch",
+          "logPath": "logs/suite-ios-adversarial-compatibility-mismatch.json"
+        },
+        "finalSnapshotSha256": "f715a334e91442de4a6444e154ea2175cb840cd508dc67215bab180e21922de3",
+        "id": "compatibility-mismatch",
+        "initialSnapshotSha256": "dca3acdd599bf810d0eca28959a96d1406dc9d438925e6e596646ffb7e78c0c8",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "compatibility-check"
+        },
+        "reducer": "ProtocolBuildPinReducer.reduce",
+        "transcriptSha256": "5f32ff4f105cefca0111cd173f2dc78d3183bdd938fa01ff4418d015a110f7bd"
+      },
+      {
+        "baselineEffectsSha256": "74246aeea4f3a79cff7cc7b0c8ca3c3789f370b200fcacfd86bcdce4f781a515",
+        "baselineSnapshotSha256": "411ac6ba1a96b593c6c98a2800f2e9a2672374b3c3203246dc3bbb5f771516bf",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-duplicate-json-key",
+          "logPath": "logs/suite-ios-adversarial-duplicate-json-key.json"
+        },
+        "finalSnapshotSha256": "411ac6ba1a96b593c6c98a2800f2e9a2672374b3c3203246dc3bbb5f771516bf",
+        "id": "duplicate-json-key",
+        "initialSnapshotSha256": "b1e956a2500df8c73a739e8822ab807532463d39ff89e7d69c8a7c7a8bd4c25e",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "framing-inbound"
+        },
+        "reducer": "RuntimeFrameReducer.reduce",
+        "transcriptSha256": "e1b0c671004c33283bd61fd0ff9ce49bbff094246d1b2a4584551c4988bea133"
+      },
+      {
+        "baselineEffectsSha256": "92a6d5a5f4f4f7033967ffeafa2719bfce0213629d052ab5ec99d43905cfb8b1",
+        "baselineSnapshotSha256": "50743184e2d48cd2848590d55cfc02dd0b443d665bd7bd2c1952bea709da4038",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-invalid-utf8-json",
+          "logPath": "logs/suite-ios-adversarial-invalid-utf8-json.json"
+        },
+        "finalSnapshotSha256": "50743184e2d48cd2848590d55cfc02dd0b443d665bd7bd2c1952bea709da4038",
+        "id": "invalid-utf8-json",
+        "initialSnapshotSha256": "a396738d033e95437af959dab270774f40eab7f9c0dc97fa9cf26ac9173511a6",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "framing-inbound"
+        },
+        "reducer": "RuntimeFrameReducer.reduce",
+        "transcriptSha256": "ef29f8a5e3a8d234964c0ce12d090fc126613de05aac3a5be5218ffad7def4cc"
+      },
+      {
+        "baselineEffectsSha256": "0b502e660f409233d88492f8d329b92d1817885d5715a83568cc211ded2be32a",
+        "baselineSnapshotSha256": "55f75f260db930379a9784b1df96ce8b1c390b241031a585384e5ac55985097e",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-bad-length-prefix",
+          "logPath": "logs/suite-ios-adversarial-bad-length-prefix.json"
+        },
+        "finalSnapshotSha256": "55f75f260db930379a9784b1df96ce8b1c390b241031a585384e5ac55985097e",
+        "id": "bad-length-prefix",
+        "initialSnapshotSha256": "ebad33a139637825759c6c3054036c38d9ede93810793d02bff6d59165b38664",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "framing-inbound"
+        },
+        "reducer": "RuntimeFrameReducer.reduce",
+        "transcriptSha256": "9ad92d095564358f5e1f40994352dea9d436fb6f0feef0ff488bfa64f7bfc558"
+      },
+      {
+        "baselineEffectsSha256": "c8f97eacf0d73fe8dea98789fbc5f561db815395e22df8f41d5da67bb7cb207d",
+        "baselineSnapshotSha256": "14108022a67a25a153e84383292a8e7c101b7074b491a840ea140de8d961040c",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-invalid-base64",
+          "logPath": "logs/suite-ios-adversarial-invalid-base64.json"
+        },
+        "finalSnapshotSha256": "14108022a67a25a153e84383292a8e7c101b7074b491a840ea140de8d961040c",
+        "id": "invalid-base64",
+        "initialSnapshotSha256": "58bd21249e292ba4c689a63b93539fa668f6b0ddf71d0150a4cb6865c48f5c95",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "channel-open-request"
+        },
+        "reducer": "SessionAdmissionReducer.reduceChannelOpen",
+        "transcriptSha256": "6010006b984e278a0deb38294adc32b6d5f8b0f03729c23db9aa06dab93f166d"
+      },
+      {
+        "baselineEffectsSha256": "244685a91f3970abf8a3d8c6395a1e1888218880c43439b3cc075d8d707e3f30",
+        "baselineSnapshotSha256": "58ca80d05e5348b6c10884caf5d3b1620ffcabd1a7e07e7ee7238f600bc56e65",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-oversize-frame",
+          "logPath": "logs/suite-ios-adversarial-oversize-frame.json"
+        },
+        "finalSnapshotSha256": "58ca80d05e5348b6c10884caf5d3b1620ffcabd1a7e07e7ee7238f600bc56e65",
+        "id": "oversize-frame",
+        "initialSnapshotSha256": "7ce64c1ffaed494f1ffdf9901eb2d11654d0561b97090818c782ae5baa5027d5",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "framing-inbound"
+        },
+        "reducer": "RuntimeFrameReducer.reduce",
+        "transcriptSha256": "c0e7a5c5759016f8e17c27630626f1f48af224762d9c30aa0148587a01c94c01"
+      },
+      {
+        "baselineEffectsSha256": "62c04b3ac1e2e0d3345da78a1ff8685de45b77275c24198a1b20af51bf19d26b",
+        "baselineSnapshotSha256": "316ad4e1e1e5ac71dc272777af0393054a14ed0986428231a0bbb64050547bd1",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-pair-attempt-id-mismatch",
+          "logPath": "logs/suite-ios-adversarial-pair-attempt-id-mismatch.json"
+        },
+        "finalSnapshotSha256": "316ad4e1e1e5ac71dc272777af0393054a14ed0986428231a0bbb64050547bd1",
+        "id": "pair-attempt-id-mismatch",
+        "initialSnapshotSha256": "e5fe9bf80dfa08779bc480bfed3e17a71ca93f8fe988e66f133fdf92d8c6e536",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "0902f7b98bc91522eeab121643e05f7781d351b9390934753210abc8a9080f49"
+      },
+      {
+        "baselineEffectsSha256": "38a7142dfedda7271b59cfbfcb18bd12828ab9ff3124fb70624b623df725dee2",
+        "baselineSnapshotSha256": "8ee4828655c5b28f6084441b9fa5a9eba38959ad1cd7a7121f03ec154ff14810",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-pair-commit-deadline",
+          "logPath": "logs/suite-ios-adversarial-pair-commit-deadline.json"
+        },
+        "finalSnapshotSha256": "8ee4828655c5b28f6084441b9fa5a9eba38959ad1cd7a7121f03ec154ff14810",
+        "id": "pair-commit-deadline",
+        "initialSnapshotSha256": "95247fc9c1578d475166b19312452ab5079bf70b0a2a9d2c6eb20adcc5c438f2",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "5f02573e18705bf9a0cee1c650775bb0b6669d504cdb42ee16cd124364d1fcb1"
+      },
+      {
+        "baselineEffectsSha256": "2c2b789796b382a84cf8d70f90c79956fc513708fa2e7e2b12c4a6463add24a8",
+        "baselineSnapshotSha256": "1bbe690dc278e9451123b0eef85d6646182ce4d611abdbeb9aed43a0c707035f",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-pair-sas-confirm-deadline",
+          "logPath": "logs/suite-ios-adversarial-pair-sas-confirm-deadline.json"
+        },
+        "finalSnapshotSha256": "1bbe690dc278e9451123b0eef85d6646182ce4d611abdbeb9aed43a0c707035f",
+        "id": "pair-sas-confirm-deadline",
+        "initialSnapshotSha256": "2080dccdb23a33c6a564566bd6931fb975d613a51a0f5924edd785a1e67d6c7a",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "f3a37fff782b630dfaa6440311d29ded977a53dcfad74b2abded0d471562579b"
+      },
+      {
+        "baselineEffectsSha256": "c02555c7cdf2ee60ca939d61bbf7caddb74bf2ac8464bfee20ad0c042e66b4b8",
+        "baselineSnapshotSha256": "74d36eb72879670766c079286dc99c2e24215a7f20958c88b0fb0e9568158fcb",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-video-keyframe-missing-h264-parameter-sets",
+          "logPath": "logs/suite-ios-adversarial-video-keyframe-missing-h264-parameter-sets.json"
+        },
+        "finalSnapshotSha256": "74d36eb72879670766c079286dc99c2e24215a7f20958c88b0fb0e9568158fcb",
+        "id": "video-keyframe-missing-h264-parameter-sets",
+        "initialSnapshotSha256": "59b07f5eaf908ad413ddc9cc657fd09f3d310c8f616d3cbc7caada32d298db42",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "media-inbound"
+        },
+        "reducer": "RuntimeMediaReducer.reduce",
+        "transcriptSha256": "7ab1f240c2db84f11bd7e4ee0548c85873f5570d8c32dde3e5f2c7db94722af1"
+      },
+      {
+        "baselineEffectsSha256": "f2c6809207ecbaf3c667a66e3c099d7cc82ae77a62b9d20a2134d245519455e3",
+        "baselineSnapshotSha256": "b774324289392b4e2fad4142c8e3618ead8bb2944bc3c206cc6fe523fdc3117c",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-video-keyframe-missing-hevc-parameter-sets",
+          "logPath": "logs/suite-ios-adversarial-video-keyframe-missing-hevc-parameter-sets.json"
+        },
+        "finalSnapshotSha256": "b774324289392b4e2fad4142c8e3618ead8bb2944bc3c206cc6fe523fdc3117c",
+        "id": "video-keyframe-missing-hevc-parameter-sets",
+        "initialSnapshotSha256": "eb440e4b7f7b7f150fe4bdadfd93a399621076cecd7da6bed3426dbc83d8c7da",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "media-inbound"
+        },
+        "reducer": "RuntimeMediaReducer.reduce",
+        "transcriptSha256": "ee08a8266ef530b8e46768d965c54567a065b99be309c71da86a22a503c8b5d9"
+      },
+      {
+        "baselineEffectsSha256": "3b79f58852e39cc836a6372659456bb7bb541a0a8644398c59123f8adb987b4d",
+        "baselineSnapshotSha256": "abaeb90316973884db6182f5b4494ae6ccdece56e6f336c3655fe3d77a8739f9",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-video-random-access-telemetry-mismatch",
+          "logPath": "logs/suite-ios-adversarial-video-random-access-telemetry-mismatch.json"
+        },
+        "finalSnapshotSha256": "abaeb90316973884db6182f5b4494ae6ccdece56e6f336c3655fe3d77a8739f9",
+        "id": "video-random-access-telemetry-mismatch",
+        "initialSnapshotSha256": "1a96d08bdb14555af611b21b56f62f90cf8f5be62b35912e00a36ace0be45066",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "media-inbound"
+        },
+        "reducer": "RuntimeMediaReducer.reduce",
+        "transcriptSha256": "a2b1978bdb8d45eb96b76829ded5c45a9f9ef471ce9c4bb12f133b8214c49f43"
+      },
+      {
+        "baselineEffectsSha256": "ad0361a000defe84dc8361ea23ffcae9a267567d611cd52b84c7e7c51cd63de9",
+        "baselineSnapshotSha256": "6117efe4b625955364247591894e77fa3736d7804fd8a8eaf2916999c423ee33",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-unicode-scalar-257",
+          "logPath": "logs/suite-ios-adversarial-unicode-scalar-257.json"
+        },
+        "finalSnapshotSha256": "6117efe4b625955364247591894e77fa3736d7804fd8a8eaf2916999c423ee33",
+        "id": "unicode-scalar-257",
+        "initialSnapshotSha256": "662742c2e5dbb803ee79095affc7a2ec171786dbb083ee27ab4b0aca2ffd750c",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "2da2b75539a1085d95c42898988c7e2ccc0a606f3925bf739e55ae4f75c922e2"
+      },
+      {
+        "baselineEffectsSha256": "8b80dd5974818ba4d201c52515576e60091ad6e6a9c90ace094b56505ea26783",
+        "baselineSnapshotSha256": "8f2fbc91b6af7adfca94124022ab9b844baf7ad3f2e891b7a56a3d56220eff42",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-unicode-lone-surrogate",
+          "logPath": "logs/suite-ios-adversarial-unicode-lone-surrogate.json"
+        },
+        "finalSnapshotSha256": "8f2fbc91b6af7adfca94124022ab9b844baf7ad3f2e891b7a56a3d56220eff42",
+        "id": "unicode-lone-surrogate",
+        "initialSnapshotSha256": "2a59c303379454a6c7f15c2ee6188948b0f76c36838a42a181b87839bc7d4c3e",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "pairing-inbound"
+        },
+        "reducer": "PairingExchangeState.receiveOpening",
+        "transcriptSha256": "df2acc50c1eaf5b508556abba0a1b7730d0e335707be1a781dd451b9671c5adc"
+      },
+      {
+        "baselineEffectsSha256": "a72e4caa5a455ad257f5fe14bcce3faae85f9777c3298b65c1b05ba6fc7ae927",
+        "baselineSnapshotSha256": "e6e9dd43c058059a5980602668563d50bcc3344aa87369da3eb52e1d082c0055",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-primary-liveness-deadline",
+          "logPath": "logs/suite-ios-adversarial-primary-liveness-deadline.json"
+        },
+        "finalSnapshotSha256": "e6e9dd43c058059a5980602668563d50bcc3344aa87369da3eb52e1d082c0055",
+        "id": "primary-liveness-deadline",
+        "initialSnapshotSha256": "d7a3e5a94a29e1d35a923e5da04839686bf0c2ea50dcc42532ef6aafbd4c8003",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "liveness-lease"
+        },
+        "reducer": "PrimaryLivenessReducer.reduce",
+        "transcriptSha256": "61ed895a9b9158bc494ea8b567288771e949c50bb9f631629b0f24e48d5714fa"
+      },
+      {
+        "baselineEffectsSha256": "50d443c9bc0ede48d95ed5c76305d6c9b04f96c42dd0e2cc1c0b173d36b9717b",
+        "baselineSnapshotSha256": "d3e34ab6f99765f3b716278e88890971951c767b9d179f1e5b568ad018af4b89",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-invalid-primary-traffic-no-refresh",
+          "logPath": "logs/suite-ios-adversarial-invalid-primary-traffic-no-refresh.json"
+        },
+        "finalSnapshotSha256": "d3e34ab6f99765f3b716278e88890971951c767b9d179f1e5b568ad018af4b89",
+        "id": "invalid-primary-traffic-no-refresh",
+        "initialSnapshotSha256": "3030052f140b468a6133b7ec606221b5e1e79ed5f2a35d709c2baf06b770e4e2",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "liveness-lease"
+        },
+        "reducer": "PrimaryLivenessReducer.reduce",
+        "transcriptSha256": "7a08244dabfb102c2605c88c69bcf2e3479e3f4716b8f8a6159fb18f3bce2f87"
+      },
+      {
+        "baselineEffectsSha256": "47852333297f01388aad15b581f95b7943dbbaab4c2ebb9a632038f870006b93",
+        "baselineSnapshotSha256": "a86a01b350a7b98eaf0d7a259ccf47fa333490e6a7e5e0834f50a9580875fbbf",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-secure-store-not-device-only",
+          "logPath": "logs/suite-ios-adversarial-secure-store-not-device-only.json"
+        },
+        "finalSnapshotSha256": "a86a01b350a7b98eaf0d7a259ccf47fa333490e6a7e5e0834f50a9580875fbbf",
+        "id": "secure-store-not-device-only",
+        "initialSnapshotSha256": "fbb5cf7b325a7163251cb9c4f71e78fd504c68447fbe5abcef8a48be0a792a17",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "local",
+          "stage": "secure-credential-store"
+        },
+        "reducer": "CredentialStoreReducer.reduce",
+        "transcriptSha256": "2920d007cfffc2ad366c171f1bb178a933c89eab70bddbd44cbaed10e7c566f9"
+      },
+      {
+        "baselineEffectsSha256": "1d2015aa311ee7da1c9f0d7a23dc2a3703e253d0309c46dcff5852683ddd28d1",
+        "baselineSnapshotSha256": "574e3e55eda57dc4b7b1912eff99c82127ec82fd5ee16a1dd3728a4b62f02e95",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-missing-magic",
+          "logPath": "logs/suite-ios-adversarial-usb-missing-magic.json"
+        },
+        "finalSnapshotSha256": "574e3e55eda57dc4b7b1912eff99c82127ec82fd5ee16a1dd3728a4b62f02e95",
+        "id": "usb-missing-magic",
+        "initialSnapshotSha256": "11e0ea8f178b0de4f1b59cc8e866afca8529553810abcba96b57bd592025ae09",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-preface-inbound"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.consumeMagic",
+        "transcriptSha256": "f5c855afb91adc83299ff886e94a1d0a8dc1d0307d3ed981a5f5b4761f4276a4"
+      },
+      {
+        "baselineEffectsSha256": "47afddecfe62cfde9c4d4b388d36cf1eb2f592e3d1362f67abbde836e9d99922",
+        "baselineSnapshotSha256": "c8528d3208fbf19c1aaa549e5decfe6ab99bba5f5d42a7b094d9b35d5e5fc5da",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-wrong-magic",
+          "logPath": "logs/suite-ios-adversarial-usb-wrong-magic.json"
+        },
+        "finalSnapshotSha256": "c8528d3208fbf19c1aaa549e5decfe6ab99bba5f5d42a7b094d9b35d5e5fc5da",
+        "id": "usb-wrong-magic",
+        "initialSnapshotSha256": "71dd7621ba7a73aa014b24c1b61653c8707f891a7de915923f84fd7f0825dbad",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-preface-inbound"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.consumeMagic",
+        "transcriptSha256": "66753d9773d44c6427ee0b8821151cb0628cc3ce4d1bfffba9e0ea2a9b734e88"
+      },
+      {
+        "baselineEffectsSha256": "9b51cdd74f3d51edd79aab2686bbf497faece03b813411a787670045dbc2ce25",
+        "baselineSnapshotSha256": "fde7e28d0d73725f91893ecc37940e999308728123d0cd4eee367d793c382cc3",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-legacy-v3-downgrade",
+          "logPath": "logs/suite-ios-adversarial-usb-legacy-v3-downgrade.json"
+        },
+        "finalSnapshotSha256": "fde7e28d0d73725f91893ecc37940e999308728123d0cd4eee367d793c382cc3",
+        "id": "usb-legacy-v3-downgrade",
+        "initialSnapshotSha256": "2c03831fac7df563d84aef65651479e5970788c865b44adf6275ffb7bd4e7696",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-preface-inbound"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.consumeMagic",
+        "transcriptSha256": "fb56e9c6c437d2151a07e8f04534a422ba75eb7d01a5910f943856245bc5c76f"
+      },
+      {
+        "baselineEffectsSha256": "76d45e39371488219f1acf9f48f03ba3c3fb9a0054757dbb0265731bbbe6457a",
+        "baselineSnapshotSha256": "81fba2d9b2a04a0e46dc77c50fae96a5158feda617e6c21e5c50db83d02b477a",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-init-wrong-type",
+          "logPath": "logs/suite-ios-adversarial-usb-init-wrong-type.json"
+        },
+        "finalSnapshotSha256": "81fba2d9b2a04a0e46dc77c50fae96a5158feda617e6c21e5c50db83d02b477a",
+        "id": "usb-init-wrong-type",
+        "initialSnapshotSha256": "577705176f68792f6b622b7c85cb6e3d691c3f3bc9c961574ae24c5fb8a2a0f0",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-bind-init"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "0758c84d780a80d071779413a7fcfb5eeae029eeec4089d68401b33758994000"
+      },
+      {
+        "baselineEffectsSha256": "b2c70f32559a6688b8f25b2fb848fd104e594a06e18e1153203dce775c990cd3",
+        "baselineSnapshotSha256": "6026289a850dca8c856fa680236462d2c939ac9d0c2b047755b5c8201e858819",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-init-wrong-version",
+          "logPath": "logs/suite-ios-adversarial-usb-init-wrong-version.json"
+        },
+        "finalSnapshotSha256": "6026289a850dca8c856fa680236462d2c939ac9d0c2b047755b5c8201e858819",
+        "id": "usb-init-wrong-version",
+        "initialSnapshotSha256": "b0006465ce64502725e6f87e06cc21ce0f07b7f42aaeeb7e5e54d4cec6edecf5",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-bind-init"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "c444f0441a1971be02d15b1b08869df860d901974b39b15afdbe49a341934216"
+      },
+      {
+        "baselineEffectsSha256": "1fb4672b8ad0291d156fc364466bba96adc53a198b0f96eba982e15fb5324810",
+        "baselineSnapshotSha256": "2698532ae222853130a6cba9a42ff408f4d7b65c74542a8b503be42da7d10174",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-init-wrong-purpose",
+          "logPath": "logs/suite-ios-adversarial-usb-init-wrong-purpose.json"
+        },
+        "finalSnapshotSha256": "2698532ae222853130a6cba9a42ff408f4d7b65c74542a8b503be42da7d10174",
+        "id": "usb-init-wrong-purpose",
+        "initialSnapshotSha256": "c00908833ed93bf0cd9e60f4c218adf39001953a119f4df7a784018190162b69",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-bind-init"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "82dda4985544ba272c081ececc53acf2a25c442dd75d282396e13c632fdeab04"
+      },
+      {
+        "baselineEffectsSha256": "7df462110bd26218f479648b9072b0b305938054871e13cb8df36487317152e5",
+        "baselineSnapshotSha256": "63b123b3948a99a67d04d34671d72c720660062821109b427a853bca42cb66d7",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-init-wrong-identity",
+          "logPath": "logs/suite-ios-adversarial-usb-init-wrong-identity.json"
+        },
+        "finalSnapshotSha256": "63b123b3948a99a67d04d34671d72c720660062821109b427a853bca42cb66d7",
+        "id": "usb-init-wrong-identity",
+        "initialSnapshotSha256": "ba7c9fa3703720d52edd12d9c5143a9504b214c40f111fd1b1a696e323b0b4d6",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "credential-lookup"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "eda5766f34e77b82dd1663bbe99b43ff6582498c3d4f151581b938e736c80868"
+      },
+      {
+        "baselineEffectsSha256": "f5661b5eefab3dfa09f89b56d368de0c0c2e4e588b01d2eadc7847f3a6399b4b",
+        "baselineSnapshotSha256": "cf808757560bb0027bc18884fe7de820879a62aa6e58e868e1b276a655cb6486",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-init-wrong-nonce",
+          "logPath": "logs/suite-ios-adversarial-usb-init-wrong-nonce.json"
+        },
+        "finalSnapshotSha256": "cf808757560bb0027bc18884fe7de820879a62aa6e58e868e1b276a655cb6486",
+        "id": "usb-init-wrong-nonce",
+        "initialSnapshotSha256": "0eb43f84dd7a4c853a46f65ddb836e65d3fa8f638bb0c83b56671153f696819c",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-bind-init"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "06b9d6d441fdb193993e7f156025d42fcabcacf71a11384c762ae4e09cae7e49"
+      },
+      {
+        "baselineEffectsSha256": "8e87f5a1940b24844966f95d25406f3df779bb7cdca2ec54ef7c67614e5a395f",
+        "baselineSnapshotSha256": "b8cf88e510413fbec00b6be5b3dc16566bdf382e89efac7c509fe8f2a0b119e1",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-init-wrong-proof",
+          "logPath": "logs/suite-ios-adversarial-usb-init-wrong-proof.json"
+        },
+        "finalSnapshotSha256": "b8cf88e510413fbec00b6be5b3dc16566bdf382e89efac7c509fe8f2a0b119e1",
+        "id": "usb-init-wrong-proof",
+        "initialSnapshotSha256": "ae821e6f0cb387dce8884503043666376f870e683593a5845701be255d4d17e5",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-bind-init"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "5ef95e725eb91a127f4143b993d713b8098b0f3ce2d87d45cc06bea4831d4533"
+      },
+      {
+        "baselineEffectsSha256": "f1c58d55606e6870028f8827f344301532fbee49f316d5dc1178478ee162052c",
+        "baselineSnapshotSha256": "1bef4a8359346f0893de5f8c2f8397d6c16b84bd67260e93e9e218a7b7a6f11a",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-finish-reflection",
+          "logPath": "logs/suite-ios-adversarial-usb-finish-reflection.json"
+        },
+        "finalSnapshotSha256": "1bef4a8359346f0893de5f8c2f8397d6c16b84bd67260e93e9e218a7b7a6f11a",
+        "id": "usb-finish-reflection",
+        "initialSnapshotSha256": "fb745d0ee9608c85177896fa905ead291199e0372e40f5b40b2c54e8618b2ac5",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-bind-finish"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindFinish",
+        "transcriptSha256": "1ee9ad1f2a34e6b5e0ee2384745a8cae6172934b1f9f2833e2f4018e6d9749a7"
+      },
+      {
+        "baselineEffectsSha256": "5d76aa314c71a8e0d1d5908afc90b6164754f975e525d0a1943f6d1deffba77b",
+        "baselineSnapshotSha256": "24345b8275a839c8e5f9a88108f7727480a7c433b3ffbba44df8e52e4a7d4964",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-finish-wrong-proof",
+          "logPath": "logs/suite-ios-adversarial-usb-finish-wrong-proof.json"
+        },
+        "finalSnapshotSha256": "24345b8275a839c8e5f9a88108f7727480a7c433b3ffbba44df8e52e4a7d4964",
+        "id": "usb-finish-wrong-proof",
+        "initialSnapshotSha256": "a1cddee0dfe6eb2714fd42e3fd8eadd2ffdde545132f3b4145dc2d2a74861a85",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-bind-finish"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindFinish",
+        "transcriptSha256": "3f7232895059677a45a7019af5bc8b7ff3c5425f5100f64d6c2fee6e0fff44e8"
+      },
+      {
+        "baselineEffectsSha256": "64808b47cca6f4f3e6fca31adc7bfb4fa1fe118d9a5b8b64e726cdb0ac4efe36",
+        "baselineSnapshotSha256": "03e27d11fa38e8e1b82b36698600193547b97b9117cc1d902e56420781739ad3",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-preface-extra-frame",
+          "logPath": "logs/suite-ios-adversarial-usb-preface-extra-frame.json"
+        },
+        "finalSnapshotSha256": "03e27d11fa38e8e1b82b36698600193547b97b9117cc1d902e56420781739ad3",
+        "id": "usb-preface-extra-frame",
+        "initialSnapshotSha256": "a903fa2e63dd7bf4643c44449b1a4c9d83332890d70fc9c449d8217f819f5139",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-preface-inbound"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.consumeMagic",
+        "transcriptSha256": "5cbd5ef535131e658fe633891cc5e97de51a9e1bfa6556fcc97feac544fd1e4e"
+      },
+      {
+        "baselineEffectsSha256": "b4842e292c149089460ffdf74da752ae713f95708ab27610e9318ee1dcc9e243",
+        "baselineSnapshotSha256": "ea507f29a1439d57b74aab931961337f477cb80fa8fe43cbb1747fa6d32243ab",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-preface-timeout",
+          "logPath": "logs/suite-ios-adversarial-usb-preface-timeout.json"
+        },
+        "finalSnapshotSha256": "ea507f29a1439d57b74aab931961337f477cb80fa8fe43cbb1747fa6d32243ab",
+        "id": "usb-preface-timeout",
+        "initialSnapshotSha256": "d00f3c5eab47692f1f8e7cd8d333f0492df199d3ffaaefb511ffd9803b64d406",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-preface-inbound"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.consumeMagic",
+        "transcriptSha256": "259b41e3c16ee37d10c881023230c043d689139fdf87f3399f729f8be19c765f"
+      },
+      {
+        "baselineEffectsSha256": "37a917e4140707ec90b5e8a14dfda0c621480a5d50e403e8c46848d8e9ba2f74",
+        "baselineSnapshotSha256": "43b388c9afa843b86642af339342c82f734fa6b33b3eaf91f7243e2a2619989a",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-unpaired-identity",
+          "logPath": "logs/suite-ios-adversarial-usb-unpaired-identity.json"
+        },
+        "finalSnapshotSha256": "43b388c9afa843b86642af339342c82f734fa6b33b3eaf91f7243e2a2619989a",
+        "id": "usb-unpaired-identity",
+        "initialSnapshotSha256": "92c69368371ef3332177e050b560bd3bbf9a5eb9556fa395074e82bb089fbaa8",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "credential-lookup"
+        },
+        "reducer": "ManagedUSBPrefaceReducer.bindInit",
+        "transcriptSha256": "4ba56cd4c2f228cdebd5aa4c71b6308130d8203c77ef6c2d2fce805eb713081f"
+      },
+      {
+        "baselineEffectsSha256": "4f388b87038c67a145620f8b0609dc2c9e7addf21b5b97f6d24c2f102d4b1661",
+        "baselineSnapshotSha256": "44d00e939834bd1d7487d226c499bcc6745552d2eb1a8f3ae202dac9200da7c9",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-primary-audio-binding-cross-use",
+          "logPath": "logs/suite-ios-adversarial-usb-primary-audio-binding-cross-use.json"
+        },
+        "finalSnapshotSha256": "44d00e939834bd1d7487d226c499bcc6745552d2eb1a8f3ae202dac9200da7c9",
+        "id": "usb-primary-audio-binding-cross-use",
+        "initialSnapshotSha256": "3000680e6c348b13ea9e9b8703d087fcff5a3efeb652c8b5eede5e348728a5b8",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-primary-key-schedule"
+        },
+        "reducer": "ManagedUSBKeyScheduleReducer.primary",
+        "transcriptSha256": "653ee46ef7bd576721982382953021ecc605e651e060e3c491961fd98ed165b8"
+      },
+      {
+        "baselineEffectsSha256": "79a572c6c88e2a03cb3186f5aded169f17fe42b1c773044d795589e489c6e08b",
+        "baselineSnapshotSha256": "63dc8a65042d3365c373cf6cdd4c050a62b65479d919e04f69f60d967e107b11",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-wifi-psk-as-usb-ikm",
+          "logPath": "logs/suite-ios-adversarial-usb-wifi-psk-as-usb-ikm.json"
+        },
+        "finalSnapshotSha256": "63dc8a65042d3365c373cf6cdd4c050a62b65479d919e04f69f60d967e107b11",
+        "id": "usb-wifi-psk-as-usb-ikm",
+        "initialSnapshotSha256": "128c385fc98cd4177655a6ed589f6e93d9550b1276df0fe4a203fca4a292aa7e",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-primary-key-schedule"
+        },
+        "reducer": "ManagedUSBKeyScheduleReducer.primary",
+        "transcriptSha256": "ae62b0aa7b9f47cc9f51500f681d95d9bc26c2a8d6c10d81ace0acd9c0af4ec1"
+      },
+      {
+        "baselineEffectsSha256": "b6ba3994d03af06b2b761943564a35159cd6f6440a88fa96017ce627e9906850",
+        "baselineSnapshotSha256": "3580525af89739824f4b0e78bc1e3ea553309e1d8a34b69d84956379e83a7dd1",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-binding-as-wifi-ikm",
+          "logPath": "logs/suite-ios-adversarial-usb-binding-as-wifi-ikm.json"
+        },
+        "finalSnapshotSha256": "3580525af89739824f4b0e78bc1e3ea553309e1d8a34b69d84956379e83a7dd1",
+        "id": "usb-binding-as-wifi-ikm",
+        "initialSnapshotSha256": "f26802a517398f917a948f1635fb9bbe7177a31a9420f9f3baa08b3b52d91ea8",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-wifi-key-schedule"
+        },
+        "reducer": "ManagedUSBKeyScheduleReducer.wifiRejected",
+        "transcriptSha256": "9c8bb78ad990c55f32dfb198cd3291ca42bbecdc460168244cec8cc0bbeddf98"
+      },
+      {
+        "baselineEffectsSha256": "cb6339b1e51d95ab085f9aea9d6d732f670eb1b382a865165ea68240309d35eb",
+        "baselineSnapshotSha256": "cce7604b7812aacc32344eb4b5543b4bf1b5807b9e59184a39d9fce967cb4d76",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-audio-binding-inequality-rejected",
+          "logPath": "logs/suite-ios-adversarial-usb-audio-binding-inequality-rejected.json"
+        },
+        "finalSnapshotSha256": "cce7604b7812aacc32344eb4b5543b4bf1b5807b9e59184a39d9fce967cb4d76",
+        "id": "usb-audio-binding-inequality-rejected",
+        "initialSnapshotSha256": "dad423659c5ecc8d5007cf8d5853d96412ba88c99c0a8705eb44e48ce9dad60f",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-audio-key-schedule"
+        },
+        "reducer": "ManagedUSBKeyScheduleReducer.audio",
+        "transcriptSha256": "797783b6484b6730bb1b5ad14b0676b8bbc18ffe12e7f16c6c47622d75ecafc9"
+      },
+      {
+        "baselineEffectsSha256": "db2514d80417ca2c44acb337683109234a543856659078e6725883f7c57fbeff",
+        "baselineSnapshotSha256": "af9a1d6c282ecf42e24c9e8980719bfbb127a383e51d2a859034249c254f94c6",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-record-sequence-replay",
+          "logPath": "logs/suite-ios-adversarial-usb-record-sequence-replay.json"
+        },
+        "finalSnapshotSha256": "af9a1d6c282ecf42e24c9e8980719bfbb127a383e51d2a859034249c254f94c6",
+        "id": "usb-record-sequence-replay",
+        "initialSnapshotSha256": "6c920041c122cde5eec96e789f6a5f614c773a48075b3e2cd8afd63020140ce5",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-record-inbound"
+        },
+        "reducer": "ManagedUSBRecordReducer.consume",
+        "transcriptSha256": "096e262b637977e5c20f4b10c894705b555dcc94c6d516394ad0d85336d813e6"
+      },
+      {
+        "baselineEffectsSha256": "3e87f3a97d4030dfd8c95d6795f19582d08404f644db6c8cbd086128d1c3bcc9",
+        "baselineSnapshotSha256": "543ba9c29ca51b48cab73a47019a3d8d9e5007e0a44e50edcf94d928ebfda0d5",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-record-sequence-skip",
+          "logPath": "logs/suite-ios-adversarial-usb-record-sequence-skip.json"
+        },
+        "finalSnapshotSha256": "543ba9c29ca51b48cab73a47019a3d8d9e5007e0a44e50edcf94d928ebfda0d5",
+        "id": "usb-record-sequence-skip",
+        "initialSnapshotSha256": "99798ed277ada7d988bae0de360470c1b0e7b00019525017e6111e5e68c535f9",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-record-inbound"
+        },
+        "reducer": "ManagedUSBRecordReducer.consume",
+        "transcriptSha256": "3b3addd8935751a277c78f1c5c38fdff0b52f4ba36de57795221923b1cac538d"
+      },
+      {
+        "baselineEffectsSha256": "4eace746ffb35223ecd73715013a34563dddf3a653a6e05803d27661f9c4ddb3",
+        "baselineSnapshotSha256": "0a00a37dce77627c3fb1ef408e6c6e0219b44da0d7f1912196baa44eb60fd676",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-record-tag-mutation",
+          "logPath": "logs/suite-ios-adversarial-usb-record-tag-mutation.json"
+        },
+        "finalSnapshotSha256": "0a00a37dce77627c3fb1ef408e6c6e0219b44da0d7f1912196baa44eb60fd676",
+        "id": "usb-record-tag-mutation",
+        "initialSnapshotSha256": "22d6191843fd9ded0f775fe153981ffdea29f4821f9f7ce006a28e9af3a7e3e6",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-record-inbound"
+        },
+        "reducer": "ManagedUSBRecordReducer.consume",
+        "transcriptSha256": "8233abc296081cc6ba54d9716ee173e9d09cf603a3a096f06c3781661500c497"
+      },
+      {
+        "baselineEffectsSha256": "0c18566c4ee2c7e79790415ad97c51fc5bfa9fb6d53bc30c7a2494cbf430d375",
+        "baselineSnapshotSha256": "e7781fccba9cb56f72b4f84d7e9aac1413a32fdd9c99f40f7bf7d33214a46850",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-record-payload-mutation",
+          "logPath": "logs/suite-ios-adversarial-usb-record-payload-mutation.json"
+        },
+        "finalSnapshotSha256": "e7781fccba9cb56f72b4f84d7e9aac1413a32fdd9c99f40f7bf7d33214a46850",
+        "id": "usb-record-payload-mutation",
+        "initialSnapshotSha256": "a370e7cb121fc6e55ce3c72527718d3e55f580baf25e4175c41b33f9b02cbef0",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-record-inbound"
+        },
+        "reducer": "ManagedUSBRecordReducer.consume",
+        "transcriptSha256": "3b457816ac4afff6389ff56f44dfb4c74fda83f208d4b02b7ad84ad586cfb075"
+      },
+      {
+        "baselineEffectsSha256": "071003b254db43744e94504ee1d4be56b7efe0c17afd3da7aba2e2579c686c21",
+        "baselineSnapshotSha256": "9c8e8d886dd59fd9d550d83f260a85f39af10fb823940d3b56f1ba606d8cfb4a",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-record-wrong-direction-key",
+          "logPath": "logs/suite-ios-adversarial-usb-record-wrong-direction-key.json"
+        },
+        "finalSnapshotSha256": "9c8e8d886dd59fd9d550d83f260a85f39af10fb823940d3b56f1ba606d8cfb4a",
+        "id": "usb-record-wrong-direction-key",
+        "initialSnapshotSha256": "79c1268cdc88dae2fbf954b1288e7d7d64111fab50611dc1e86acb2d49087340",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-record-inbound"
+        },
+        "reducer": "ManagedUSBRecordReducer.consume",
+        "transcriptSha256": "446bb58e5f503b3e9ff931aced45eb050cad133d7397f99fd5cf30f8b43581e1"
+      },
+      {
+        "baselineEffectsSha256": "4bb9f03d2ecc8b55910a8dc77d190d4ecad5328de4e9f2894c073f1eea98ce33",
+        "baselineSnapshotSha256": "d826354c086d42ff361b44acfacf4a09a3dea135466994e46d7192c42a4113f8",
+        "commandReceipt": {
+          "exitCode": 0,
+          "label": "suite-ios-adversarial-usb-record-overhead-in-semantic-cap",
+          "logPath": "logs/suite-ios-adversarial-usb-record-overhead-in-semantic-cap.json"
+        },
+        "finalSnapshotSha256": "d826354c086d42ff361b44acfacf4a09a3dea135466994e46d7192c42a4113f8",
+        "id": "usb-record-overhead-in-semantic-cap",
+        "initialSnapshotSha256": "4e0c45b0561cea7535006a821bf2d70802f3ab67db857d965497adca6037a393",
+        "ownership": {
+          "consumerPlatform": "ios-server",
+          "direction": "mac-to-ios",
+          "stage": "usb-record-inbound"
+        },
+        "reducer": "ManagedUSBRecordReducer.consume",
+        "transcriptSha256": "78374cabd4d86a134f3e46c4437d8dfc9acb0328df366e23a86db1e8736e2cee"
+      }
+    ],
+    "negativeVectorEvidenceLabels": [
+      "exact metadata-bound production consumer receipt",
+      "suite-protocol-negative-vectors producer reference"
+    ],
+    "positiveRawFrameCases": [
+      "mac-to-ios-ping",
+      "mac-to-ios-touch",
+      "mac-to-ios-scroll",
+      "mac-to-ios-keyframe",
+      "mac-to-ios-session-open-v3",
+      "ios-to-mac-pong",
+      "ios-to-mac-stats",
+      "ios-to-mac-keyframe",
+      "ios-to-mac-session-accept-v3"
+    ],
+    "positiveVectorEvidenceLabels": [
+      "suite-mac-session-vectors",
+      "suite-ios-session-vectors",
+      "suite-ios-pairing-vectors",
+      "suite-protocol-positive-vectors"
+    ],
+    "productionConsumerNegativeVectorReceipts": [
+      "commitment-reveal-mismatch",
+      "reveal-before-both-commitments",
+      "duplicate-pairing-role",
+      "role-reflection",
+      "wrong-mac-install-id",
+      "wrong-device-install-id",
+      "wrong-mac-nonce",
+      "wrong-device-nonce",
+      "wrong-version",
+      "wrong-session-id",
+      "zero-generation",
+      "wrong-channel",
+      "channel-nonce-replay",
+      "primary-proof-field-order",
+      "transport-ikm-cross-use",
+      "audio-before-primary-timeout",
+      "compatibility-mismatch",
+      "sensitive-reason-code",
+      "duplicate-json-key",
+      "invalid-utf8-json",
+      "bad-length-prefix",
+      "invalid-base64",
+      "oversize-frame",
+      "pair-attempt-id-mismatch",
+      "pair-commit-deadline",
+      "pair-sas-confirm-deadline",
+      "wifi-hello-missing-seed",
+      "usb-hello-seed-present",
+      "server-hello-transport-mismatch",
+      "video-keyframe-missing-h264-parameter-sets",
+      "video-keyframe-missing-hevc-parameter-sets",
+      "video-random-access-telemetry-mismatch",
+      "unicode-scalar-257",
+      "unicode-lone-surrogate",
+      "primary-liveness-deadline",
+      "invalid-primary-traffic-no-refresh",
+      "secure-store-not-device-only",
+      "usb-missing-magic",
+      "usb-wrong-magic",
+      "usb-legacy-v3-downgrade",
+      "usb-init-wrong-type",
+      "usb-init-wrong-version",
+      "usb-init-wrong-purpose",
+      "usb-init-wrong-identity",
+      "usb-init-wrong-nonce",
+      "usb-init-wrong-proof",
+      "usb-challenge-reflection",
+      "usb-challenge-wrong-proof",
+      "usb-finish-reflection",
+      "usb-finish-wrong-proof",
+      "usb-accept-replay",
+      "usb-preface-extra-frame",
+      "usb-preface-timeout",
+      "usb-unpaired-identity",
+      "usb-primary-audio-binding-cross-use",
+      "usb-wifi-psk-as-usb-ikm",
+      "usb-binding-as-wifi-ikm",
+      "usb-audio-binding-inequality-rejected",
+      "usb-record-sequence-replay",
+      "usb-record-sequence-skip",
+      "usb-record-tag-mutation",
+      "usb-record-payload-mutation",
+      "usb-record-wrong-direction-key",
+      "usb-record-overhead-in-semantic-cap"
+    ],
+    "productionDerivedAdversarialCases": {
+      "ios-server": [
+        "commitment-reveal-mismatch",
+        "reveal-before-both-commitments",
+        "duplicate-pairing-role",
+        "role-reflection",
+        "wrong-mac-install-id",
+        "wrong-device-install-id",
+        "wrong-mac-nonce",
+        "wrong-version",
+        "wrong-channel",
+        "channel-nonce-replay",
+        "primary-proof-field-order",
+        "transport-ikm-cross-use",
+        "audio-before-primary-timeout",
+        "compatibility-mismatch",
+        "duplicate-json-key",
+        "invalid-utf8-json",
+        "bad-length-prefix",
+        "invalid-base64",
+        "oversize-frame",
+        "pair-attempt-id-mismatch",
+        "pair-commit-deadline",
+        "pair-sas-confirm-deadline",
+        "video-keyframe-missing-h264-parameter-sets",
+        "video-keyframe-missing-hevc-parameter-sets",
+        "video-random-access-telemetry-mismatch",
+        "unicode-scalar-257",
+        "unicode-lone-surrogate",
+        "primary-liveness-deadline",
+        "invalid-primary-traffic-no-refresh",
+        "secure-store-not-device-only",
+        "usb-missing-magic",
+        "usb-wrong-magic",
+        "usb-legacy-v3-downgrade",
+        "usb-init-wrong-type",
+        "usb-init-wrong-version",
+        "usb-init-wrong-purpose",
+        "usb-init-wrong-identity",
+        "usb-init-wrong-nonce",
+        "usb-init-wrong-proof",
+        "usb-finish-reflection",
+        "usb-finish-wrong-proof",
+        "usb-preface-extra-frame",
+        "usb-preface-timeout",
+        "usb-unpaired-identity",
+        "usb-primary-audio-binding-cross-use",
+        "usb-wifi-psk-as-usb-ikm",
+        "usb-binding-as-wifi-ikm",
+        "usb-audio-binding-inequality-rejected",
+        "usb-record-sequence-replay",
+        "usb-record-sequence-skip",
+        "usb-record-tag-mutation",
+        "usb-record-payload-mutation",
+        "usb-record-wrong-direction-key",
+        "usb-record-overhead-in-semantic-cap"
+      ],
+      "mac-client": [
+        "wrong-device-nonce",
+        "wrong-session-id",
+        "zero-generation",
+        "sensitive-reason-code",
+        "wifi-hello-missing-seed",
+        "usb-hello-seed-present",
+        "server-hello-transport-mismatch",
+        "usb-challenge-reflection",
+        "usb-challenge-wrong-proof",
+        "usb-accept-replay"
+      ]
+    },
+    "productionSuiteCoveredNegativeVectorIDs": [
+      "commitment-reveal-mismatch",
+      "reveal-before-both-commitments",
+      "duplicate-pairing-role",
+      "role-reflection",
+      "wrong-mac-install-id",
+      "wrong-device-install-id",
+      "wrong-mac-nonce",
+      "wrong-device-nonce",
+      "wrong-version",
+      "wrong-session-id",
+      "zero-generation",
+      "wrong-channel",
+      "channel-nonce-replay",
+      "primary-proof-field-order",
+      "transport-ikm-cross-use",
+      "audio-before-primary-timeout",
+      "compatibility-mismatch",
+      "sensitive-reason-code",
+      "duplicate-json-key",
+      "invalid-utf8-json",
+      "bad-length-prefix",
+      "invalid-base64",
+      "oversize-frame",
+      "pair-attempt-id-mismatch",
+      "pair-commit-deadline",
+      "pair-sas-confirm-deadline",
+      "wifi-hello-missing-seed",
+      "usb-hello-seed-present",
+      "server-hello-transport-mismatch",
+      "video-keyframe-missing-h264-parameter-sets",
+      "video-keyframe-missing-hevc-parameter-sets",
+      "video-random-access-telemetry-mismatch",
+      "unicode-scalar-257",
+      "unicode-lone-surrogate",
+      "primary-liveness-deadline",
+      "invalid-primary-traffic-no-refresh",
+      "secure-store-not-device-only",
+      "usb-missing-magic",
+      "usb-wrong-magic",
+      "usb-legacy-v3-downgrade",
+      "usb-init-wrong-type",
+      "usb-init-wrong-version",
+      "usb-init-wrong-purpose",
+      "usb-init-wrong-identity",
+      "usb-init-wrong-nonce",
+      "usb-init-wrong-proof",
+      "usb-challenge-reflection",
+      "usb-challenge-wrong-proof",
+      "usb-finish-reflection",
+      "usb-finish-wrong-proof",
+      "usb-accept-replay",
+      "usb-preface-extra-frame",
+      "usb-preface-timeout",
+      "usb-unpaired-identity",
+      "usb-primary-audio-binding-cross-use",
+      "usb-wifi-psk-as-usb-ikm",
+      "usb-binding-as-wifi-ikm",
+      "usb-audio-binding-inequality-rejected",
+      "usb-record-sequence-replay",
+      "usb-record-sequence-skip",
+      "usb-record-tag-mutation",
+      "usb-record-payload-mutation",
+      "usb-record-wrong-direction-key",
+      "usb-record-overhead-in-semantic-cap"
+    ],
+    "productionSuiteCoveredPositiveVectorIDs": [
+      "pairing-v2:canonical",
+      "session-v3:wifi-psk",
+      "session-v3:usb-pairing-binding-primary",
+      "session-v3:usb-pairing-binding-audio",
+      "session-v3-frame:serverHelloUsb",
+      "session-v3-frame:serverHelloWifi",
+      "session-v3-frame:sessionOpenPayloadLength"
+    ],
+    "productionSuiteResults": {
+      "suite-ios-adversarial-audio-before-primary-timeout": true,
+      "suite-ios-adversarial-bad-length-prefix": true,
+      "suite-ios-adversarial-channel-nonce-replay": true,
+      "suite-ios-adversarial-commitment-reveal-mismatch": true,
+      "suite-ios-adversarial-compatibility-mismatch": true,
+      "suite-ios-adversarial-duplicate-json-key": true,
+      "suite-ios-adversarial-duplicate-pairing-role": true,
+      "suite-ios-adversarial-invalid-base64": true,
+      "suite-ios-adversarial-invalid-primary-traffic-no-refresh": true,
+      "suite-ios-adversarial-invalid-utf8-json": true,
+      "suite-ios-adversarial-oversize-frame": true,
+      "suite-ios-adversarial-pair-attempt-id-mismatch": true,
+      "suite-ios-adversarial-pair-commit-deadline": true,
+      "suite-ios-adversarial-pair-sas-confirm-deadline": true,
+      "suite-ios-adversarial-primary-liveness-deadline": true,
+      "suite-ios-adversarial-primary-proof-field-order": true,
+      "suite-ios-adversarial-reveal-before-both-commitments": true,
+      "suite-ios-adversarial-role-reflection": true,
+      "suite-ios-adversarial-secure-store-not-device-only": true,
+      "suite-ios-adversarial-transport-ikm-cross-use": true,
+      "suite-ios-adversarial-unicode-lone-surrogate": true,
+      "suite-ios-adversarial-unicode-scalar-257": true,
+      "suite-ios-adversarial-usb-audio-binding-inequality-rejected": true,
+      "suite-ios-adversarial-usb-binding-as-wifi-ikm": true,
+      "suite-ios-adversarial-usb-finish-reflection": true,
+      "suite-ios-adversarial-usb-finish-wrong-proof": true,
+      "suite-ios-adversarial-usb-init-wrong-identity": true,
+      "suite-ios-adversarial-usb-init-wrong-nonce": true,
+      "suite-ios-adversarial-usb-init-wrong-proof": true,
+      "suite-ios-adversarial-usb-init-wrong-purpose": true,
+      "suite-ios-adversarial-usb-init-wrong-type": true,
+      "suite-ios-adversarial-usb-init-wrong-version": true,
+      "suite-ios-adversarial-usb-legacy-v3-downgrade": true,
+      "suite-ios-adversarial-usb-missing-magic": true,
+      "suite-ios-adversarial-usb-preface-extra-frame": true,
+      "suite-ios-adversarial-usb-preface-timeout": true,
+      "suite-ios-adversarial-usb-primary-audio-binding-cross-use": true,
+      "suite-ios-adversarial-usb-record-overhead-in-semantic-cap": true,
+      "suite-ios-adversarial-usb-record-payload-mutation": true,
+      "suite-ios-adversarial-usb-record-sequence-replay": true,
+      "suite-ios-adversarial-usb-record-sequence-skip": true,
+      "suite-ios-adversarial-usb-record-tag-mutation": true,
+      "suite-ios-adversarial-usb-record-wrong-direction-key": true,
+      "suite-ios-adversarial-usb-unpaired-identity": true,
+      "suite-ios-adversarial-usb-wifi-psk-as-usb-ikm": true,
+      "suite-ios-adversarial-usb-wrong-magic": true,
+      "suite-ios-adversarial-video-keyframe-missing-h264-parameter-sets": true,
+      "suite-ios-adversarial-video-keyframe-missing-hevc-parameter-sets": true,
+      "suite-ios-adversarial-video-random-access-telemetry-mismatch": true,
+      "suite-ios-adversarial-wrong-channel": true,
+      "suite-ios-adversarial-wrong-device-install-id": true,
+      "suite-ios-adversarial-wrong-mac-install-id": true,
+      "suite-ios-adversarial-wrong-mac-nonce": true,
+      "suite-ios-adversarial-wrong-version": true,
+      "suite-ios-pairing-vectors": true,
+      "suite-ios-session-vectors": true,
+      "suite-mac-adversarial-sensitive-reason-code": true,
+      "suite-mac-adversarial-server-hello-transport-mismatch": true,
+      "suite-mac-adversarial-usb-accept-replay": true,
+      "suite-mac-adversarial-usb-challenge-reflection": true,
+      "suite-mac-adversarial-usb-challenge-wrong-proof": true,
+      "suite-mac-adversarial-usb-hello-seed-present": true,
+      "suite-mac-adversarial-wifi-hello-missing-seed": true,
+      "suite-mac-adversarial-wrong-device-nonce": true,
+      "suite-mac-adversarial-wrong-session-id": true,
+      "suite-mac-adversarial-zero-generation": true,
+      "suite-mac-session-vectors": true,
+      "suite-protocol-conformance": true,
+      "suite-protocol-negative-vectors": true,
+      "suite-protocol-positive-vectors": true
+    },
+    "protocolProducerNegativeVectorIDs": [
+      "commitment-reveal-mismatch",
+      "reveal-before-both-commitments",
+      "duplicate-pairing-role",
+      "role-reflection",
+      "wrong-mac-install-id",
+      "wrong-device-install-id",
+      "wrong-mac-nonce",
+      "wrong-device-nonce",
+      "wrong-version",
+      "wrong-session-id",
+      "zero-generation",
+      "wrong-channel",
+      "channel-nonce-replay",
+      "primary-proof-field-order",
+      "transport-ikm-cross-use",
+      "audio-before-primary-timeout",
+      "compatibility-mismatch",
+      "sensitive-reason-code",
+      "duplicate-json-key",
+      "invalid-utf8-json",
+      "bad-length-prefix",
+      "invalid-base64",
+      "oversize-frame",
+      "pair-attempt-id-mismatch",
+      "pair-commit-deadline",
+      "pair-sas-confirm-deadline",
+      "wifi-hello-missing-seed",
+      "usb-hello-seed-present",
+      "server-hello-transport-mismatch",
+      "video-keyframe-missing-h264-parameter-sets",
+      "video-keyframe-missing-hevc-parameter-sets",
+      "video-random-access-telemetry-mismatch",
+      "unicode-scalar-257",
+      "unicode-lone-surrogate",
+      "primary-liveness-deadline",
+      "invalid-primary-traffic-no-refresh",
+      "secure-store-not-device-only",
+      "usb-missing-magic",
+      "usb-wrong-magic",
+      "usb-legacy-v3-downgrade",
+      "usb-init-wrong-type",
+      "usb-init-wrong-version",
+      "usb-init-wrong-purpose",
+      "usb-init-wrong-identity",
+      "usb-init-wrong-nonce",
+      "usb-init-wrong-proof",
+      "usb-challenge-reflection",
+      "usb-challenge-wrong-proof",
+      "usb-finish-reflection",
+      "usb-finish-wrong-proof",
+      "usb-accept-replay",
+      "usb-preface-extra-frame",
+      "usb-preface-timeout",
+      "usb-unpaired-identity",
+      "usb-primary-audio-binding-cross-use",
+      "usb-wifi-psk-as-usb-ikm",
+      "usb-binding-as-wifi-ikm",
+      "usb-audio-binding-inequality-rejected",
+      "usb-record-sequence-replay",
+      "usb-record-sequence-skip",
+      "usb-record-tag-mutation",
+      "usb-record-payload-mutation",
+      "usb-record-wrong-direction-key",
+      "usb-record-overhead-in-semantic-cap"
+    ],
+    "unexecutableNegativeVectorIDs": [],
+    "unexecutablePolicy": "matrix fails closed on missing, duplicate, extra, wrong-platform, wrong-stage, or non-rejected metadata-bound consumer receipts; Protocol suite success supplies producer evidence only",
+    "vectorEvidence": {
+      "negative": {
+        "consumer": [
+          "commitment-reveal-mismatch",
+          "reveal-before-both-commitments",
+          "duplicate-pairing-role",
+          "role-reflection",
+          "wrong-mac-install-id",
+          "wrong-device-install-id",
+          "wrong-mac-nonce",
+          "wrong-device-nonce",
+          "wrong-version",
+          "wrong-session-id",
+          "zero-generation",
+          "wrong-channel",
+          "channel-nonce-replay",
+          "primary-proof-field-order",
+          "transport-ikm-cross-use",
+          "audio-before-primary-timeout",
+          "compatibility-mismatch",
+          "sensitive-reason-code",
+          "duplicate-json-key",
+          "invalid-utf8-json",
+          "bad-length-prefix",
+          "invalid-base64",
+          "oversize-frame",
+          "pair-attempt-id-mismatch",
+          "pair-commit-deadline",
+          "pair-sas-confirm-deadline",
+          "wifi-hello-missing-seed",
+          "usb-hello-seed-present",
+          "server-hello-transport-mismatch",
+          "video-keyframe-missing-h264-parameter-sets",
+          "video-keyframe-missing-hevc-parameter-sets",
+          "video-random-access-telemetry-mismatch",
+          "unicode-scalar-257",
+          "unicode-lone-surrogate",
+          "primary-liveness-deadline",
+          "invalid-primary-traffic-no-refresh",
+          "secure-store-not-device-only",
+          "usb-missing-magic",
+          "usb-wrong-magic",
+          "usb-legacy-v3-downgrade",
+          "usb-init-wrong-type",
+          "usb-init-wrong-version",
+          "usb-init-wrong-purpose",
+          "usb-init-wrong-identity",
+          "usb-init-wrong-nonce",
+          "usb-init-wrong-proof",
+          "usb-challenge-reflection",
+          "usb-challenge-wrong-proof",
+          "usb-finish-reflection",
+          "usb-finish-wrong-proof",
+          "usb-accept-replay",
+          "usb-preface-extra-frame",
+          "usb-preface-timeout",
+          "usb-unpaired-identity",
+          "usb-primary-audio-binding-cross-use",
+          "usb-wifi-psk-as-usb-ikm",
+          "usb-binding-as-wifi-ikm",
+          "usb-audio-binding-inequality-rejected",
+          "usb-record-sequence-replay",
+          "usb-record-sequence-skip",
+          "usb-record-tag-mutation",
+          "usb-record-payload-mutation",
+          "usb-record-wrong-direction-key",
+          "usb-record-overhead-in-semantic-cap"
+        ],
+        "producer": [
+          "commitment-reveal-mismatch",
+          "reveal-before-both-commitments",
+          "duplicate-pairing-role",
+          "role-reflection",
+          "wrong-mac-install-id",
+          "wrong-device-install-id",
+          "wrong-mac-nonce",
+          "wrong-device-nonce",
+          "wrong-version",
+          "wrong-session-id",
+          "zero-generation",
+          "wrong-channel",
+          "channel-nonce-replay",
+          "primary-proof-field-order",
+          "transport-ikm-cross-use",
+          "audio-before-primary-timeout",
+          "compatibility-mismatch",
+          "sensitive-reason-code",
+          "duplicate-json-key",
+          "invalid-utf8-json",
+          "bad-length-prefix",
+          "invalid-base64",
+          "oversize-frame",
+          "pair-attempt-id-mismatch",
+          "pair-commit-deadline",
+          "pair-sas-confirm-deadline",
+          "wifi-hello-missing-seed",
+          "usb-hello-seed-present",
+          "server-hello-transport-mismatch",
+          "video-keyframe-missing-h264-parameter-sets",
+          "video-keyframe-missing-hevc-parameter-sets",
+          "video-random-access-telemetry-mismatch",
+          "unicode-scalar-257",
+          "unicode-lone-surrogate",
+          "primary-liveness-deadline",
+          "invalid-primary-traffic-no-refresh",
+          "secure-store-not-device-only",
+          "usb-missing-magic",
+          "usb-wrong-magic",
+          "usb-legacy-v3-downgrade",
+          "usb-init-wrong-type",
+          "usb-init-wrong-version",
+          "usb-init-wrong-purpose",
+          "usb-init-wrong-identity",
+          "usb-init-wrong-nonce",
+          "usb-init-wrong-proof",
+          "usb-challenge-reflection",
+          "usb-challenge-wrong-proof",
+          "usb-finish-reflection",
+          "usb-finish-wrong-proof",
+          "usb-accept-replay",
+          "usb-preface-extra-frame",
+          "usb-preface-timeout",
+          "usb-unpaired-identity",
+          "usb-primary-audio-binding-cross-use",
+          "usb-wifi-psk-as-usb-ikm",
+          "usb-binding-as-wifi-ikm",
+          "usb-audio-binding-inequality-rejected",
+          "usb-record-sequence-replay",
+          "usb-record-sequence-skip",
+          "usb-record-tag-mutation",
+          "usb-record-payload-mutation",
+          "usb-record-wrong-direction-key",
+          "usb-record-overhead-in-semantic-cap"
+        ]
+      },
+      "positive": {
+        "consumer": [],
+        "producer": [
+          "pairing-v2:canonical",
+          "session-v3:wifi-psk",
+          "session-v3:usb-pairing-binding-primary",
+          "session-v3:usb-pairing-binding-audio",
+          "session-v3-frame:serverHelloUsb",
+          "session-v3-frame:serverHelloWifi",
+          "session-v3-frame:sessionOpenPayloadLength"
+        ]
+      }
+    }
+  },
+  "failures": [],
+  "freshCompatibilityReceipt": {
+    "path": "compatibility-report-fresh.json",
+    "sha256": "69cf7a3c6abcd37d8b5bbe4a7607c7abb13061401cfee8784e98d3b56cea7841"
+  },
+  "kind": "cross-repo-production-interop-report",
+  "physicalAvailability": "outside automated matrix evidence DAG; S-P1-05 OPEN-WAIVED",
+  "processProtocol": {
+    "directions": [
+      "mac-encoder-to-ios-decoder",
+      "ios-encoder-to-mac-decoder"
+    ],
+    "framing": "4-byte big-endian length followed by raw payload bytes over stdout/stdin",
+    "negativeCases": [
+      "zero-length frame exits nonzero",
+      "metadata-owned adversarial consumer suite emits exactly one rejected receipt per declared case"
+    ],
+    "topology": "separate production-derived Swift executables"
+  },
+  "result": "passed",
+  "schemaVersion": 2,
+  "sourceTuple": {
+    "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+    "iosCommit": "b0620ef21ec57b688a3b69b9f7f9a3f878f64dbd",
+    "macCommit": "5653ad99001adbc559db46483917f21fc187e0b7",
+    "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
+    "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3"
+  }
+}
