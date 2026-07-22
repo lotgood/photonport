@@ -39,7 +39,10 @@ struct UsbmuxDevice: Hashable, Identifiable {
     var id: String { udid }
     var label: String { "\(name ?? "iPhone / iPad") (USB)" }
 }
-struct UsbmuxDialedConnection {
+/// Handed from the dialing task to the sender's serial queue exactly once;
+/// `recordState` is mutable but has a single owner after that handoff, so the
+/// cross-queue capture is safe by construction.
+struct UsbmuxDialedConnection: @unchecked Sendable {
     let connection: NWConnection
     let authenticatedChannelBindingKey: Data
     let recordState: USBRecordState
