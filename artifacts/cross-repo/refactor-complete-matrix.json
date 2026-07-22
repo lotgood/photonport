@@ -581,7 +581,7 @@
   ],
   "compatibilityReceipt": {
     "path": "compatibility-report.json",
-    "sha256": "8624679c3819ab0eda22f3bd3a1c64aa2478dfd6b5f7adbfae9e0693f62e30a6"
+    "sha256": "fde619660803a399a8ab08979849d7aaba52266a4c1fa4b52cfb599abbc40b1b"
   },
   "coverageContract": {
     "enumeratedProtocolNegativeVectorIDs": [
@@ -2401,7 +2401,7 @@
   "failures": [],
   "freshCompatibilityReceipt": {
     "path": "compatibility-report-fresh.json",
-    "sha256": "8624679c3819ab0eda22f3bd3a1c64aa2478dfd6b5f7adbfae9e0693f62e30a6"
+    "sha256": "fde619660803a399a8ab08979849d7aaba52266a4c1fa4b52cfb599abbc40b1b"
   },
   "kind": "cross-repo-production-interop-report",
   "physicalAvailability": "outside automated matrix evidence DAG; S-P1-05 OPEN-WAIVED",
@@ -2421,8 +2421,8 @@
   "schemaVersion": 2,
   "sourceTuple": {
     "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-    "iosCommit": "eaee0c3967b3430a42e437316d6d0bdc372119c6",
-    "macCommit": "d5fccd1eea18cb70ba698280542d4a0bca2786fa",
+    "iosCommit": "5a93cea0ac154c5a43bfa01e9d8f0b8c8dcb182e",
+    "macCommit": "2847f570c470a619f634cb187fcd508637694a57",
     "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
     "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3"
   }

@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-da_ncn42/changed-pin-mac",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-zp5lx40m/changed-pin-mac",
     "checkout",
     "--detach",
-    "d5fccd1eea18cb70ba698280542d4a0bca2786fa"
+    "2847f570c470a619f634cb187fcd508637694a57"
   ],
   "exitCode": 0,
   "label": "changed-pin-mac-checkout",
-  "stderr": "HEAD is now at d5fccd1 chore(evidence): stage pre-fix matrix artifacts before rerun\n",
+  "stderr": "HEAD is now at 2847f57 chore(evidence): record passed interop matrix receipts for tuple e1fa567/eaee0c3/a41e300\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

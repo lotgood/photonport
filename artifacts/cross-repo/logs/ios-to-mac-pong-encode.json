@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-da_ncn42/build/ios-interop",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-zp5lx40m/build/ios-interop",
     "encode",
     "pong"
   ],
@@ -8,5 +8,5 @@
   "label": "ios-to-mac-pong-encode",
   "stderr": "",
   "stdoutBytes": 34,
-  "stdoutSha256": "bd19a192aab571c6d2798620e866b3b543612158d4d562ff27fc22a4d50e6885"
+  "stdoutSha256": "01c6d18735db56c6ff7adf49fa7f1f29c2228d0c36fa276a2f10b880372851f3"
 }
