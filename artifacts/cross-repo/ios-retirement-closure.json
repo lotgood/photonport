@@ -1,0 +1,202 @@
+{
+  "decision": {
+    "action": "retire the preserved GPL-3.0 monorepo iOS receiver (target + sources) from the working tree",
+    "authority": "repository owner",
+    "date": "2026-07-22",
+    "grounds": [
+      "CR-006: the archived receiver's rollback claim was found false by the static audit",
+      "the archived receiver speaks the pre-authenticated wire and cannot interoperate with the current Mac/protocol tuple",
+      "the standalone MIT receiver (photonport-ios) is the verified production receiver"
+    ],
+    "preservation": "full history remains at preservedAtCommit and all ancestors; nothing is rewritten",
+    "waived": [
+      "g004.physical scenario wifi_wrong_mac (requires a second Mac; owner-waived)"
+    ]
+  },
+  "kind": "photonport.r01-retirement-closure.v1",
+  "memberCount": 30,
+  "members": [
+    {
+      "gitBlob": "78f27878bd03722878ecc53c93e1af4ae07ff3e9",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/Contents.json",
+      "sha256": "fd4df99e25089ffdad5edee77495c891bf1de55d5d8466ca8dc41481576d99ff",
+      "size": 1742
+    },
+    {
+      "gitBlob": "c3f134e49da2754d2b99ff62e54c1c45f5e12608",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+      "sha256": "19751152056692fd36e6296c341596643e2afe915b5a0a457b293c66ce301e83",
+      "size": 1053861
+    },
+    {
+      "gitBlob": "4d2577bb2318df0901494267e30c69859dab4a90",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_20@2x.png",
+      "sha256": "3413615f2f2457b17194ad4022e2113e72654bbfbc1d5f81085ec84d645c2c22",
+      "size": 3388
+    },
+    {
+      "gitBlob": "5c007504a4286d3f68bdc26b06bb78d5b2eb6d18",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_20@3x.png",
+      "sha256": "7965656228a70ad11abe15abcb7f4a35b24a0129fcd926b3ecbc02feb7dc7d64",
+      "size": 6202
+    },
+    {
+      "gitBlob": "aa627da52b1adbb2ff0ab62a2482d9594877881a",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_29@2x.png",
+      "sha256": "1b269948c1a9dbc11e303bfd432231c17a1051f446ee2309c278a89633676e0a",
+      "size": 5941
+    },
+    {
+      "gitBlob": "b16501c29629f5795a319b4a4b816752a161317d",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_29@3x.png",
+      "sha256": "f355e443826030b531972f2c1155e291679162e120845c5f0a2a1646ac372b8a",
+      "size": 10953
+    },
+    {
+      "gitBlob": "f937bb9a7f41fcdc1d1cd8dac4a18e4b23d581be",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_40@2x.png",
+      "sha256": "00457c845d1134765b680609d5173d6e81bf0376f1d5bf1fd23e2dd2f9a7fbfe",
+      "size": 9552
+    },
+    {
+      "gitBlob": "80269e61acad84e7013c9eaca68c4dfd39c74c54",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_40@3x.png",
+      "sha256": "2f6438275560d9993a77b45f5326e4a8ca04d049bb08d1bee48a9bcd26e779f0",
+      "size": 17952
+    },
+    {
+      "gitBlob": "80269e61acad84e7013c9eaca68c4dfd39c74c54",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_60@2x.png",
+      "sha256": "2f6438275560d9993a77b45f5326e4a8ca04d049bb08d1bee48a9bcd26e779f0",
+      "size": 17952
+    },
+    {
+      "gitBlob": "adf91656b1f57d4976563253c1325b853a17a3b0",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/icon_60@3x.png",
+      "sha256": "32522d191c76bceea522bca37e6996a69be706a56182d9926f2a256f2a5836fe",
+      "size": 35263
+    },
+    {
+      "gitBlob": "7e790589e090c2c4714443bed565fc4b1bf9f65f",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_20@1x.png",
+      "sha256": "7389289cfb5cd9e2625fe4749bd444a50e8911633ba25622cd807edc92043863",
+      "size": 1522
+    },
+    {
+      "gitBlob": "4d2577bb2318df0901494267e30c69859dab4a90",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_20@2x.png",
+      "sha256": "3413615f2f2457b17194ad4022e2113e72654bbfbc1d5f81085ec84d645c2c22",
+      "size": 3388
+    },
+    {
+      "gitBlob": "bd2445f0b1e89a79c200912553f03ae629b867ae",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_29@1x.png",
+      "sha256": "a05a6241df2dc275d1b5255bc259e2b4096381832b09e14ac32bb2a3a96c9c8d",
+      "size": 2282
+    },
+    {
+      "gitBlob": "aa627da52b1adbb2ff0ab62a2482d9594877881a",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_29@2x.png",
+      "sha256": "1b269948c1a9dbc11e303bfd432231c17a1051f446ee2309c278a89633676e0a",
+      "size": 5941
+    },
+    {
+      "gitBlob": "4d2577bb2318df0901494267e30c69859dab4a90",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_40@1x.png",
+      "sha256": "3413615f2f2457b17194ad4022e2113e72654bbfbc1d5f81085ec84d645c2c22",
+      "size": 3388
+    },
+    {
+      "gitBlob": "f937bb9a7f41fcdc1d1cd8dac4a18e4b23d581be",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_40@2x.png",
+      "sha256": "00457c845d1134765b680609d5173d6e81bf0376f1d5bf1fd23e2dd2f9a7fbfe",
+      "size": 9552
+    },
+    {
+      "gitBlob": "633b0d6c10e74bde6c72831f4f041de9e286e4b2",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_76@1x.png",
+      "sha256": "7ec047ac15fee7fa3c36bb89f65e7bc165e1a8494d79451e1d56762bc1cb9ce8",
+      "size": 8818
+    },
+    {
+      "gitBlob": "edf66f71b10e78cba992a2097c07242256bad190",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_76@2x.png",
+      "sha256": "da3b8dd74f10d21bd3aab9aa67eb2a22e0a83849c7cd6baa0a5ed52473d2534d",
+      "size": 26598
+    },
+    {
+      "gitBlob": "8e2f9a58a81cb3fff4fcfc262c2e4d2931b0660c",
+      "path": "iOS/Assets.xcassets/AppIcon.appiconset/ipad_83@2x.png",
+      "sha256": "34e8d1aa6c4cf66ad2e97f1b71f7af8ac4b2e987dac9706db79d02ee46263587",
+      "size": 31102
+    },
+    {
+      "gitBlob": "2cfd4c67432b83ecfc794dc65f025d196fd7c081",
+      "path": "iOS/Assets.xcassets/AppLogo.imageset/Contents.json",
+      "sha256": "c13962fe3ce8530526ae60055387b0cefb803a64bfa619b9b57d0c42c42c1259",
+      "size": 131
+    },
+    {
+      "gitBlob": "86d37f7b2698928473533059ff96ec9f926a39eb",
+      "path": "iOS/Assets.xcassets/AppLogo.imageset/applogo.png",
+      "sha256": "f0a7d63167c1960846a534c03a79fd73d621880aede94509e2d49b56017fd47d",
+      "size": 255369
+    },
+    {
+      "gitBlob": "46cba7dff03f1ab04c920fb8f00e73588f5e5aa2",
+      "path": "iOS/Assets.xcassets/Contents.json",
+      "sha256": "80b0b2e5ce5f42d06c9cea0234147e7f2bea58ef205c47ce3a82f0abe4b64465",
+      "size": 51
+    },
+    {
+      "gitBlob": "5eca8a8fccc281dfe4ec053f79e73522abb9cb73",
+      "path": "iOS/Log.swift",
+      "sha256": "969f871aa126358f53179611ea9d95866c7cf8aa68f2ecdd4c2df02838477822",
+      "size": 1716
+    },
+    {
+      "gitBlob": "f7eacc26b2cdd6fb68322131b065b6a18e025ebe",
+      "path": "iOS/MetalVideoRenderer.swift",
+      "sha256": "445b905e54c0ad5c02b03c4dd895ac501bdbda0ff6ede80e9983c129945d434e",
+      "size": 7343
+    },
+    {
+      "gitBlob": "66f31794c9f4cb70bc36c259fb8268eba75b20c0",
+      "path": "iOS/OpenSidecarPhoneApp.swift",
+      "sha256": "5f54436253a52e65b37170db0ee7c583bcb0c10fffb18571cabd5f447bcdee50",
+      "size": 41289
+    },
+    {
+      "gitBlob": "0c67376ebacb410fd873cac1d8d8dd431b262c02",
+      "path": "iOS/OpenSidecariOS.entitlements",
+      "sha256": "97704a8960b4facceef54397a08fb5d0a456247c3627359215aa2a27df22656c",
+      "size": 181
+    },
+    {
+      "gitBlob": "ad57769912eb0bd42ed5f9b2ee517ef4b2ee59fb",
+      "path": "iOS/Pairing.swift",
+      "sha256": "5b5a9999c3ffe908ddcc0a2ff896dc226b6240e1cae3ff2ccdda3d8051677aa6",
+      "size": 24468
+    },
+    {
+      "gitBlob": "7739e0b1c9c3aab1384dbead4f14ce9a095e0249",
+      "path": "iOS/PhoneReceiver.swift",
+      "sha256": "2414410f925773788f90b7c5099abd18e67878bd6fa5bb24eadb47a274365b35",
+      "size": 63441
+    },
+    {
+      "gitBlob": "937278fe1a50bfec93241757cadee7b69933c391",
+      "path": "iOS/PrivacyInfo.xcprivacy",
+      "sha256": "5c20dbcb4ab17c390d6c89c0d6c7f7a274f377c2304159f01bb2ebb88a2cd069",
+      "size": 694
+    },
+    {
+      "gitBlob": "550fef28df29cef4098c99b2a8653908c0e08104",
+      "path": "iOS/StreamAudioPlayer.swift",
+      "sha256": "d5e09fb1006ccb60f0455f2ea60454d3c0dedeb4c6750a12515d755bd9123a5d",
+      "size": 9155
+    }
+  ],
+  "preservedAtCommit": "8cf18947be59ad3baf75a902da9280bc98afdcaf",
+  "schemaVersion": 1
+}

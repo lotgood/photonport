@@ -37,12 +37,14 @@ iPad Pro 11-inch M4 running iPadOS 27**. All measurements cited here were made
 on that pair; other OS versions remain **unverified** and no other support
 claim is made.
 
-The standalone receiver is the intended post-transition build target. The
-monorepo iOS target is intentionally preserved for historical reproducibility
-and rollback and must not be retired until physical G004, provenance G006,
-rollback, export-classification, signing/TestFlight, and public-publication
-gates have complete evidence. Until then, fail closed rather than treating
-the split as a completed release.
+The standalone receiver is the only supported build target. The monorepo GPL
+iOS receiver was **retired on 2026-07-22** by owner decision: its sources and
+target were removed from the working tree, and it remains fully preserved in
+git history. The machine-readable closure receipt — every removed path with
+its git blob and SHA-256, plus the preserving commit — lives at
+`artifacts/cross-repo/ios-retirement-closure.json`. The retired receiver
+spoke the pre-authenticated wire and cannot interoperate with the current
+protocol, so it carried no remaining rollback value.
 
 ## Security — read this first
 
@@ -169,13 +171,12 @@ echo "DEVELOPMENT_TEAM=YOURTEAMID" > .env   # see .env.example
 xcodebuild -project OpenSidecar.xcodeproj -scheme OpenSidecarMac -configuration Debug -derivedDataPath build build
 ```
 
-After transition, build the iOS receiver from the standalone
+Build the iOS receiver from the standalone
 [photonport-ios repository](https://github.com/lotgood/photonport-ios), pinning
 its `COMPATIBILITY.json` to protocol 3.0.0, pairing 2.0.0, Mac minimum 0.1.0,
-and iOS minimum 1.0.0. The monorepo `OpenSidecariOS` target and its historical
-build command remain available for rollback and provenance; they are not the
-steady-state App Store path and must not be retired before the gates above are
-complete.
+and iOS minimum 1.0.0. The retired monorepo `OpenSidecariOS` target survives
+in git history only (closure receipt:
+`artifacts/cross-repo/ios-retirement-closure.json`).
 
 Internal type/scheme names keep upstream's `OpenSidecar` prefix on purpose —
 smaller diff against upstream, easier future merges.

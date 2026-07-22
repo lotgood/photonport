@@ -26,10 +26,6 @@ schemes:
       config: Debug
       targets:
         - OpenSidecarMacAudit
-  OpenSidecariOS:
-    build:
-      targets:
-        OpenSidecariOS: all
 # DEVELOPMENT_TEAM comes from the environment (see generate.sh / .env) so no
 # personal team ID lives in the repo. Unset = unsigned, fine for CI.
 settings:
@@ -109,40 +105,3 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/PhotonPort.app/Contents/MacOS/PhotonPort"
         BUNDLE_LOADER: "$(TEST_HOST)"
-  OpenSidecariOS:
-    type: application
-    platform: iOS
-    deploymentTarget: "17.0"
-    sources:
-      - iOS
-    info:
-      path: iOS/Info.plist
-      properties:
-        CFBundleDisplayName: PhotonPort
-        CFBundleIconName: AppIcon
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        # This asserts an export-compliance exemption, not an absence of
-        # cryptography. PhotonPort uses CryptoKit + TLS-PSK; complete and record
-        # the Mac+iOS export-classification review before either distribution
-        # (docs/RELEASE.md).
-        ITSAppUsesNonExemptEncryption: false
-        UILaunchScreen: {}
-        UIRequiresFullScreen: true
-        # ProMotion: without this key iPhones cap app-driven layer updates at
-        # 60Hz — required for the negotiated 120Hz stream to reach the glass.
-        # iPads honor high refresh without it. (Apple: "Optimizing ProMotion
-        # refresh rates for iPhone 13 Pro and iPad Pro".)
-        CADisableMinimumFrameDurationOnPhone: true
-        NSLocalNetworkUsageDescription: PhotonPort advertises itself on the local network so your Mac can connect over WiFi.
-        NSBonjourServices: ["_photonport._tcp"]
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
-          - UIInterfaceOrientationPortraitUpsideDown
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.hyupji.photonport.ios
-        TARGETED_DEVICE_FAMILY: "1,2"
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

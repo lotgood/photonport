@@ -133,14 +133,20 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("pendingStreamSession = nil", handler)
         self.assertLess(handler.index("consumeVerifiedSessionAccept"), handler.index("pendingStreamSession = nil"))
 
-    def test_project_yml_tracks_mac_source_tree_and_keeps_ios_separate(self):
+    def test_project_yml_tracks_mac_source_tree_and_ios_target_stays_retired(self):
         self.assertTrue(PARSER_PATH.exists(), "Mac/ProtocolParser.swift must be a tracked production source")
         mac_target = target_block("OpenSidecarMac")
-        ios_target = target_block("OpenSidecariOS")
         self.assertRegex(mac_target, r"sources:\n\s+- Mac\b")
-        self.assertRegex(ios_target, r"sources:\n\s+- iOS\b")
         self.assertNotRegex(mac_target, r"sources:\n(?:\s+- .+\n)*\s+- iOS\b")
-        self.assertNotRegex(ios_target, r"sources:\n(?:\s+- .+\n)*\s+- Mac\b")
+        # The GPL monorepo receiver was retired on 2026-07-22 (owner decision;
+        # closure receipt at artifacts/cross-repo/ios-retirement-closure.json).
+        # It must not silently return to the project or the working tree.
+        self.assertNotIn("OpenSidecariOS", PROJECT_YML)
+        self.assertFalse((ROOT / "iOS").exists(), "retired iOS/ tree must stay history-only")
+        closure = json.loads((ROOT / "artifacts/cross-repo/ios-retirement-closure.json").read_text(encoding="utf-8"))
+        self.assertEqual(closure["kind"], "photonport.r01-retirement-closure.v1")
+        self.assertEqual(closure["memberCount"], len(closure["members"]))
+        self.assertGreaterEqual(closure["memberCount"], 30)
 
     def test_parser_is_shared_by_adversarial_harness(self):
         self.assertIn("Mac/ProtocolParser.swift", swiftc_inputs(HARNESS_SCRIPT))

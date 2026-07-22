@@ -21,6 +21,16 @@ All notable PhotonPort changes will be documented in this file.
   readiness verifier, provenance audit/scan/baseline tools, and a Mac protocol
   adversarial harness.
 
+### Removed
+
+- The preserved GPL-3.0 monorepo iOS receiver (`iOS/` sources and the
+  `OpenSidecariOS` target) is retired from the working tree by owner
+  decision. It spoke the pre-authenticated wire and could not interoperate
+  with the current protocol; the standalone MIT receiver is the only
+  supported one. Full history is preserved; the machine-readable closure
+  receipt (every removed path with git blob and SHA-256, plus the preserving
+  commit) lives at `artifacts/cross-repo/ios-retirement-closure.json`.
+
 ### Changed
 
 - Frame admission recovers rate lost to over-strict gating: encoder pipeline

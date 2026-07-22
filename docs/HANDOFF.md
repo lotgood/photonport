@@ -39,8 +39,16 @@ publication.
 The standalone iOS receiver is a provenance-cleared reconstruction: 47 shipped
 files, byte-verified MIT lineage, 1,267 similarity candidates independently
 dispositioned APPROVE (receipts in `photonport-ios/artifacts/provenance/`).
-`scripts/release-ios.sh` here is a fail-closed transition guard; the monorepo
-iOS target stays as rollback until `retirementEligible` flips true.
+`scripts/release-ios.sh` here is a fail-closed guard against building the
+retired GPL target. **Retired 2026-07-22 (owner decision):** the monorepo GPL
+receiver's rollback claim was already found false by the static audit
+(CR-006), and it speaks the pre-authenticated wire, so it cannot interoperate
+with the current tuple at all. The owner explicitly waived the
+`wifi_wrong_mac` blocker (requires a second Mac) for this retirement — this is
+a recorded waiver, not a passed gate. Closure receipt with every removed
+path, git blob, and SHA-256:
+`artifacts/cross-repo/ios-retirement-closure.json` (preserving commit
+recorded inside; history is untouched).
 
 ## Supported matrix (only claim)
 
@@ -64,8 +72,9 @@ Remaining `not_run` (human, on-device):
    receiver rejects the competing session (`session_busy`). This blocks Mac
    public release.
 3. `wifi_wrong_mac` — needs a second Mac; stays `not_run` until one exists.
-   It blocks only monorepo iOS-target retirement (`retirementEligible`), not
-   Mac DMG distribution.
+   It blocked only monorepo iOS-target retirement; that retirement was
+   executed 2026-07-22 under an explicit owner waiver (see above). It never
+   blocked Mac DMG distribution.
 
 Defects found and fixed during the physical session (all verified live):
 cursor-lag implicit CALayer animation (photonport-ios `f648668`), EDR-backend
