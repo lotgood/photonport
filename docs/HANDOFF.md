@@ -13,7 +13,7 @@ committed).
 
 | Repository | Branch | Commit | Notes |
 |---|---|---|---|
-| `lotgood/photonport` | `refactor/complete` | matrix tuple `9278aad` + evidence/docs commits above it | ahead of `origin/main`; branch not yet pushed |
+| `lotgood/photonport` | `refactor/complete` | matrix tuple `7a8210d` (GPL iOS retired) + evidence commits above it | ahead of `origin/main`; branch not yet pushed — repo is public, publication on hold |
 | `lotgood/photonport-ios` | `refactor/complete` | `a56d223` (matrix tuple `cb6e9ac`) | pushed 2026-07-22; private origin `main` = `refactor/complete` |
 | `lotgood/photonport-protocol` | `refactor/complete` | `0e67e0e` (matrix tuple `acae6f5`) | pushed 2026-07-22; private origin `main` = `refactor/complete` |
 
