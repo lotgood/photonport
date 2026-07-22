@@ -136,9 +136,9 @@ struct ProtocolBuildPin: Decodable, Equatable {
 
     private static let expected = ProtocolBuildPin(
         schemaVersion: 1,
-        protocolCommit: "a41e3003116047d0b833245029b219eeee9059c3",
+        protocolCommit: "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
         compatibilityDigest: "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-        normativeManifestDigest: "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd")
+        normativeManifestDigest: "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff")
 
     static func validate(at url: URL?) throws {
         guard let url else {
@@ -357,6 +357,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         admitted: { [weak self] in self?.handleAdmittedFrame($0, pts: $1, admission: $2) })
     // Codec actually in use: H.264 for SDR, HEVC Main10 HLG for HDR.
     private var usingHEVC = false
+    // Wire codec id when the dedicated ProRes block carries the stream
+    // (`defaults write … prores proxy|lt`, USB transport only); nil otherwise.
+    private var proresWire: String?
     // Rejected encodes (output handler status != noErr) — rate-limit logging.
     private var encodeFailures = 0
     // Pipeline diagnosis flag (`defaults write … diag -bool true`).
@@ -2160,8 +2163,32 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         let spec: CFDictionary? = lowLatency
             ? [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue] as CFDictionary
             : nil
+        // Experimental low-latency path (`defaults write … prores proxy|lt`):
+        // intra-only ProRes 422 on the media engine's DEDICATED ProRes block —
+        // sidesteps the HEVC engine's ~30ms/frame Main10 latency. Canonical
+        // wire codec; USB transport only (bandwidth).
+        proresWire = nil
+        if isUSBTransport, let flavor = UserDefaults.standard.string(forKey: "prores") {
+            VTCompressionSessionCreate(
+                allocator: nil,
+                width: Int32(width), height: Int32(height),
+                codecType: flavor == "lt" ? kCMVideoCodecType_AppleProRes422LT
+                                          : kCMVideoCodecType_AppleProRes422Proxy,
+                encoderSpecification: nil,
+                imageBufferAttributes: nil,
+                compressedDataAllocator: nil,
+                outputCallback: nil,
+                refcon: nil,
+                compressionSessionOut: &encoder
+            )
+            if encoder != nil {
+                proresWire = flavor == "lt" ? "prores-422-lt" : "prores-422-proxy"
+            } else {
+                Log.info("ProRes session creation failed — falling back to the standard codecs")
+            }
+        }
         // HDR rides HEVC Main10/HLG; SDR is always H.264.
-        usingHEVC = hdrActive
+        usingHEVC = proresWire == nil && hdrActive
         if usingHEVC {
             VTCompressionSessionCreate(
                 allocator: nil,
@@ -2218,7 +2245,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         tune(kVTCompressionPropertyKey_MaxFrameDelayCount, 0 as CFNumber)
 
         var contractStatuses: [OSStatus] = []
-        if hdrActive {
+        if proresWire != nil {
+            // ProRes is intra-only on the dedicated block: no profile, HLG
+            // color tagging, or rate-control contract properties apply.
+        } else if hdrActive {
             contractStatuses += [
                 VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_HEVC_Main10_AutoLevel),
                 VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCMFormatDescriptionColorPrimaries_ITU_R_2020),
@@ -2231,11 +2261,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         }
         let bitrate = streamFps > 60 ? quality.bitrate(usb: isUSBTransport) * 3 / 2
                                      : quality.bitrate(usb: isUSBTransport)
-        tune(kVTCompressionPropertyKey_AverageBitRate, bitrate as CFNumber)
-        if !isUSBTransport {
-            let capBytesPerSec = bitrate / 8 * 5 / 4
-            tune(kVTCompressionPropertyKey_DataRateLimits,
-                 [NSNumber(value: capBytesPerSec), NSNumber(value: 1.0)] as CFArray)
+        if proresWire == nil {
+            tune(kVTCompressionPropertyKey_AverageBitRate, bitrate as CFNumber)
+            if !isUSBTransport {
+                let capBytesPerSec = bitrate / 8 * 5 / 4
+                tune(kVTCompressionPropertyKey_DataRateLimits,
+                     [NSNumber(value: capBytesPerSec), NSNumber(value: 1.0)] as CFArray)
+            }
         }
         tune(kVTCompressionPropertyKey_ExpectedFrameRate, streamFps as CFNumber)
         tune(kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, kCFBooleanTrue)
@@ -2247,7 +2279,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             throw NSError(domain: "MacSender", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "VideoToolbox encoder configuration failed"])
         }
-        Log.info("encoder ready: \(width)x\(height) \(hdrActive ? "HEVC-Main10-HLG" : usingHEVC ? "HEVC-Main" : "H.264") \(bitrate / 1_000_000)Mbps \(streamFps)fps quality=\(quality.rawValue) lowLatencyRC=\(lowLatency)")
+        Log.info("encoder ready: \(width)x\(height) \(proresWire.map { "ProRes-422-\($0.hasSuffix("-lt") ? "LT" : "Proxy") (intra, no rate control)" } ?? (hdrActive ? "HEVC-Main10-HLG" : usingHEVC ? "HEVC-Main" : "H.264")) \(bitrate / 1_000_000)Mbps \(streamFps)fps quality=\(quality.rawValue) lowLatencyRC=\(lowLatency)")
     }
 
     // MARK: - Capture callback
@@ -2448,6 +2480,20 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     }
                     return
                 }
+                if self.proresWire != nil {
+                    guard let framed = self.proresPayload(from: buffer, capturedAtMs: capturedAtMs) else {
+                        if requestingKeyframe { self.needsKeyframe = true }
+                        self.encodeFailures += 1
+                        Log.info("ProRes framing rejected")
+                        return
+                    }
+                    if self.sendFramed(framed) {
+                        self.needsKeyframe = false
+                    } else if requestingKeyframe {
+                        self.needsKeyframe = true
+                    }
+                    return
+                }
                 guard let data = self.annexB(from: buffer) else {
                     if requestingKeyframe { self.needsKeyframe = true }
                     self.encodeFailures += 1
@@ -2476,6 +2522,49 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         }
     }
 
+    // ProRes wire framing: same canonical inner frame as Annex-B video,
+    // but the media portion is exactly one raw ProRes frame. The telemetry
+    // carries the coded dimensions so the receiver can build its
+    // CMVideoFormatDescription without parsing the bitstream.
+    private func proresPayload(from sample: CMSampleBuffer, capturedAtMs: Int64) -> Data? {
+        guard let wire = proresWire,
+              let block = CMSampleBufferGetDataBuffer(sample),
+              let fmt = CMSampleBufferGetFormatDescription(sample) else { return nil }
+        var len = 0, total = 0
+        var ptr: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(block, atOffset: 0,
+                lengthAtOffsetOut: &len, totalLengthOut: &total,
+                dataPointerOut: &ptr) == noErr, let ptr, total >= 8 else { return nil }
+        var frame: Data
+        if len == total {
+            frame = Data(bytes: ptr, count: total)
+        } else {
+            frame = Data(count: total)
+            let ok = frame.withUnsafeMutableBytes {
+                CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: total,
+                                           destination: $0.baseAddress!) == noErr
+            }
+            guard ok else { return nil }
+        }
+        // The wire requires the leading big-endian frame size to equal the
+        // media length exactly and 'icpf' at bytes 4..7 — trim block-buffer
+        // padding, fail closed on anything else.
+        let declared = Int(UInt32(bigEndian: frame.prefix(4).withUnsafeBytes {
+            $0.loadUnaligned(as: UInt32.self)
+        }))
+        guard declared >= 8, declared <= frame.count,
+              frame[frame.startIndex + 4 ..< frame.startIndex + 8].elementsEqual("icpf".utf8) else { return nil }
+        frame = frame.prefix(declared)
+        let dims = CMVideoFormatDescriptionGetDimensions(fmt)
+        let telemetry = Data("{\"codec\":\"\(wire)\",\"h\":\(dims.height),\"hdr\":\(hdrActive),\"keyframe\":true,\"t\":\(Double(capturedAtMs) / 1_000),\"type\":\"video\",\"w\":\(dims.width)}".utf8)
+        guard (1...4_096).contains(telemetry.count) else { return nil }
+        var telemetryLength = UInt32(telemetry.count).bigEndian
+        var payload = Data(bytes: &telemetryLength, count: 4)
+        payload.append(telemetry)
+        payload.append(frame)
+        guard payload.count <= ProtocolParser.videoDataCap else { return nil }
+        return payload
+    }
 
     private func videoPayload(annexB: Data, capturedAtMs: Int64, keyframe: Bool) -> Data? {
         let startCode3 = Data([0, 0, 1])

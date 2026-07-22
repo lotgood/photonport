@@ -109,6 +109,21 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("case .keyframe:", control)
         self.assertIn("needsKeyframe = true", control)
 
+    def test_prores_payload_matches_canonical_prores_contract(self):
+        prores_payload = swift_private_function(SENDER, "proresPayload")
+        setup_encoder = swift_private_function(SENDER, "setupEncoder")
+        self.assertIn(
+            '"{\\"codec\\":\\"\\(wire)\\",\\"h\\":\\(dims.height),\\"hdr\\":\\(hdrActive),'
+            '\\"keyframe\\":true,\\"t\\":\\(Double(capturedAtMs) / 1_000),\\"type\\":\\"video\\",'
+            '\\"w\\":\\(dims.width)}"', prores_payload)
+        self.assertIn('elementsEqual("icpf".utf8)', prores_payload)
+        self.assertIn("guard payload.count <= ProtocolParser.videoDataCap else { return nil }", prores_payload)
+        # ProRes is USB-only and never carries rate-control or HLG contract properties.
+        self.assertIn('if isUSBTransport, let flavor = UserDefaults.standard.string(forKey: "prores")', setup_encoder)
+        self.assertIn("kCMVideoCodecType_AppleProRes422Proxy", setup_encoder)
+        self.assertIn("kCMVideoCodecType_AppleProRes422LT", setup_encoder)
+        self.assertIn("usingHEVC = proresWire == nil && hdrActive", setup_encoder)
+
     def test_accept_proof_is_fail_closed_before_binding(self):
         handler = swift_private_function(SENDER, "handleSessionAccept")
         self.assertRegex(handler, r"ProtocolParser\.consumeVerifiedSessionAccept")
@@ -243,9 +258,9 @@ class MacProtocolContractTests(unittest.TestCase):
     def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
         expected = {
             "schemaVersion": 1,
-            "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+            "protocolCommit": "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
             "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-            "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
+            "normativeManifestDigest": "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff",
         }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         self.assertEqual(pin, expected)
