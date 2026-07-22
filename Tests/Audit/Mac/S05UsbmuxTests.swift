@@ -77,6 +77,12 @@ final class S05UsbmuxTests: XCTestCase {
         XCTAssertThrowsError(try Usbmux.decodeHeader(header(type: 7)))
         XCTAssertThrowsError(try Usbmux.decodeHeader(header(tag: 2)))
         XCTAssertEqual(try? Usbmux.decodeHeader(header(length: 32)), 16)
+        // Listen event packets are daemon-initiated: tag 0 (or an echoed
+        // subscribe tag) is valid for events, still rejected for replies.
+        XCTAssertThrowsError(try Usbmux.decodeHeader(header(length: 32, tag: 0)))
+        XCTAssertEqual(try? Usbmux.decodeHeader(header(length: 32, tag: 0), accepting: .event), 16)
+        XCTAssertEqual(try? Usbmux.decodeHeader(header(length: 32, tag: 1), accepting: .event), 16)
+        XCTAssertThrowsError(try Usbmux.decodeHeader(header(length: 32, tag: 2), accepting: .event))
     }
 
     func testRejectsMalformedOrMismatchedResults() {

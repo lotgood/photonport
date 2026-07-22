@@ -9,15 +9,21 @@ final class S01AdmissionTests: XCTestCase {
         XCTAssertNoThrow(try ProtocolBuildPin.validate(at: bundled))
 
         let validPin = try String(contentsOf: bundled, encoding: .utf8)
+        // Mutate the commit the pin actually carries; a hardcoded historical
+        // hash silently no-ops once the pin advances.
+        let pinObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(validPin.utf8)) as? [String: Any])
+        let pinnedCommit = try XCTUnwrap(pinObject["protocolCommit"] as? String)
+        XCTAssertNotEqual(pinnedCommit, String(repeating: "0", count: 40))
         XCTAssertThrowsError(try ProtocolBuildPin.validate(at: nil))
         XCTAssertThrowsError(try ProtocolBuildPin.validate(at: temporaryFile(contents: "{")))
         XCTAssertThrowsError(try ProtocolBuildPin.validate(
             at: temporaryFile(contents: validPin.replacingOccurrences(
-                of: "1f7d0ef052e13c3be3fe5c1658f002da0449d340",
+                of: pinnedCommit,
                 with: String(repeating: "0", count: 40)))))
         XCTAssertThrowsError(try ProtocolBuildPin.validate(
             at: temporaryFile(contents: validPin.replacingOccurrences(
-                of: "1f7d0ef052e13c3be3fe5c1658f002da0449d340",
+                of: pinnedCommit,
                 with: "2280861313b2363b673089637d1c1dc544e208d8"))))
     }
 

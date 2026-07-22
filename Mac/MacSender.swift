@@ -2184,41 +2184,50 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             throw NSError(domain: "MacSender", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "VideoToolbox encoder creation failed"])
         }
-        // Configuration is transactional: any rejected contract property
-        // invalidates the session before ScreenCaptureKit can start.
-        var statuses: [OSStatus] = [
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue),
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse),
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 3600 as CFNumber),
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 60 as CFNumber),
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber),
-        ]
+        // Configuration is split by consequence. Wire-contract properties
+        // (profile, HLG color signaling) decide what the receiver is told it
+        // is decoding — a rejection there invalidates the session before
+        // ScreenCaptureKit can start. Tuning properties are hardware-variant
+        // best effort: e.g. the low-latency rate controller rejects
+        // MaxFrameDelayCount with kVTPropertyNotSupportedErr on Apple
+        // Silicon, and that must not kill an otherwise valid session.
+        func tune(_ key: CFString, _ value: CFTypeRef) {
+            let status = VTSessionSetProperty(encoder, key: key, value: value)
+            if status != noErr {
+                Log.info("encoder tuning \(key) rejected: \(status)")
+            }
+        }
+        tune(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue)
+        tune(kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse)
+        tune(kVTCompressionPropertyKey_MaxKeyFrameInterval, 3600 as CFNumber)
+        tune(kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 60 as CFNumber)
+        tune(kVTCompressionPropertyKey_MaxFrameDelayCount, 0 as CFNumber)
+
+        var contractStatuses: [OSStatus] = []
         if hdrActive {
-            statuses += [
+            contractStatuses += [
                 VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_HEVC_Main10_AutoLevel),
                 VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCMFormatDescriptionColorPrimaries_ITU_R_2020),
                 VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_TransferFunction, value: kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG),
                 VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_YCbCrMatrix, value: kCMFormatDescriptionYCbCrMatrix_ITU_R_2020),
             ]
         } else {
-            statuses.append(VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel,
+            contractStatuses.append(VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel,
                                                 value: usingHEVC ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel))
         }
         let bitrate = streamFps > 60 ? quality.bitrate(usb: isUSBTransport) * 3 / 2
                                      : quality.bitrate(usb: isUSBTransport)
-        statuses.append(VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AverageBitRate,
-                                             value: bitrate as CFNumber))
+        tune(kVTCompressionPropertyKey_AverageBitRate, bitrate as CFNumber)
         if !isUSBTransport {
             let capBytesPerSec = bitrate / 8 * 5 / 4
-            statuses.append(VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_DataRateLimits,
-                                                 value: [NSNumber(value: capBytesPerSec), NSNumber(value: 1.0)] as CFArray))
+            tune(kVTCompressionPropertyKey_DataRateLimits,
+                 [NSNumber(value: capBytesPerSec), NSNumber(value: 1.0)] as CFArray)
         }
-        statuses += [
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: streamFps as CFNumber),
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue),
-            VTCompressionSessionPrepareToEncodeFrames(encoder),
-        ]
-        guard statuses.allSatisfy({ $0 == noErr }) else {
+        tune(kVTCompressionPropertyKey_ExpectedFrameRate, streamFps as CFNumber)
+        tune(kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, kCFBooleanTrue)
+        contractStatuses.append(VTCompressionSessionPrepareToEncodeFrames(encoder))
+        guard contractStatuses.allSatisfy({ $0 == noErr }) else {
+            Log.info("encoder contract configuration rejected: \(contractStatuses)")
             VTCompressionSessionInvalidate(encoder)
             self.encoder = nil
             throw NSError(domain: "MacSender", code: 6,

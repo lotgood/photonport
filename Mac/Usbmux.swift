@@ -78,8 +78,9 @@ enum Usbmux {
             defer { conn.cancel() }
             try await send(["MessageType": "ListDevices"], on: conn)
             let reply = try await readMessage(on: conn)
-            guard reply["MessageType"] as? String == "DeviceList",
-                  let entries = reply["DeviceList"] as? [[String: Any]] else {
+            // The daemon's reply carries no top-level MessageType — the
+            // DeviceList key itself is the response discriminator.
+            guard let entries = reply["DeviceList"] as? [[String: Any]] else {
                 throw Failure.protocolError("unexpected reply to ListDevices")
             }
             return entries.compactMap {
@@ -238,7 +239,12 @@ enum Usbmux {
     private static let plistMessageType: UInt32 = 8
     private static let requestTag: UInt32 = 1
 
-    static func decodeHeader(_ header: Data) throws -> Int {
+    /// usbmuxd replies echo the request tag; Listen attach/detach event
+    /// packets are daemon-initiated and carry tag 0 (older daemons echoed the
+    /// subscribe tag — accept both for events, nothing else).
+    enum InboundKind { case reply, event }
+
+    static func decodeHeader(_ header: Data, accepting kind: InboundKind = .reply) throws -> Int {
         guard header.count == messageHeaderLength else {
             throw Failure.protocolError("truncated message header")
         }
@@ -251,9 +257,18 @@ enum Usbmux {
         guard fields.0 >= UInt32(messageHeaderLength), fields.0 < 1 << 20 else {
             throw Failure.protocolError("bad message length \(fields.0)")
         }
-        guard fields.1 == messageVersion, fields.2 == plistMessageType,
-              fields.3 == requestTag else {
+        guard fields.1 == messageVersion, fields.2 == plistMessageType else {
             throw Failure.protocolError("unexpected message header")
+        }
+        switch kind {
+        case .reply:
+            guard fields.3 == requestTag else {
+                throw Failure.protocolError("unexpected message header")
+            }
+        case .event:
+            guard fields.3 == requestTag || fields.3 == 0 else {
+                throw Failure.protocolError("unexpected message header")
+            }
         }
         return Int(fields.0) - messageHeaderLength
     }
@@ -351,20 +366,31 @@ enum Usbmux {
         try await send(raw: packet, on: conn)
     }
 
-    static func readMessage(on conn: NWConnection) async throws -> [String: Any] {
-        try await withRequestDeadline {
-            let header = try await receive(exactly: messageHeaderLength, on: conn)
-            let bodyLength = try decodeHeader(header)
-            guard bodyLength > 0 else {
-                throw Failure.protocolError("empty plist message")
-            }
-            let body = try await receive(exactly: bodyLength, on: conn)
-            guard let plist = try? PropertyListSerialization.propertyList(from: body, format: nil)
-                    as? [String: Any] else {
-                throw Failure.protocolError("non-dictionary message")
-            }
-            return plist
+    /// Reads one framed plist message. Request/response exchanges keep the
+    /// bounded deadline; a Listen event stream waits indefinitely (events
+    /// arrive whenever a device is plugged or unplugged).
+    static func readMessage(on conn: NWConnection,
+                            accepting kind: InboundKind = .reply,
+                            bounded: Bool = true) async throws -> [String: Any] {
+        guard bounded else { return try await readMessageBody(on: conn, accepting: kind) }
+        return try await withRequestDeadline {
+            try await readMessageBody(on: conn, accepting: kind)
         }
+    }
+
+    private static func readMessageBody(on conn: NWConnection,
+                                        accepting kind: InboundKind) async throws -> [String: Any] {
+        let header = try await receive(exactly: messageHeaderLength, on: conn)
+        let bodyLength = try decodeHeader(header, accepting: kind)
+        guard bodyLength > 0 else {
+            throw Failure.protocolError("empty plist message")
+        }
+        let body = try await receive(exactly: bodyLength, on: conn)
+        guard let plist = try? PropertyListSerialization.propertyList(from: body, format: nil)
+                as? [String: Any] else {
+            throw Failure.protocolError("non-dictionary message")
+        }
+        return plist
     }
 
     private static func send(raw data: Data, on conn: NWConnection) async throws {
@@ -422,7 +448,7 @@ final class UsbmuxDeviceWatcher {
                 try Usbmux.decodeResult(
                     try await Usbmux.readMessage(on: conn), operation: "Listen")
                 while true {
-                    handle(try await Usbmux.readMessage(on: conn))
+                    handle(try await Usbmux.readMessage(on: conn, accepting: .event, bounded: false))
                 }
             } catch {
                 Log.info("usbmux watcher: \(error) — retrying in 3s")
