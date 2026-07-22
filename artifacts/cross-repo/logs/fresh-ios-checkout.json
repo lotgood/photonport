@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-ge8gqumb/fresh-ios",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-da_ncn42/fresh-ios",
     "checkout",
     "--detach",
-    "b0620ef21ec57b688a3b69b9f7f9a3f878f64dbd"
+    "eaee0c3967b3430a42e437316d6d0bdc372119c6"
   ],
   "exitCode": 0,
   "label": "fresh-ios-checkout",
-  "stderr": "HEAD is now at b0620ef test: bind negative vectors to iOS semantics\n",
+  "stderr": "HEAD is now at eaee0c3 fix(receiver): interop repairs for the authenticated USB wire\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }
