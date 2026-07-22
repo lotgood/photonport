@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-zp5lx40m/build/mac-interop",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/build/mac-interop",
     "encode",
     "session-open"
   ],
@@ -8,5 +8,5 @@
   "label": "mac-to-ios-session-open-v3-encode",
   "stderr": "",
   "stdoutBytes": 264,
-  "stdoutSha256": "bd336d910135ff4de8a4ba9676fbcad48298e12b819c849c6a3d153622961005"
+  "stdoutSha256": "0a2d8d584f2583c6124f2910c36381e8b090642a94cd61953fb401417d658238"
 }

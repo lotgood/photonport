@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-zp5lx40m/fresh-mac",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/fresh-mac",
     "checkout",
     "--detach",
-    "2847f570c470a619f634cb187fcd508637694a57"
+    "4a796c66929621c322f49b8128b9de899b49fe6c"
   ],
   "exitCode": 0,
   "label": "fresh-mac-checkout",
-  "stderr": "HEAD is now at 2847f57 chore(evidence): record passed interop matrix receipts for tuple e1fa567/eaee0c3/a41e300\n",
+  "stderr": "HEAD is now at 4a796c6 perf(mac): recover stream rate lost to over-strict frame admission\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

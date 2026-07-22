@@ -11,7 +11,7 @@
     "-destination",
     "platform=macOS",
     "-derivedDataPath",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-zp5lx40m/build/mac-product",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/build/mac-product",
     "CODE_SIGNING_ALLOWED=NO",
     "build"
   ],
@@ -19,5 +19,5 @@
   "label": "build-mac-product",
   "stderr": "--- xcodebuild: WARNING: Using the first of multiple matching destinations:\n{ platform:macOS, arch:arm64, id:00006041-001C301A2E31801C, name:My Mac }\n{ platform:macOS, arch:x86_64, id:00006041-001C301A2E31801C, name:My Mac }\n",
   "stdoutBytes": 6687,
-  "stdoutSha256": "40794f3fd61b9b0050c6164f1b4b872899325f0d41700fd181257f932e263704"
+  "stdoutSha256": "c5230c5abcc36554a54961e2e8899b58c9f797d2c5379aa9341dc665e788fe96"
 }
