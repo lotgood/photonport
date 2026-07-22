@@ -13,9 +13,9 @@ committed).
 
 | Repository | Branch | Commit | Notes |
 |---|---|---|---|
-| `lotgood/photonport` | `refactor/complete` | `acdf8c2` (matrix tuple `9278aad`) | 57 commits ahead of `origin/main` |
-| `lotgood/photonport-ios` | `refactor/complete` | `cb6e9ac` | 46 commits ahead of `origin/main` |
-| `lotgood/photonport-protocol` | `refactor/complete` | `acae6f5` | 20 commits ahead of `origin/main` |
+| `lotgood/photonport` | `refactor/complete` | matrix tuple `9278aad` + evidence/docs commits above it | ahead of `origin/main`; branch not yet pushed |
+| `lotgood/photonport-ios` | `refactor/complete` | `a56d223` (matrix tuple `cb6e9ac`) | pushed 2026-07-22; private origin `main` = `refactor/complete` |
+| `lotgood/photonport-protocol` | `refactor/complete` | `0e67e0e` (matrix tuple `acae6f5`) | pushed 2026-07-22; private origin `main` = `refactor/complete` |
 
 What landed since 2026-07-14, all physically verified over USB on the tested
 pair: the session v3 authenticated USB wire (mandatory PSK preface +
@@ -33,8 +33,8 @@ publication.
 | Repository | License | Role | State |
 |---|---|---|---|
 | `lotgood/photonport` (this repo) | GPL-3.0 | Mac sender + preserved historical iOS source | public, active |
-| `lotgood/photonport-ios` | MIT | standalone fresh iOS receiver | private; origin at `a2313c0`, local `refactor/complete` at `cb6e9ac` (46 unpushed commits) |
-| `lotgood/photonport-protocol` | MIT | canonical pairing-v2 / session-v3 contract | private; origin at `2280861`, local `refactor/complete` at `acae6f5` (20 unpushed commits) |
+| `lotgood/photonport-ios` | MIT | standalone fresh iOS receiver | private; origin `main`/`refactor/complete` at `a56d223` (matrix tuple `cb6e9ac`) |
+| `lotgood/photonport-protocol` | MIT | canonical pairing-v2 / session-v3 contract | private; origin `main`/`refactor/complete` at `0e67e0e` (matrix tuple `acae6f5`) |
 
 The standalone iOS receiver is a provenance-cleared reconstruction: 47 shipped
 files, byte-verified MIT lineage, 1,267 similarity candidates independently
@@ -89,12 +89,13 @@ notarization result, or TestFlight result.
 | `export_review` | independent Mac/iOS export classifications; record the Mac review before setting `EXPORT_COMPLIANCE_CONFIRMED=1` | external reviewer |
 | `apple_distribution` | App Store Connect, signing, notarization, Gatekeeper, Sparkle `SUPublicEDKey`, TestFlight, and publication receipts remain external records; `ASC_ISSUER_ID` availability alone satisfies none of them | account holder |
 
-Open decisions: publish timing for the two private repositories; pushing the
-sibling repos' local commits to their private origins — `Mac/ProtocolBuildPin.json`
-pins protocol commit `acae6f5`, which currently exists only in the local
-`photonport-protocol` clone, so the Mac tree cannot be rebuilt reproducibly
-from public sources until that repository is pushed; whether to push GitHub
-Pages/appcast for Mac auto-update before 0.1.0 signing. Note that pushing
+Open decisions: publish timing for the two private repositories — both
+siblings' local commits were pushed to their private origins on 2026-07-22,
+so the pinned protocol commit `acae6f5` is durable there, but the Mac tree
+still cannot be rebuilt from public sources until they are published;
+pushing `refactor/complete` here to `origin` and landing it on `main`;
+whether to push GitHub Pages/appcast for Mac auto-update before 0.1.0
+signing. Note that pushing
 `main` here triggers `pages.yml` (site deploy) when its watched paths change —
 pushing code alone does not publish the site, but a release event does.
 
