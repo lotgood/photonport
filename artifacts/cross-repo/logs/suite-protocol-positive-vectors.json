@@ -9,7 +9,7 @@
   ],
   "exitCode": 0,
   "label": "suite-protocol-positive-vectors",
-  "stderr": "test_pairing_vector_recomputes_every_output (tests.test_protocol.ProtocolTests.test_pairing_vector_recomputes_every_output) ... ok\ntest_session_vectors_recompute_every_output (tests.test_protocol.ProtocolTests.test_session_vectors_recompute_every_output) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.005s\n\nOK\n",
+  "stderr": "test_pairing_vector_recomputes_every_output (tests.test_protocol.ProtocolTests.test_pairing_vector_recomputes_every_output) ... ok\ntest_session_vectors_recompute_every_output (tests.test_protocol.ProtocolTests.test_session_vectors_recompute_every_output) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.004s\n\nOK\n",
   "stdoutBytes": 268,
   "stdoutSha256": "03bfb4cebe4da5afe8a36d83215bd3c135f99cc46b84bf7cf3649eb58aec785e"
 }

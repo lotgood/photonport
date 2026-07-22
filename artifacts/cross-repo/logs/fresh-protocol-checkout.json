@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/fresh-protocol",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-rxyk4ur4/fresh-protocol",
     "checkout",
     "--detach",
-    "a41e3003116047d0b833245029b219eeee9059c3"
+    "acae6f5709d9aa3e0967e9bd88e507dc706836eb"
   ],
   "exitCode": 0,
   "label": "fresh-protocol-checkout",
-  "stderr": "HEAD is now at a41e300 spec: bind exact negative vector semantics\n",
+  "stderr": "HEAD is now at acae6f5 spec: admit ProRes 422 as a canonical USB video codec\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

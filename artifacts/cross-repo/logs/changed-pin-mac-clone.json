@@ -4,11 +4,11 @@
     "clone",
     "--no-local",
     "/Users/ltg/workspace/opendisplay",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/changed-pin-mac"
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-rxyk4ur4/changed-pin-mac"
   ],
   "exitCode": 0,
   "label": "changed-pin-mac-clone",
-  "stderr": "Cloning into '/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/changed-pin-mac'...\n",
+  "stderr": "Cloning into '/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-rxyk4ur4/changed-pin-mac'...\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

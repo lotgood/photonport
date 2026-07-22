@@ -1,38 +1,38 @@
 {
   "builtPinEvidence": {
     "builtProductPinSha256": {
-      "ios": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8",
-      "mac": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8"
+      "ios": "1f89345c3142dce251ed108452b9691750ce061f7cb1639dbeeb706430dd7e39",
+      "mac": "1f89345c3142dce251ed108452b9691750ce061f7cb1639dbeeb706430dd7e39"
     },
     "builtProductPins": {
       "ios": {
         "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
-        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "normativeManifestDigest": "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff",
+        "protocolCommit": "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
         "schemaVersion": 1
       },
       "mac": {
         "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
-        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "normativeManifestDigest": "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff",
+        "protocolCommit": "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
         "schemaVersion": 1
       }
     },
     "trackedConsumerPinSha256": {
-      "ios": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8",
-      "mac": "9e9e4c1be67e5b2a7b88bdd236212f375aafc0c4c6d40a79e40af609d0a967f8"
+      "ios": "1f89345c3142dce251ed108452b9691750ce061f7cb1639dbeeb706430dd7e39",
+      "mac": "1f89345c3142dce251ed108452b9691750ce061f7cb1639dbeeb706430dd7e39"
     },
     "trackedConsumerPins": {
       "ios": {
         "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
-        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "normativeManifestDigest": "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff",
+        "protocolCommit": "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
         "schemaVersion": 1
       },
       "mac": {
         "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-        "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
-        "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3",
+        "normativeManifestDigest": "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff",
+        "protocolCommit": "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
         "schemaVersion": 1
       }
     }
@@ -581,7 +581,7 @@
   ],
   "compatibilityReceipt": {
     "path": "compatibility-report.json",
-    "sha256": "f57ba98cde5c48c5f6bb44c652c0f45b12d15108b62f1bf1c278edcbefd2191b"
+    "sha256": "b1129db04e852969db99db68832f69863235f1bac7796405d9f53cb892cabad2"
   },
   "coverageContract": {
     "enumeratedProtocolNegativeVectorIDs": [
@@ -2401,7 +2401,7 @@
   "failures": [],
   "freshCompatibilityReceipt": {
     "path": "compatibility-report-fresh.json",
-    "sha256": "f57ba98cde5c48c5f6bb44c652c0f45b12d15108b62f1bf1c278edcbefd2191b"
+    "sha256": "b1129db04e852969db99db68832f69863235f1bac7796405d9f53cb892cabad2"
   },
   "kind": "cross-repo-production-interop-report",
   "physicalAvailability": "outside automated matrix evidence DAG; S-P1-05 OPEN-WAIVED",
@@ -2421,9 +2421,9 @@
   "schemaVersion": 2,
   "sourceTuple": {
     "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
-    "iosCommit": "5a93cea0ac154c5a43bfa01e9d8f0b8c8dcb182e",
-    "macCommit": "4a796c66929621c322f49b8128b9de899b49fe6c",
-    "normativeManifestDigest": "81d54320d13a3bef9f848eda658a51c3ecdb45da5984d8cd5b2cde6288860edd",
-    "protocolCommit": "a41e3003116047d0b833245029b219eeee9059c3"
+    "iosCommit": "cb6e9acb0633b36f5523e212ca4b095b0ac813e3",
+    "macCommit": "9278aad7cfd5befdb77df0eed51bf0c3da00bf03",
+    "normativeManifestDigest": "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff",
+    "protocolCommit": "acae6f5709d9aa3e0967e9bd88e507dc706836eb"
   }
 }

@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/fresh-mac",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-rxyk4ur4/fresh-mac",
     "checkout",
     "--detach",
-    "4a796c66929621c322f49b8128b9de899b49fe6c"
+    "9278aad7cfd5befdb77df0eed51bf0c3da00bf03"
   ],
   "exitCode": 0,
   "label": "fresh-mac-checkout",
-  "stderr": "HEAD is now at 4a796c6 perf(mac): recover stream rate lost to over-strict frame admission\n",
+  "stderr": "HEAD is now at 9278aad feat(mac): ProRes 422 on the canonical wire (USB only)\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

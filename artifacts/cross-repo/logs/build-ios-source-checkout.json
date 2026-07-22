@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-db1psziw/build/ios-source",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-rxyk4ur4/build/ios-source",
     "checkout",
     "--detach",
-    "5a93cea0ac154c5a43bfa01e9d8f0b8c8dcb182e"
+    "cb6e9acb0633b36f5523e212ca4b095b0ac813e3"
   ],
   "exitCode": 0,
   "label": "build-ios-source-checkout",
-  "stderr": "HEAD is now at 5a93cea fix(receiver): render the pointer sprite locally\n",
+  "stderr": "HEAD is now at cb6e9ac feat(receiver): decode canonical ProRes 422 video (USB only)\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }
