@@ -95,7 +95,8 @@ final class S02SenderStateTests: XCTestCase {
     func testVideoAdmissionPolicyRejectsDistinctBoundaryStates() {
         XCTAssertFalse(MacSender.VideoAdmissionPolicy.evaluate(policyState(connected: false)))
         XCTAssertFalse(MacSender.VideoAdmissionPolicy.evaluate(policyState(pendingSends: 3, maxPendingSends: 3)))
-        XCTAssertFalse(MacSender.VideoAdmissionPolicy.evaluate(policyState(pendingEncodes: 2)))
+        XCTAssertFalse(MacSender.VideoAdmissionPolicy.evaluate(policyState(pendingEncodes: 3)))
+        XCTAssertTrue(MacSender.VideoAdmissionPolicy.evaluate(policyState(pendingEncodes: 2)))
         XCTAssertFalse(MacSender.VideoAdmissionPolicy.evaluate(policyState(generationCurrent: false)))
         XCTAssertFalse(MacSender.VideoAdmissionPolicy.evaluate(policyState(lastAdmission: Date())))
         XCTAssertTrue(MacSender.VideoAdmissionPolicy.evaluate(policyState()))

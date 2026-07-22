@@ -310,7 +310,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             state.generationCurrent &&
             state.encoderConfigured &&
             state.pendingSends < state.maxPendingSends &&
-            state.pendingEncodes + state.pendingAdmissions < 2 &&
+            // Depth 3 sustains 120Hz through the convert+encode pipeline while
+            // still shedding (not queueing) when the encoder saturates; depth 2
+            // measured out at ~65fps on 120Hz content (callback latency > one
+            // frame interval serializes admission).
+            state.pendingEncodes + state.pendingAdmissions < 3 &&
             state.now.timeIntervalSince(state.lastAdmission) >= state.minimumInterval
         }
     }
@@ -437,6 +441,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     // tell "Mac rendered 45fps" from "frames got lost" — count deliveries here.
     private var capFrames = 0
     private var capWindowStart = Date()
+    // Per-cause admission drop counters for the diag line: which gate is
+    // actually shedding frames (send queue, encode pipeline, pacing floor).
+    private var dropsBySends = 0
+    private var encodeLatenciesMs: [Double] = []
+    private var dropsByInflight = 0
+    private var dropsByPacing = 0
 
     private var framesSent = 0
     private var bytesSent = 0
@@ -1776,7 +1786,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 // Pipeline diagnosis (`defaults write … diag -bool true`):
                 // one line per ping with every gate's state.
                 if UserDefaults.standard.bool(forKey: "diag") {
-                    Log.info("diag: capFps=\(capFps) drops=\(self.dropsTotal) pendingEncodes=\(self.pendingEncodes) pendingSends=\(self.pendingSends) needsKF=\(self.needsKeyframe)")
+                    let sorted = self.encodeLatenciesMs.sorted()
+                    let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+                    let p95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, sorted.count * 95 / 100)]
+                    self.encodeLatenciesMs.removeAll(keepingCapacity: true)
+                    Log.info("diag: capFps=\(capFps) drops=\(self.dropsTotal) bySends=\(self.dropsBySends) byInflight=\(self.dropsByInflight) byPacing=\(self.dropsByPacing) encMs p50=\(String(format: "%.1f", p50)) p95=\(String(format: "%.1f", p95)) pendingEncodes=\(self.pendingEncodes) pendingSends=\(self.pendingSends) needsKF=\(self.needsKeyframe)")
                 }
             }
             self.schedulePing()
@@ -2268,8 +2282,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             maxPendingSends: maxPendingSends,
             lastAdmission: lastEncodedAt,
             now: now,
-            minimumInterval: 1.0 / Double(streamFps) - 0.002)
+            // Half the nominal interval: tolerates capture jitter (a strict
+            // 1/fps floor beat against CGDisplayStream cadence and shed real
+            // frames) while still refusing >2x-rate floods.
+            minimumInterval: 0.5 / Double(streamFps))
         guard VideoAdmissionPolicy.evaluate(state) else {
+            if state.pendingSends >= state.maxPendingSends { dropsBySends += 1 }
+            if state.pendingEncodes + state.pendingAdmissions >= 3 { dropsByInflight += 1 }
+            if state.now.timeIntervalSince(state.lastAdmission) < state.minimumInterval { dropsByPacing += 1 }
             dropsThisWindow += 1
             dropsTotal += 1
             return nil
@@ -2395,6 +2415,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func encode(_ pixelBuffer: CVPixelBuffer, pts: CMTime) {
         guard let encoder else { return }
         let capturedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let submitted = Date()
         var frameProperties: CFDictionary?
         let requestingKeyframe = needsKeyframe
         if requestingKeyframe {
@@ -2416,6 +2437,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             self.queue.async {
                 guard generation == self.dialGeneration else { return }
                 self.pendingEncodes = max(0, self.pendingEncodes - 1)
+                if self.diagEnabled {
+                    self.encodeLatenciesMs.append(Date().timeIntervalSince(submitted) * 1000)
+                }
                 guard status == noErr, let buffer else {
                     if requestingKeyframe { self.needsKeyframe = true }
                     self.encodeFailures += 1
