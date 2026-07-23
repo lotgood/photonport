@@ -1,0 +1,1866 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photonport.dev/schemas/negative-vectors/3.0.0",
+  "title": "PhotonPort typed iOS reducer negative-vector catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "version",
+    "expectedOutcome",
+    "cases",
+    "invariants",
+    "strictContractSuites"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "negative-vectors"
+    },
+    "version": {
+      "const": "5.0.0"
+    },
+    "expectedOutcome": {
+      "const": "reject_and_fail_closed"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "strictContractSuites": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "fixture_0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "attemptID",
+        "deviceInstallID",
+        "now",
+        "openingVersion",
+        "macPublicKeyBase64",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "PairingExchangeState.receiveOpening"
+        },
+        "attemptID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "now": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "openingVersion": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "macPublicKeyBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "messageKind",
+        "version",
+        "sessionID",
+        "macInstallID",
+        "deviceInstallID",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "proofBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "SessionAdmissionReducer.reduce"
+        },
+        "messageKind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessionID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "proofBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "version",
+        "sessionID",
+        "macInstallID",
+        "deviceInstallID",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "primaryProofBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "SessionAdmissionReducer.reduceSessionOpen"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessionID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "primaryProofBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "version",
+        "sessionID",
+        "channel",
+        "purpose",
+        "nonceBase64",
+        "proofBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "SessionAdmissionReducer.reduceChannelOpen"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessionID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "proofBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "pinVersion",
+        "compatibilityDigest",
+        "expectedCompatibilityDigest",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ProtocolBuildPinReducer.reduce"
+        },
+        "pinVersion": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "compatibilityDigest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedCompatibilityDigest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "headerBase64",
+        "payloadBase64",
+        "contextBase64",
+        "frameType",
+        "declaredLength",
+        "cap",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "RuntimeFrameReducer.reduce"
+        },
+        "headerBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "payloadBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "contextBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "frameType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "declaredLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_6": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "frameBase64",
+        "codec",
+        "width",
+        "height",
+        "isKeyframe",
+        "supportsHDR",
+        "cap",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "RuntimeMediaReducer.reduce"
+        },
+        "frameBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "codec": {
+          "type": "string",
+          "minLength": 1
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "isKeyframe": {
+          "type": "boolean"
+        },
+        "supportsHDR": {
+          "type": "boolean"
+        },
+        "cap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_7": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "event",
+        "now",
+        "lastAuthenticatedAt",
+        "leaseSeconds",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "PrimaryLivenessReducer.reduce"
+        },
+        "event": {
+          "type": "string",
+          "minLength": 1
+        },
+        "now": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastAuthenticatedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leaseSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_8": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "credentialID",
+        "accessibility",
+        "synchronizable",
+        "status",
+        "policy",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "CredentialStoreReducer.reduce"
+        },
+        "credentialID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accessibility": {
+          "type": "string",
+          "minLength": 1
+        },
+        "synchronizable": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_9": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "magicBase64",
+        "deadline",
+        "now",
+        "deviceInstallID",
+        "purpose",
+        "tokenBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ManagedUSBPrefaceReducer.consumeMagic"
+        },
+        "magicBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deadline": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "now": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tokenBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_10": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "version",
+        "macInstallID",
+        "deviceInstallID",
+        "purpose",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "credentialBase64",
+        "proofBase64",
+        "now",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ManagedUSBPrefaceReducer.bindInit"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "macInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "credentialBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "proofBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "now": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_11": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "version",
+        "macInstallID",
+        "deviceInstallID",
+        "purpose",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "bindingBase64",
+        "proofBase64",
+        "now",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ManagedUSBPrefaceReducer.bindFinish"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "macInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "bindingBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "proofBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "now": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_12": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "bindingBase64",
+        "macInstallID",
+        "deviceInstallID",
+        "purpose",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ManagedUSBKeyScheduleReducer.primary"
+        },
+        "bindingBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "macInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_13": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "bindingBase64",
+        "macInstallID",
+        "deviceInstallID",
+        "purpose",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ManagedUSBKeyScheduleReducer.audio"
+        },
+        "bindingBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "macInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceInstallID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_14": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "transport",
+        "purpose",
+        "bindingBase64",
+        "macNonceBase64",
+        "deviceNonceBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ManagedUSBKeyScheduleReducer.wifiRejected"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bindingBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "macNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "deviceNonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "fixture_15": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "recordState",
+        "bodyBase64",
+        "cap",
+        "purpose",
+        "sequence",
+        "nonceBase64",
+        "fixtureID"
+      ],
+      "properties": {
+        "reducer": {
+          "const": "ManagedUSBRecordReducer.consume"
+        },
+        "recordState": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bodyBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "cap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nonceBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "fixtureID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transportSeedBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "transport": {
+          "enum": [
+            "wifi",
+            "usb"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraFrame": {
+          "type": "boolean"
+        },
+        "tagBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+        },
+        "direction": {
+          "enum": [
+            "mac-to-device",
+            "device-to-mac"
+          ]
+        }
+      }
+    },
+    "base64": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|(?:[A-Za-z0-9+/]{3}=)?)$"
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reducer",
+        "state",
+        "time",
+        "acceptedInputs",
+        "effects"
+      ],
+      "properties": {
+        "reducer": {
+          "$ref": "#/$defs/reducer"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "time": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "acceptedInputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/effect"
+          }
+        }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "role",
+        "inputSha256"
+      ],
+      "properties": {
+        "type": {
+          "const": "accepted-event"
+        },
+        "role": {
+          "enum": [
+            "setup",
+            "baseline"
+          ]
+        },
+        "inputSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "reducer": {
+      "enum": [
+        "PairingExchangeState.receiveOpening",
+        "SessionAdmissionReducer.reduce",
+        "SessionAdmissionReducer.reduceSessionOpen",
+        "SessionAdmissionReducer.reduceChannelOpen",
+        "ProtocolBuildPinReducer.reduce",
+        "RuntimeFrameReducer.reduce",
+        "RuntimeMediaReducer.reduce",
+        "PrimaryLivenessReducer.reduce",
+        "CredentialStoreReducer.reduce",
+        "ManagedUSBPrefaceReducer.consumeMagic",
+        "ManagedUSBPrefaceReducer.bindInit",
+        "ManagedUSBPrefaceReducer.bindFinish",
+        "ManagedUSBKeyScheduleReducer.primary",
+        "ManagedUSBKeyScheduleReducer.audio",
+        "ManagedUSBKeyScheduleReducer.wifiRejected",
+        "ManagedUSBRecordReducer.consume"
+      ]
+    },
+    "fixture": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/fixture_0"
+        },
+        {
+          "$ref": "#/$defs/fixture_1"
+        },
+        {
+          "$ref": "#/$defs/fixture_2"
+        },
+        {
+          "$ref": "#/$defs/fixture_3"
+        },
+        {
+          "$ref": "#/$defs/fixture_4"
+        },
+        {
+          "$ref": "#/$defs/fixture_5"
+        },
+        {
+          "$ref": "#/$defs/fixture_6"
+        },
+        {
+          "$ref": "#/$defs/fixture_7"
+        },
+        {
+          "$ref": "#/$defs/fixture_8"
+        },
+        {
+          "$ref": "#/$defs/fixture_9"
+        },
+        {
+          "$ref": "#/$defs/fixture_10"
+        },
+        {
+          "$ref": "#/$defs/fixture_11"
+        },
+        {
+          "$ref": "#/$defs/fixture_12"
+        },
+        {
+          "$ref": "#/$defs/fixture_13"
+        },
+        {
+          "$ref": "#/$defs/fixture_14"
+        },
+        {
+          "$ref": "#/$defs/fixture_15"
+        }
+      ]
+    },
+    "initialize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "state",
+        "time"
+      ],
+      "properties": {
+        "op": {
+          "const": "initialize"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "time": {
+          "const": 0
+        }
+      }
+    },
+    "setupConsume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "role",
+        "fixture"
+      ],
+      "properties": {
+        "op": {
+          "const": "consume"
+        },
+        "role": {
+          "const": "setup"
+        },
+        "fixture": {
+          "$ref": "#/$defs/fixture"
+        }
+      }
+    },
+    "baselineConsume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "role",
+        "fixture"
+      ],
+      "properties": {
+        "op": {
+          "const": "consume"
+        },
+        "role": {
+          "const": "baseline"
+        },
+        "fixture": {
+          "$ref": "#/$defs/fixture"
+        }
+      }
+    },
+    "mutationConsume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "role",
+        "fixture"
+      ],
+      "properties": {
+        "op": {
+          "const": "consume"
+        },
+        "role": {
+          "const": "mutation"
+        },
+        "fixture": {
+          "$ref": "#/$defs/fixture"
+        }
+      }
+    },
+    "advanceTime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "to"
+      ],
+      "properties": {
+        "op": {
+          "const": "advance-time"
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "preClone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name"
+      ],
+      "properties": {
+        "op": {
+          "const": "clone-checkpoint"
+        },
+        "name": {
+          "const": "pre-baseline"
+        }
+      }
+    },
+    "postClone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name"
+      ],
+      "properties": {
+        "op": {
+          "const": "clone-checkpoint"
+        },
+        "name": {
+          "const": "post-baseline"
+        }
+      }
+    },
+    "assertAccepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "const": "assert-accepted"
+        }
+      }
+    },
+    "assertRejected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "checkpoint"
+      ],
+      "properties": {
+        "op": {
+          "const": "assert-rejected"
+        },
+        "checkpoint": {
+          "const": "post-baseline"
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transcriptSha256",
+        "initialSnapshot",
+        "baselineSnapshot",
+        "finalSnapshot",
+        "baselineEffects"
+      ],
+      "properties": {
+        "transcriptSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "initialSnapshot": {
+          "$ref": "#/$defs/snapshot"
+        },
+        "baselineSnapshot": {
+          "$ref": "#/$defs/snapshot"
+        },
+        "finalSnapshot": {
+          "$ref": "#/$defs/snapshot"
+        },
+        "baselineEffects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/effect"
+          }
+        }
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumerPlatform",
+        "direction",
+        "stage"
+      ],
+      "properties": {
+        "consumerPlatform": {
+          "enum": [
+            "mac-client",
+            "ios-server"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "mac-to-ios",
+            "ios-to-mac",
+            "local"
+          ]
+        },
+        "stage": {
+          "enum": [
+            "channel-open-request",
+            "compatibility-check",
+            "credential-lookup",
+            "framing-inbound",
+            "liveness-lease",
+            "media-inbound",
+            "pairing-inbound",
+            "secure-credential-store",
+            "session-busy-response",
+            "session-finish-accept",
+            "session-init-request",
+            "session-init-response",
+            "usb-audio-key-schedule",
+            "usb-bind-accept",
+            "usb-bind-challenge",
+            "usb-bind-finish",
+            "usb-bind-init",
+            "usb-preface-inbound",
+            "usb-primary-key-schedule",
+            "usb-record-inbound",
+            "usb-wifi-key-schedule"
+          ]
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "message",
+        "outcome",
+        "ownership",
+        "reducer",
+        "operations",
+        "expected",
+        "semantic"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "const": "reject_and_fail_closed"
+        },
+        "ownership": {
+          "$ref": "#/$defs/ownership"
+        },
+        "reducer": {
+          "$ref": "#/$defs/reducer"
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/initialize"
+            },
+            {
+              "$ref": "#/$defs/setupConsume"
+            },
+            {
+              "$ref": "#/$defs/advanceTime"
+            },
+            {
+              "$ref": "#/$defs/preClone"
+            },
+            {
+              "$ref": "#/$defs/baselineConsume"
+            },
+            {
+              "$ref": "#/$defs/assertAccepted"
+            },
+            {
+              "$ref": "#/$defs/postClone"
+            },
+            {
+              "$ref": "#/$defs/mutationConsume"
+            },
+            {
+              "$ref": "#/$defs/assertRejected"
+            }
+          ],
+          "items": false
+        },
+        "expected": {
+          "$ref": "#/$defs/expected"
+        },
+        "semantic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "changedField",
+            "mutation"
+          ],
+          "properties": {
+            "changedField": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mutation": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "operation": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/initialize"
+        },
+        {
+          "$ref": "#/$defs/setupConsume"
+        },
+        {
+          "$ref": "#/$defs/baselineConsume"
+        },
+        {
+          "$ref": "#/$defs/mutationConsume"
+        },
+        {
+          "$ref": "#/$defs/advanceTime"
+        },
+        {
+          "$ref": "#/$defs/preClone"
+        },
+        {
+          "$ref": "#/$defs/postClone"
+        },
+        {
+          "$ref": "#/$defs/assertAccepted"
+        },
+        {
+          "$ref": "#/$defs/assertRejected"
+        }
+      ]
+    }
+  }
+}
