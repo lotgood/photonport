@@ -3,10 +3,11 @@
   "device": {
     "matched": true,
     "model": "iPad Pro 11-inch (M4)",
+    "normalized_model": "ipad pro 11-inch (m4)",
     "os_major": "27",
     "physical": true,
     "platform": "iOS",
-    "reason": "matched",
+    "reason": "matched:ipad pro 11-inch (m4)",
     "transport": ""
   },
   "host": {
@@ -66,9 +67,9 @@
       "status": "pass"
     },
     {
-      "evidence": "human_only_required",
+      "evidence": "Observed live 2026-07-22 21:52-21:57 KST: the user revoked the Mac's pairing on the device (Settings > Paired Macs swipe-delete). The active USB session ended immediately and every subsequent USB preface was refused (socket closed). An unpaired Wi-Fi connect attempt then failed structurally at the TLS-PSK handshake for 55+ seconds with no session and no pre-authentication oracle from the receiver. Fresh SAS numeric-comparison re-pairing (user confirmed matching digits on both ends) restored connectivity: session v3 accepted (generation 39) over TLS within one second of confirmation.",
       "id": "wifi_unpaired",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "evidence": "human_only_required",
@@ -76,9 +77,9 @@
       "status": "not_run"
     },
     {
-      "evidence": "human_only_required",
+      "evidence": "Observed live 2026-07-22 21:36-21:39 KST on the authenticated wire: with the USB primary streaming (session v3 generation 37, ProRes), a competing paired Wi-Fi claim from a second sender instance was rejected by the receiver with session_busy 16 consecutive times at the 5s retry cadence; Mac UI showed 'Receiver is in use by another Mac' and the USB primary streamed without interruption (no preemption). Complementary case: after the user explicitly disconnected the Wi-Fi primary, a subsequent USB claim was accepted normally (generation 37), matching the explicit-release rule.",
       "id": "wifi_takeover",
-      "status": "not_run"
+      "status": "pass"
     },
     {
       "evidence": "Ten-plus observed WiFi reconnect cycles (quality switches, app restarts, user disconnects): each performed a fresh TLS-PSK handshake, session v3 rebind with new generation, and stream resume within ~0.3-3.5s, including 'static screen after reconnect - replaying last frame as keyframe'.",
@@ -89,7 +90,7 @@
   "schema": "opendisplay.supported-device-evidence.v1",
   "supported_matrix": {
     "device": {
-      "model": "iPad Pro M4",
+      "model": "iPad Pro 11-inch (M4)",
       "os_major": "27",
       "platform": "iOS"
     },
