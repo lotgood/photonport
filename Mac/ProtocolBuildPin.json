@@ -1,6 +1,1 @@
-{
-  "schemaVersion": 1,
-  "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
-  "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
-  "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc"
-}
+{"compatibilityDigest":"72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2","normativeManifestDigest":"297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff","protocolCommit":"acae6f5709d9aa3e0967e9bd88e507dc706836eb","schemaVersion":1}

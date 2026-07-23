@@ -3,12 +3,12 @@
     "git",
     "clone",
     "--no-local",
-    "/private/tmp/photonport-mac-src",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/changed-pin-mac"
+    "/Users/ltg/workspace/opendisplay",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-fi2mbt2x/changed-pin-mac"
   ],
   "exitCode": 0,
   "label": "changed-pin-mac-clone",
-  "stderr": "Cloning into '/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/changed-pin-mac'...\n",
+  "stderr": "Cloning into '/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-fi2mbt2x/changed-pin-mac'...\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

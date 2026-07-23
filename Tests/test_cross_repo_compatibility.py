@@ -244,16 +244,16 @@ class CrossRepoMatrixInputTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         vectors = self.root / "vectors"
         vectors.mkdir()
-        (vectors / "negative.json").write_text(
-            json.dumps({
-                "protocol": "negative-vectors",
-                "version": "3.0.0",
-                "cases": [
-                    {"id": "bad-frame", "outcome": "reject_and_fail_closed"},
-                ],
-            }),
-            encoding="utf-8",
-        )
+        # Frozen snapshot of the real protocol schema plus one real sealed
+        # case: load_negative_cases validates the full typed-transcript shape,
+        # which is not hand-rollable inline.
+        fixtures = Path(__file__).resolve().parent / "fixtures"
+        schemas = self.root / "schemas"
+        schemas.mkdir()
+        shutil.copy(fixtures / "negative-vectors.schema.json",
+                    schemas / "negative-vectors.schema.json")
+        shutil.copy(fixtures / "negative-vectors-single-case.json",
+                    vectors / "negative.json")
         (vectors / "session-v3.json").write_text(
             json.dumps({
                 "protocol": "session-v3",
@@ -276,7 +276,8 @@ class CrossRepoMatrixInputTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_matrix_vector_inventory_is_strict_and_complete(self):
-        self.assertEqual(MATRIX.load_negative_case_ids(self.root), ["bad-frame"])
+        cases = MATRIX.load_negative_cases(self.root)
+        self.assertEqual([case["id"] for case in cases], ["commitment-reveal-mismatch"])
         self.assertEqual(
             MATRIX.load_positive_case_ids(self.root),
             [
@@ -291,34 +292,23 @@ class CrossRepoMatrixInputTests(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(SystemExit, "FAIL_CLOSED.*duplicate key"):
-            MATRIX.load_negative_case_ids(self.root)
+            MATRIX.load_negative_cases(self.root)
 
     def test_matrix_rejects_duplicate_ids_non_fail_closed_outcomes_and_malformed_pins(self):
         negative_path = self.root / "vectors" / "negative.json"
-        negative_path.write_text(
-            json.dumps({
-                "protocol": "negative-vectors",
-                "version": "3.0.0",
-                "cases": [
-                    {"id": "same", "outcome": "reject_and_fail_closed"},
-                    {"id": "same", "outcome": "reject_and_fail_closed"},
-                ],
-            }),
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(SystemExit, "duplicate negative vector"):
-            MATRIX.load_negative_case_ids(self.root)
+        vector = json.loads(negative_path.read_text(encoding="utf-8"))
 
-        negative_path.write_text(
-            json.dumps({
-                "protocol": "negative-vectors",
-                "version": "3.0.0",
-                "cases": [{"id": "unsafe", "outcome": "accept"}],
-            }),
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(SystemExit, "outcome is not fail closed"):
-            MATRIX.load_negative_case_ids(self.root)
+        duplicated = json.loads(json.dumps(vector))
+        duplicated["cases"] = [duplicated["cases"][0], json.loads(json.dumps(duplicated["cases"][0]))]
+        negative_path.write_text(json.dumps(duplicated), encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "duplicate or invalid negative vector case id"):
+            MATRIX.load_negative_cases(self.root)
+
+        softened = json.loads(json.dumps(vector))
+        softened["cases"][0]["outcome"] = "accept"
+        negative_path.write_text(json.dumps(softened), encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "negative vector case fields are invalid"):
+            MATRIX.load_negative_cases(self.root)
 
         pin = self.root / "ProtocolBuildPin.json"
         pin.write_text('{"schemaVersion":1,"schemaVersion":1}', encoding="utf-8")

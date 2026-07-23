@@ -3,6 +3,41 @@
 
 import Foundation
 import CryptoKit
+enum ProtocolConsumerStage: String, Sendable {
+    case pairCommit = "pairing-inbound"
+    case serverHello = "session-init-response"
+    case sessionAccept = "session-finish-accept"
+    case sessionBusy = "session-busy-response"
+    case control = "session-control"
+    case usbChallenge = "usb-bind-challenge"
+    case usbAccept = "usb-bind-accept"
+}
+
+enum ProtocolRejectionCode: Sendable {
+    case invalidFrame, invalidPayload
+}
+
+struct AppliedProtocolBytes: Equatable, Sendable {
+    let stage: ProtocolConsumerStage
+    let bytes: Data
+    let sha256: Data
+
+    init(stage: ProtocolConsumerStage, bytes: Data) {
+        self.stage = stage
+        self.bytes = bytes
+        self.sha256 = Data(SHA256.hash(data: bytes))
+    }
+}
+
+struct ProtocolRejection: Sendable {
+    let stage: ProtocolConsumerStage
+    let code: ProtocolRejectionCode
+}
+
+enum ProtocolConsumerOutcome<Value: Sendable>: Sendable {
+    case applied(value: Value, evidence: AppliedProtocolBytes)
+    case rejected(ProtocolRejection)
+}
 
 enum ProtocolParser {
     enum FrameKind { case pairing, session, audioControl, audioData, videoData }
@@ -12,9 +47,12 @@ enum ProtocolParser {
     static let smallControlCap = 65_535
     static let audioDataCap = 262_144
     static let videoDataCap = 16_777_216
+    /// Interim Mac-local bound. G003 canonical vectors remain authoritative for
+    /// the final CR-045 domain; this hook intentionally does not redefine it.
     static let scrollDeltaCap = 120.0
+    static let approvedLocalScrollDeltaBound = scrollDeltaCap
 
-    struct ServerHello {
+    struct ServerHello: Sendable {
         let pixelsWide: Int
         let pixelsHigh: Int
         let scale: Double
@@ -23,16 +61,16 @@ enum ProtocolParser {
         let maxFps: Int
         let hdr: Bool
         let deviceNonce: Data
-        let usbSessionSeed: Data?
+        let wifiSessionSeed: Data?
     }
 
-    struct VerifiedSessionAccept {
+    struct VerifiedSessionAccept: Sendable {
         let message: SessionAccept
         let sessionID: Data
         let channelSecret: SymmetricKey
     }
 
-    enum Control {
+    enum Control: Sendable {
         case ping(id: UInt64, t: Double)
         case pong(id: UInt64, t: Double)
         case stats(fps: Double, bitrate: Double, dropped: UInt64, raw: String)
@@ -116,10 +154,14 @@ enum ProtocolParser {
 
     static func parseServerHello(_ data: Data, transport: Transport) throws -> ServerHello {
         guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
-        let base: Set<String> = ["type", "sessionVersion", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr"]
-        let required = transport == .usb ? base.union(["usbSessionSeed"]) : base
+        let base: Set<String> = ["type", "sessionVersion", "transport", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr"]
+        let required = transport == .wifi ? base.union(["wifiSessionSeed"]) : base
         let object = try strictObject(data, keys: required)
-        guard try string(object, "type") == "server-hello", try int(object, "sessionVersion") == SessionCrypto.version else { throw ParseError.value }
+        guard try string(object, "type") == "server-hello",
+              try int(object, "sessionVersion") == SessionCrypto.version,
+              try string(object, "transport") == (transport == .wifi ? "wifi" : "usb") else {
+            throw ParseError.value
+        }
         let width = try rangedInt(object, "pixelsWide", 1, 65_535)
         let height = try rangedInt(object, "pixelsHigh", 1, 65_535)
         let scale = try finiteDouble(object, "scale", greaterThan: 0, max: 16)
@@ -129,9 +171,20 @@ enum ProtocolParser {
         let fps = try rangedInt(object, "maxFps", 1, 240)
         guard let hdr = object["hdr"] as? Bool else { throw ParseError.type }
         let deviceNonce = try base64(try string(object, "deviceNonce"), bytes: 32)
-        let seed = transport == .usb ? try base64(try string(object, "usbSessionSeed"), bytes: 32) : nil
-        return ServerHello(pixelsWide: width, pixelsHigh: height, scale: scale, device: device, id: try string(object, "id"), maxFps: fps, hdr: hdr, deviceNonce: deviceNonce, usbSessionSeed: seed)
+        let seed = transport == .wifi ? try base64(try string(object, "wifiSessionSeed"), bytes: 32) : nil
+        return ServerHello(pixelsWide: width, pixelsHigh: height, scale: scale, device: device, id: try string(object, "id"), maxFps: fps, hdr: hdr, deviceNonce: deviceNonce, wifiSessionSeed: seed)
     }
+    static func consumeServerHello(_ data: Data, transport: Transport) -> ProtocolConsumerOutcome<ServerHello> {
+        do {
+            return .applied(
+                value: try parseServerHello(data, transport: transport),
+                evidence: AppliedProtocolBytes(stage: .serverHello, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .serverHello, code: .invalidPayload))
+        }
+    }
+
 
     static func parseSessionAccept(_ data: Data) throws -> SessionAccept {
         guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
@@ -159,6 +212,37 @@ enum ProtocolParser {
         guard SessionCrypto.constantTimeEqual(proof, expected) else { throw ParseError.value }
         return VerifiedSessionAccept(message: message, sessionID: sessionID, channelSecret: secret)
     }
+    static func consumeVerifiedSessionAccept(
+        _ data: Data,
+        primaryKey: SymmetricKey,
+        macInstallID: String,
+        deviceInstallID: String,
+        macNonce: Data,
+        deviceNonce: Data
+    ) -> ProtocolConsumerOutcome<VerifiedSessionAccept> {
+        do {
+            return .applied(
+                value: try parseVerifiedSessionAccept(
+                    data, primaryKey: primaryKey, macInstallID: macInstallID,
+                    deviceInstallID: deviceInstallID, macNonce: macNonce, deviceNonce: deviceNonce
+                ),
+                evidence: AppliedProtocolBytes(stage: .sessionAccept, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .sessionAccept, code: .invalidPayload))
+        }
+    }
+
+    static func consumeSessionBusy(_ data: Data) -> ProtocolConsumerOutcome<SessionBusy> {
+        do {
+            return .applied(
+                value: try parseSessionBusy(data),
+                evidence: AppliedProtocolBytes(stage: .sessionBusy, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .sessionBusy, code: .invalidPayload))
+        }
+    }
 
     static func parseSessionBusy(_ data: Data) throws -> SessionBusy {
         guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
@@ -183,16 +267,6 @@ enum ProtocolParser {
         return try JSONDecoder().decode(SessionChannelOpen.self, from: data)
     }
 
-    static func parseGenerationSnapshot(_ data: Data) throws -> SessionOwnershipState.Snapshot {
-        guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
-        let object = try strictObject(data, keys: ["generation", "generationExhausted"])
-        guard let generationExhausted = object["generationExhausted"] as? Bool else {
-            throw ParseError.type
-        }
-        return SessionOwnershipState.Snapshot(
-            generation: try uint64(object, "generation"),
-            generationExhausted: generationExhausted)
-    }
 
     static func parseControl(_ data: Data, transport: Transport) throws -> Control {
         guard data.count <= smallControlCap else { throw ParseError.invalidFrame }
@@ -225,9 +299,12 @@ enum ProtocolParser {
             return .touch(phase: phase, x: x, y: y, t: t)
         case "scroll":
             guard Set(object.keys) == ["type", "dx", "dy"] else { throw ParseError.keySet }
-            return .scroll(
-                dx: try finiteDouble(object, "dx", greaterThanOrEqualTo: -scrollDeltaCap, max: scrollDeltaCap),
-                dy: try finiteDouble(object, "dy", greaterThanOrEqualTo: -scrollDeltaCap, max: scrollDeltaCap))
+            let dx = try finiteDouble(object, "dx", greaterThanOrEqualTo: -approvedLocalScrollDeltaBound,
+                                      max: approvedLocalScrollDeltaBound)
+            let dy = try finiteDouble(object, "dy", greaterThanOrEqualTo: -approvedLocalScrollDeltaBound,
+                                      max: approvedLocalScrollDeltaBound)
+            guard acceptsApprovedLocalScrollVector(dx: dx, dy: dy) else { throw ParseError.value }
+            return .scroll(dx: dx, dy: dy)
         case "kf":
             guard Set(object.keys) == ["type"] else { throw ParseError.keySet }
             return .keyframe
@@ -240,6 +317,24 @@ enum ProtocolParser {
         default:
             throw ParseError.value
         }
+    }
+    static func consumeControl(_ data: Data, transport: Transport) -> ProtocolConsumerOutcome<Control> {
+        do {
+            return .applied(
+                value: try parseControl(data, transport: transport),
+                evidence: AppliedProtocolBytes(stage: .control, bytes: data)
+            )
+        } catch {
+            return .rejected(ProtocolRejection(stage: .control, code: .invalidPayload))
+        }
+    }
+
+    /// Test/integration hook for replaying G003 canonical vectors against the
+    /// currently approved Mac-local safety bound.
+    static func acceptsApprovedLocalScrollVector(dx: Double, dy: Double) -> Bool {
+        dx.isFinite && dy.isFinite
+            && abs(dx) <= approvedLocalScrollDeltaBound
+            && abs(dy) <= approvedLocalScrollDeltaBound
     }
 
     private static func parsePingPong(_ object: [String: Any],
@@ -404,7 +499,7 @@ enum ProtocolParser {
             skipWS(); guard i < s.endIndex, s[i] == ":" else { throw ParseError.invalidJSON }
             i = s.index(after: i)
             let raw = try skipValue()
-            if keys.contains(key), raw.isEmpty || raw.contains(where: { !$0.isNumber }) {
+            if keys.contains(key), raw.isEmpty || raw.contains(where: { $0 < "0" || $0 > "9" }) || UInt64(raw) == nil {
                 throw ParseError.type
             }
             skipWS(); if i < s.endIndex, s[i] == "," { i = s.index(after: i); continue }
@@ -414,7 +509,11 @@ enum ProtocolParser {
     }
 
     private static func string(_ object: [String: Any], _ key: String) throws -> String {
-        guard let value = object[key] as? String else { throw ParseError.type }
+        guard let value = object[key] as? String,
+              (1...256).contains(value.unicodeScalars.count),
+              value.unicodeScalars.allSatisfy({ $0.value < 0xD800 || $0.value > 0xDFFF }) else {
+            throw ParseError.type
+        }
         return value
     }
     private static func int(_ object: [String: Any], _ key: String) throws -> Int? {

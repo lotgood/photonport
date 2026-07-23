@@ -5,18 +5,20 @@
 //                        (announced by the phone in a "hello" message) and
 //                        capture that — macOS gains a true second monitor.
 //
-// Pipeline:  ScreenCaptureKit -> VideoToolbox (H.264, or HEVC Main10 HLG when
-//            the receiver announces an EDR panel and the Mac runs macOS 15+)
+// Pipeline:  ScreenCaptureKit / CGDisplayStream-EDR -> VideoToolbox
+//            (H.264; HEVC Main10 HLG when the receiver announces an EDR
+//            panel; or intra-only ProRes 422 on USB via `prores proxy|lt`)
 //            -> framed TCP
 // Roles: the PHONE listens, the MAC connects (required for usbmux/USB).
 //
-// Wire protocol, Mac -> phone:   [4-byte big-endian length][Annex B payload]
-//   (keyframes prefixed with the parameter sets, NALUs delimited by
-//    00 00 00 01; a JSON telemetry prefix before the first start code
-//    carries timing + a "hevc" codec flag)
-// Wire protocol, phone -> Mac:   [4-byte big-endian length][JSON message]
-//   e.g. {"type":"hello","pixelsWide":2556,"pixelsHigh":1179,"scale":3,
-//         "maxFps":120,"hdr":true}
+// Wire protocol, Mac -> phone (session v3):
+//   USB: PSK-authenticated preface (usb-bind), then every payload rides an
+//        HMAC-tagged record [4B BE length][8B BE sequence][payload][32B tag].
+//   WiFi: TLS-PSK; plain [4-byte big-endian outer length] frames.
+//   Video inner payload (either transport):
+//   [4-byte big-endian telemetry JSON length][telemetry JSON]
+//   [Annex-B NAL units, or one raw ProRes frame]
+// Wire protocol, phone -> Mac: framed JSON control (records on USB).
 
 import ScreenCaptureKit
 import IOSurface
@@ -26,6 +28,7 @@ import Network
 import CoreMedia
 import AppKit
 import CryptoKit
+import os
 
 
 enum CaptureMode: String {
@@ -47,9 +50,8 @@ enum StreamQuality: String, CaseIterable {
         }
     }
 
-    // Transport-sized: usbmux sustains ~1Gbps (measured), so USB gets
-    // generous rates; WiFi keeps upstream's conservative numbers — an
-    // unencrypted, contended radio link is no place for 40Mbps.
+    // Transport-sized policy: USB uses the higher configured rates while Wi-Fi
+    // keeps conservative rates for a contended radio link.
     func bitrate(usb: Bool) -> Int {
         switch self {
         case .best: return usb ? 40_000_000 : 18_000_000
@@ -75,70 +77,149 @@ enum StreamQuality: String, CaseIterable {
     }
 }
 
-struct PhoneInfo: Decodable {
-    let pixelsWide: Int   // landscape-oriented (long edge)
+struct PhoneInfo {
+    let pixelsWide: Int
     let pixelsHigh: Int
     let scale: Double
-    let device: String?   // "iPad" / "iPhone" (older receivers omit it)
-    let id: String?       // per-install identity (older receivers omit it) —
-                          // lets the controller match the same physical device
-                          // across USB and WiFi
-    let maxFps: Int?      // panel refresh cap (older receivers omit it → 60)
-    let hdr: Bool?        // panel has EDR headroom + receiver can decode
-                          // 10-bit HEVC (older receivers omit it → false)
+    let device: String?
+    let id: String?
+    let maxFps: Int?
+    let hdr: Bool?
     let sessionVersion: Int?
     let deviceNonce: Data
-    let usbSessionSeed: Data?
-
-    private enum CodingKeys: String, CodingKey {
-        case pixelsWide, pixelsHigh, scale, device, id, maxFps, hdr, sessionVersion, deviceNonce, usbSessionSeed
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        pixelsWide = try container.decode(Int.self, forKey: .pixelsWide)
-        pixelsHigh = try container.decode(Int.self, forKey: .pixelsHigh)
-        scale = try container.decode(Double.self, forKey: .scale)
-        device = try container.decodeIfPresent(String.self, forKey: .device)
-        id = try container.decodeIfPresent(String.self, forKey: .id)
-        maxFps = try container.decodeIfPresent(Int.self, forKey: .maxFps)
-        hdr = try container.decodeIfPresent(Bool.self, forKey: .hdr)
-        sessionVersion = try container.decodeIfPresent(Int.self, forKey: .sessionVersion)
-        deviceNonce = try container.decodeIfPresent(Data.self, forKey: .deviceNonce) ?? Data()
-        usbSessionSeed = try container.decodeIfPresent(Data.self, forKey: .usbSessionSeed)
-    }
-
+    let wifiSessionSeed: Data?
 
     init(_ hello: ProtocolParser.ServerHello) {
-        self.pixelsWide = hello.pixelsWide
-        self.pixelsHigh = hello.pixelsHigh
-        self.scale = hello.scale
-        self.device = hello.device
-        self.id = hello.id
-        self.maxFps = hello.maxFps
-        self.hdr = hello.hdr
-        self.sessionVersion = SessionCrypto.version
-        self.deviceNonce = hello.deviceNonce
-        self.usbSessionSeed = hello.usbSessionSeed
+        pixelsWide = hello.pixelsWide
+        pixelsHigh = hello.pixelsHigh
+        scale = hello.scale
+        device = hello.device
+        id = hello.id
+        maxFps = hello.maxFps
+        hdr = hello.hdr
+        sessionVersion = SessionCrypto.version
+        deviceNonce = hello.deviceNonce
+        wifiSessionSeed = hello.wifiSessionSeed
     }
+
     var kind: String { device ?? "device" }
-    /// Refresh rate to drive the pipeline at, clamped to what the wire and
-    /// the virtual display can plausibly do.
     var refreshRate: Int { min(max(maxFps ?? 60, 60), 120) }
 }
 
 /// How the sender reaches the receiver. Reconnects re-dial from scratch, so
 /// a USB device that was replugged (new usbmuxd DeviceID) is found again.
 enum SenderTransport {
-    case tcp(NWEndpoint)                   // WiFi (Bonjour) or -host/-port override
+    case tcp(NWEndpoint, security: TCPTransportSecurity)
     case usb(udid: String?, port: UInt16)  // native usbmuxd dial; nil = first device
+    case authenticatedUSB(udid: String?, port: UInt16, deviceInstallID: String, psk: Data)
+}
+
+enum TCPTransportSecurity {
+    case plaintext
+    case pairedTLS(identity: String, key: Data)
+}
+
+enum SessionAdmissionError: LocalizedError, Equatable {
+    case invalidProtocolBuildPin(String)
+    case plaintextTCPRequiresLoopback
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidProtocolBuildPin(let reason):
+            return "Protocol build pin validation failed: \(reason)"
+        case .plaintextTCPRequiresLoopback:
+            return "Plaintext TCP is allowed only for loopback endpoints"
+        }
+    }
+}
+
+struct ProtocolBuildPin: Decodable, Equatable {
+    let schemaVersion: Int
+    let protocolCommit: String
+    let compatibilityDigest: String
+    let normativeManifestDigest: String
+
+    private static let expected = ProtocolBuildPin(
+        schemaVersion: 1,
+        protocolCommit: "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
+        compatibilityDigest: "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+        normativeManifestDigest: "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff")
+
+    static func validate(at url: URL?) throws {
+        guard let url else {
+            throw SessionAdmissionError.invalidProtocolBuildPin("resource is missing")
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw SessionAdmissionError.invalidProtocolBuildPin("resource cannot be read")
+        }
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw SessionAdmissionError.invalidProtocolBuildPin("resource is malformed")
+        }
+        guard let dictionary = object as? [String: Any],
+              Set(dictionary.keys) == [
+                "schemaVersion",
+                "protocolCommit",
+                "compatibilityDigest",
+                "normativeManifestDigest",
+              ] else {
+            throw SessionAdmissionError.invalidProtocolBuildPin("resource has an unexpected schema or tag")
+        }
+        let pin: ProtocolBuildPin
+        do {
+            pin = try JSONDecoder().decode(ProtocolBuildPin.self, from: data)
+        } catch {
+            throw SessionAdmissionError.invalidProtocolBuildPin("resource is malformed")
+        }
+        guard pin == expected else {
+            throw SessionAdmissionError.invalidProtocolBuildPin("resource does not match the bundled protocol contract")
+        }
+    }
+}
+
+protocol SenderLifecycleSender: AnyObject {
+    @MainActor var onStatus: ((String) -> Void)? { get set }
+    @MainActor var onStats: ((Int, Double) -> Void)? { get set }
+    @MainActor var onDisconnected: (() -> Void)? { get set }
+    @MainActor var onHello: ((PhoneInfo) -> Void)? { get set }
+    func start() async throws
+    func stop() async
+    func forceReconnect()
+}
+
+struct SenderConfiguration {
+    let transport: SenderTransport
+    let name: String
+    let mode: CaptureMode
+    let quality: StreamQuality
+    let hdrAllowed: Bool
+    let audioEnabled: Bool
+    let displaySerial: UInt32
+}
+
+protocol SenderFactory {
+    @MainActor func makeSender(configuration: SenderConfiguration) -> any SenderLifecycleSender
+}
+
+struct DefaultSenderFactory: SenderFactory {
+    @MainActor func makeSender(configuration: SenderConfiguration) -> any SenderLifecycleSender {
+        MacSender(transport: configuration.transport, name: configuration.name,
+                  mode: configuration.mode, quality: configuration.quality,
+                  hdrAllowed: configuration.hdrAllowed, audioEnabled: configuration.audioEnabled,
+                  displaySerial: configuration.displaySerial)
+    }
 }
 
 @available(macOS 14.0, *)
 // Mutable transport/capture state is confined to `queue`; UI callbacks hop to
 // MainActor explicitly. The unchecked conformance documents that invariant
 // for Dispatch's @Sendable closures until this type can become an actor.
-final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable, SenderLifecycleSender {
 
     // Status surfaced to the UI (updated on main thread).
     @MainActor var onStatus: ((String) -> Void)?
@@ -173,23 +254,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private var audioTap: SystemAudioTap?
     // Audio rides its own queue — see the tap wiring in startCapture.
     private let audioQueue = DispatchQueue(label: "sender.audio", qos: .userInteractive)
-    // ProRes and the raised bitrates are sized for the measured ~1Gbps
-    // usbmux link; every non-usbmux TCP path (WiFi AND manual -host/-port
-    // tunnels) stays conservative.
     private var isUSBTransport: Bool {
         if case .usb = transport { return true }
+        if case .authenticatedUSB = transport { return true }
         return false
     }
     // Only the usbmux path is treated as the fast link. Any other TCP path
     // (WiFi Bonjour, or a manual -host/-port tunnel which is typically an
-    // SSH/iproxy hop of unknown bandwidth) gets the conservative profile:
-    // a non-usbmux HEVC encoder needs ~20ms/frame at native res (a ~50fps
-    // ceiling; ProRes on the dedicated block is USB-only), and the link's
-    // usable bitrate is a fraction of usbmux. Pushing native 120 there just
-    // saturates the encoder and socket, so frames queue as latency and drop
-    // in bulk (measured on WiFi: e2e 30–275ms, 200–400 drops/s). Cap to
-    // 60fps and a resolution ceiling so the encoder keeps pace. This is a
-    // deliberate "conservative TCP" mode, not WiFi-only.
+    // SSH/iproxy hop of unknown bandwidth) gets the conservative profile.
     private var effectiveScale: Double {
         isUSBTransport ? quality.scale : min(quality.scale, 0.6)
     }
@@ -221,11 +293,78 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     // Encoder saturation gate (see the capture callback): frames handed to
     // VTCompressionSession whose output handler hasn't fired yet.
     private var pendingEncodes = 0
-    // Codec actually in use (HEVC for HDR and for >60fps; see setupEncoder).
+    private var pendingFrameAdmissions = 0
+    struct VideoAdmissionPolicy {
+        struct State {
+            let stopped: Bool
+            let connected: Bool
+            let generationCurrent: Bool
+            let encoderConfigured: Bool
+            let pendingEncodes: Int
+            let pendingAdmissions: Int
+            let pendingSends: Int
+            let maxPendingSends: Int
+            let lastAdmission: Date
+            let now: Date
+            let minimumInterval: TimeInterval
+        }
+
+        static func evaluate(_ state: State) -> Bool {
+            !state.stopped &&
+            state.connected &&
+            state.generationCurrent &&
+            state.encoderConfigured &&
+            state.pendingSends < state.maxPendingSends &&
+            // Depth 3 sustains 120Hz through the convert+encode pipeline while
+            // still shedding (not queueing) when the encoder saturates; depth 2
+            // measured out at ~65fps on 120Hz content (callback latency > one
+            // frame interval serializes admission).
+            state.pendingEncodes + state.pendingAdmissions < 3 &&
+            state.now.timeIntervalSince(state.lastAdmission) >= state.minimumInterval
+        }
+    }
+
+    struct FrameAdmission {
+        let generation: Int
+    }
+
+    final class FrameAdmissionPipeline {
+        let reserve: (CMTime) -> FrameAdmission?
+        let cancel: (FrameAdmission) -> Void
+        let admitted: (CVPixelBuffer, CMTime, FrameAdmission) -> Void
+
+        init(reserve: @escaping (CMTime) -> FrameAdmission?,
+             cancel: @escaping (FrameAdmission) -> Void,
+             admitted: @escaping (CVPixelBuffer, CMTime, FrameAdmission) -> Void) {
+            self.reserve = reserve
+            self.cancel = cancel
+            self.admitted = admitted
+        }
+
+        func submitSCK(_ buffer: CVPixelBuffer, pts: CMTime) {
+            guard let admission = reserve(pts) else { return }
+            admitted(buffer, pts, admission)
+        }
+
+        func submitCG(pts: CMTime, convert: () -> CVPixelBuffer?) {
+            guard let admission = reserve(pts) else { return }
+            guard let buffer = convert() else {
+                cancel(admission)
+                return
+            }
+            admitted(buffer, pts, admission)
+        }
+    }
+
+    private lazy var framePipeline = FrameAdmissionPipeline(
+        reserve: { [weak self] in self?.reserveFrameAdmission(pts: $0) },
+        cancel: { [weak self] in self?.cancelFrameAdmission($0) },
+        admitted: { [weak self] in self?.handleAdmittedFrame($0, pts: $1, admission: $2) })
+    // Codec actually in use: H.264 for SDR, HEVC Main10 HLG for HDR.
     private var usingHEVC = false
-    // ProRes wire path (see setupEncoder): raw frames in a PRRS envelope
-    // instead of Annex B — ProRes has no NAL structure.
-    private var usingProRes = false
+    // Wire codec id when the dedicated ProRes block carries the stream
+    // (`defaults write … prores proxy|lt`, USB transport only); nil otherwise.
+    private var proresWire: String?
     // Rejected encodes (output handler status != noErr) — rate-limit logging.
     private var encodeFailures = 0
     // Pipeline diagnosis flag (`defaults write … diag -bool true`).
@@ -269,7 +408,6 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         let deviceNonce: Data
         let primaryKey: SymmetricKey
     }
-
     private struct BoundStreamSession {
         let info: PhoneInfo
         let sessionID: Data
@@ -279,7 +417,13 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     private var pendingStreamSession: PendingStreamSession?
     private var boundStreamSession: BoundStreamSession?
+    private var usbChannelBindingKey: Data?
+    private var usbPrimaryRecordState: USBRecordState?
+    private var usbAudioRecordState: USBRecordState?
+    private var consumedWifiSessionSeeds = Set<Data>()
     private var inputInjector: InputInjector?
+    // Monotonic lifetime token for display-owned UI work; never sent on the wire.
+    private var virtualDisplayGeneration: UInt64 = 0
 
     // Liveness: both sides ping every 2s; if nothing arrives for 5s the link
     // is half-open (e.g. usbmuxd accepted but the device is gone) — reconnect.
@@ -305,6 +449,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     // tell "Mac rendered 45fps" from "frames got lost" — count deliveries here.
     private var capFrames = 0
     private var capWindowStart = Date()
+    // Per-cause admission drop counters for the diag line: which gate is
+    // actually shedding frames (send queue, encode pipeline, pacing floor).
+    private var dropsBySends = 0
+    private var encodeLatenciesMs: [Double] = []
+    private var dropsByInflight = 0
+    private var dropsByPacing = 0
 
     private var framesSent = 0
     private var bytesSent = 0
@@ -316,10 +466,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private var lastPixelBuffer: CVPixelBuffer?
     private var lastCaptureAt = Date.distantPast
 
+
+
     init(transport: SenderTransport, name: String, mode: CaptureMode,
          quality: StreamQuality = .best, hdrAllowed: Bool = true,
-         audioEnabled: Bool = true, displaySerial: UInt32 = 0x0001,
-         wifiPSK: (identity: String, key: Data)? = nil) {
+         audioEnabled: Bool = true, displaySerial: UInt32 = 0x0001) {
         self.transport = transport
         self.endpointName = name
         self.mode = mode
@@ -327,19 +478,56 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         self.hdrAllowed = hdrAllowed
         self.audioEnabled = audioEnabled
         self.displaySerial = displaySerial
-        self.wifiPSK = wifiPSK
         super.init()
     }
+    static func validateAdmission(transport: SenderTransport, pinURL: URL?) throws {
+        try ProtocolBuildPin.validate(at: pinURL)
+        guard case .tcp(let endpoint, let security) = transport,
+              case .plaintext = security else {
+            return
+        }
+        guard isLoopback(endpoint) else {
+            throw SessionAdmissionError.plaintextTCPRequiresLoopback
+        }
+    }
+    private var wifiPSK: (identity: String, key: Data)? {
+        guard case .tcp(_, security: .pairedTLS(let identity, let key)) = transport else {
+            return nil
+        }
+        return (identity, key)
+    }
+    private var sessionTransport: ProtocolParser.Transport {
+        if case .usb = transport { return .usb }
+        if case .authenticatedUSB = transport { return .usb }
+        return .wifi
+    }
 
-    // TLS-PSK credentials for the WiFi transport, established by pairing
-    // (see Mac/Pairing.swift). nil = plaintext dial — only correct for
-    // loopback-style manual endpoints (-host/-port tunnels); the receiver
-    // rejects plaintext from the network.
-    private let wifiPSK: (identity: String, key: Data)?
+
+    private static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
+        guard case .hostPort(let host, _) = endpoint else { return false }
+        switch host {
+        case .ipv4(let address):
+            return address == IPv4Address("127.0.0.1")
+        case .ipv6(let address):
+            return address == IPv6Address("::1")
+        case .name(let name, _):
+            return name.lowercased() == "localhost"
+        @unknown default:
+            return false
+        }
+    }
 
     // MARK: - Lifecycle
 
     func start() async throws {
+        do {
+            try Self.validateAdmission(transport: transport,
+                                       pinURL: Bundle.main.url(forResource: "ProtocolBuildPin",
+                                                               withExtension: "json"))
+        } catch {
+            await status("Failed: \(error.localizedDescription)")
+            throw error
+        }
         stopped = false
         queue.async { self.connect() }   // dial state lives on `queue`
         if !monitorsStarted {
@@ -413,6 +601,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func setupExtend(_ info: PhoneInfo) async throws {
         Log.info("phone hello: \(info.pixelsWide)x\(info.pixelsHigh) @\(info.scale)x maxFps=\(info.maxFps ?? 60) hdr=\(info.hdr ?? false)")
 
+        guard VirtualDisplay.acceptsPixelGeometry(width: info.pixelsWide, height: info.pixelsHigh) else {
+            Log.info("refusing invalid receiver display geometry: \(info.pixelsWide)x\(info.pixelsHigh)")
+            throw NSError(domain: "MacSender", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "receiver announced invalid display geometry"])
+        }
+
         // Phone panel is @3x; the virtual display runs @2x HiDPI, so points
         // = native pixels / 2 (rounded down to even for the encoder).
         let pointsWide = (info.pixelsWide / 2) & ~1
@@ -440,6 +634,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         // content with real headroom, so the capture carries true HDR — not
         // just a 10-bit container around tone-mapped SDR.
         let wantHDR = resolveHDR(info)
+        virtualDisplayGeneration &+= 1
+        let displayGeneration = virtualDisplayGeneration
         let vd = await MainActor.run {
             VirtualDisplay(name: displayName,
                            pointsWide: pointsWide, pointsHigh: pointsHigh,
@@ -458,6 +654,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         // back to SDR (less banding), so hdrActive follows the negotiation,
         // not the framebuffer.
         hdrActive = wantHDR
+        inputInjector?.releasePressedInput()
         inputInjector = InputInjector(displayID: vd.displayID)
 
         let display = try await findSCDisplay(id: vd.displayID)
@@ -472,7 +669,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         // stream so steady-state latency can be measured without user activity.
         if UserDefaults.standard.bool(forKey: "testPattern") {
             let id = vd.displayID
-            Task { @MainActor in TestPattern.show(on: id) }
+            await MainActor.run { TestPattern.show(on: id, generation: displayGeneration) }
         }
     }
 
@@ -497,6 +694,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             cgStream = nil
             if let encoder { VTCompressionSessionInvalidate(encoder) }
             encoder = nil
+            if let displayID = virtualDisplay?.displayID {
+                let generation = virtualDisplayGeneration
+                Task { @MainActor in TestPattern.hide(on: displayID, generation: generation) }
+            }
             virtualDisplay = nil   // removes the old display
             needsKeyframe = true
             do {
@@ -542,9 +743,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     }
 
     private func startCapture(display: SCDisplay, pixelsWide: Int, pixelsHigh: Int) async throws {
-        // Encoder first: a failed HEVC Main10 session demotes hdrActive, and
-        // the capture config below must match the encoder's final input.
-        setupEncoder(width: pixelsWide, height: pixelsHigh)
+        // Capture must never start behind a partially configured encoder: that
+        // leaves SCK recording while every frame is silently discarded.
+        try setupEncoder(width: pixelsWide, height: pixelsHigh)
 
         // Backend choice: ScreenCaptureKit tone-maps VIRTUAL displays to SDR
         // even with its HDR presets (measured: EDR 4× test pattern captured
@@ -680,12 +881,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         let tapAllowed = UserDefaults.standard.object(forKey: "audiotap") == nil
             || UserDefaults.standard.bool(forKey: "audiotap")
         if tapAllowed {
-            audioTap = SystemAudioTap { [weak self] pcm, sr in
-                guard let self else { return }
-                // Dedicated queue: audio must never wait behind the video
-                // queue's per-frame convert/encode work — that head-of-line
-                // jitter reached the receiver as dropouts.
-                self.audioQueue.async { self.sendAudioPCM(pcm, sampleRate: sr) }
+            audioTap = SystemAudioTap(queue: queue) { [weak self] slot, frames, sr in
+                guard let self else { slot.release(); return }
+                let byteCount = frames * 2 * MemoryLayout<Int16>.size
+                self.enqueueAudioPCM(Data(slot.data.prefix(byteCount)), sampleRate: sr)
+                slot.release()
             }
         }
         if audioTap == nil, let display = captureSCDisplay {
@@ -752,6 +952,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     /// existing control framing. ~1.5Mbps — noise next to the video stream,
     /// and old receivers ignore the unknown message type.
     private func handleAudio(_ sample: CMSampleBuffer) {
+        fallbackAudioIngress.submit(sample)
+    }
+
+    private func handleAudioOnQueue(_ sample: CMSampleBuffer) {
+        guard !stopped else { return }
         guard connectionReady,
               let fmt = CMSampleBufferGetFormatDescription(sample),
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmt)?.pointee,
@@ -798,12 +1003,114 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 }
             }
         }
-        sendAudioPCM(pcm, sampleRate: Int(asbd.mSampleRate))
+        enqueueAudioPCM(pcm, sampleRate: Int(asbd.mSampleRate))
     }
+
+    final class AudioReservationGate: @unchecked Sendable {
+        private var lock = os_unfair_lock_s()
+        private var generation = 0
+        private var outstanding = 0
+        private let capacity = 8
+
+        func reserve() -> Int? {
+            guard os_unfair_lock_trylock(&lock) else { return nil }
+            defer { os_unfair_lock_unlock(&lock) }
+            guard outstanding < capacity else { return nil }
+            outstanding += 1
+            return generation
+        }
+
+        func isCurrent(_ token: Int) -> Bool {
+            os_unfair_lock_lock(&lock)
+            defer { os_unfair_lock_unlock(&lock) }
+            return token == generation
+        }
+
+        func release(_ reservedGeneration: Int) {
+            os_unfair_lock_lock(&lock)
+            if reservedGeneration == generation { outstanding = max(0, outstanding - 1) }
+            os_unfair_lock_unlock(&lock)
+        }
+
+        func reset() {
+            os_unfair_lock_lock(&lock)
+            outstanding = 0
+            generation += 1
+            os_unfair_lock_unlock(&lock)
+        }
+        func isIdle() -> Bool {
+            os_unfair_lock_lock(&lock)
+            defer { os_unfair_lock_unlock(&lock) }
+            return outstanding == 0
+        }
+    }
+
+    final class FallbackAudioIngress<Payload>: @unchecked Sendable {
+        private let gate: AudioReservationGate
+        private let queue: DispatchQueue
+        private let consume: (Payload) -> Void
+
+        init(queue: DispatchQueue, gate: AudioReservationGate = AudioReservationGate(),
+             consume: @escaping (Payload) -> Void) {
+            self.gate = gate
+            self.queue = queue
+            self.consume = consume
+        }
+
+        func submit(_ payload: Payload) {
+            guard let token = gate.reserve() else { return }
+            let gate = gate
+            queue.async { [weak self, gate] in
+                defer { gate.release(token) }
+                guard gate.isCurrent(token) else { return }
+                self?.consume(payload)
+            }
+        }
+
+        func reset() {
+            gate.reset()
+        }
+
+        func isIdle() -> Bool {
+            gate.isIdle()
+        }
+    }
+
+    private lazy var fallbackAudioIngress = FallbackAudioIngress<CMSampleBuffer>(
+        queue: queue,
+        consume: { [weak self] sample in
+            self?.handleAudioOnQueue(sample)
+        })
 
     /// Shared by the SCK audio path and the system-audio tap. `t` (Mac wall
     /// clock) lets the receiver compute audio forwarding latency the same
     /// way video e2e works.
+    private let maxQueuedAudioFrames = 8
+    private var queuedAudioFrames: [(Data, Int)] = []
+    private var pendingAudioSends = 0
+
+
+    private func enqueueAudioPCM(_ pcm: Data, sampleRate: Int) {
+        guard !stopped, connectionReady else { return }
+        guard queuedAudioFrames.count + pendingAudioSends < maxQueuedAudioFrames else {
+            dropsTotal += 1
+            return
+        }
+        queuedAudioFrames.append((pcm, sampleRate))
+        drainAudioQueue()
+    }
+
+    private func drainAudioQueue() {
+        guard pendingAudioSends < maxQueuedAudioFrames,
+              !queuedAudioFrames.isEmpty else { return }
+        if case .authenticatedUSB = transport {
+            // Authenticated USB audio never shares the primary record/socket.
+            guard audioConnectionReady, audioConnection != nil, usbAudioRecordState != nil else { return }
+        }
+        let (pcm, sampleRate) = queuedAudioFrames.removeFirst()
+        sendAudioPCM(pcm, sampleRate: sampleRate)
+    }
+
     private func sendAudioPCM(_ pcm: Data, sampleRate: Int) {
         let t = Date().timeIntervalSince1970 * 1000
         let payload = Data("{\"type\":\"audio\",\"sr\":\(sampleRate),\"ch\":2,\"t\":\(t),\"d\":\"\(pcm.base64EncodedString())\"}".utf8)
@@ -813,14 +1120,48 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             Log.info("audio payload rejected before send: \(payload.count) bytes")
             return
         }
-        var header = UInt32(payload.count).bigEndian
-        var frame = Data(bytes: &header, count: 4)
-        frame.append(payload)
-        // Dedicated socket when it's up; the video socket as fallback.
+        let frame: Data
+        switch transport {
+        case .authenticatedUSB:
+            // Fail closed: the primary USB record/socket carries control and
+            // video only; audio requires its independently authenticated channel.
+            guard audioConnectionReady, let audioConnection,
+                  let state = usbAudioRecordState,
+                  let protected = state.frame(payload, cap: 1 << 20) else { return }
+            frame = protected
+            let generation = dialGeneration
+            let completion: (NWError?) -> Void = { [weak self] _ in
+                guard let self else { return }
+                self.queue.async {
+                    guard generation == self.dialGeneration else { return }
+                    self.pendingAudioSends = max(0, self.pendingAudioSends - 1)
+                    self.drainAudioQueue()
+                }
+            }
+            pendingAudioSends += 1
+            audioConnection.send(content: frame, completion: .contentProcessed(completion))
+            return
+        case .usb:
+            return
+        case .tcp:
+            var header = UInt32(payload.count).bigEndian
+            frame = Data(bytes: &header, count: 4) + payload
+        }
+        let generation = dialGeneration
+        let completion: (NWError?) -> Void = { [weak self] _ in
+            guard let self else { return }
+            self.queue.async {
+                guard generation == self.dialGeneration else { return }
+                self.pendingAudioSends = max(0, self.pendingAudioSends - 1)
+                self.drainAudioQueue()
+            }
+        }
         if audioConnectionReady, let audioConnection {
-            audioConnection.send(content: frame, completion: .contentProcessed { _ in })
+            pendingAudioSends += 1
+            audioConnection.send(content: frame, completion: .contentProcessed(completion))
         } else if connectionReady, let connection {
-            connection.send(content: frame, completion: .contentProcessed { _ in })
+            pendingAudioSends += 1
+            connection.send(content: frame, completion: .contentProcessed(completion))
         }
     }
 
@@ -855,14 +1196,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             queue: queue
         ) { [weak self] status, _, surface, _ in
             guard let self, status == .frameComplete, let surface else { return }
-            var pbUnmanaged: Unmanaged<CVPixelBuffer>?
-            // Wrapping retains the IOSurface; the converter reads it into its
-            // own pooled output before this handler returns, so stream reuse
-            // can't tear the frame the encoder sees.
-            CVPixelBufferCreateWithIOSurface(nil, surface, nil, &pbUnmanaged)
-            guard let pb = pbUnmanaged?.takeRetainedValue(),
-                  let hlg = self.hlgConverter?.convert(pb) else { return }
-            self.handleCapturedFrame(hlg, pts: CMClockGetTime(CMClockGetHostTimeClock()))
+            let pts = CMClockGetTime(CMClockGetHostTimeClock())
+            guard self.hdrActive, self.hlgConverter != nil else { return }
+            self.framePipeline.submitCG(pts: pts) {
+                guard let converter = self.hlgConverter else { return nil }
+                var pbUnmanaged: Unmanaged<CVPixelBuffer>?
+                CVPixelBufferCreateWithIOSurface(nil, surface, nil, &pbUnmanaged)
+                guard let pb = pbUnmanaged?.takeRetainedValue() else { return nil }
+                return converter.convert(pb)
+            }
         }
         guard let stream, stream.start() == .success else {
             Log.info("CGDisplayStream EDR capture failed to start — falling back to SCK")
@@ -872,15 +1214,19 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         return true
     }
 
-    func stop() {
+    func stop() async {
         stopped = true
-        queue.async { [weak self] in
-            self?.stopOnQueue()
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                self?.stopOnQueue()
+                continuation.resume()
+            }
         }
     }
 
     private func stopOnQueue() {
         cursorTimer?.cancel()
+        inputInjector?.releasePressedInput()
         cursorTimer = nil
         stream?.stopCapture { _ in }
         stream = nil
@@ -896,11 +1242,27 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         audioConnection = nil
         audioConnectionReady = false
         audioHandshakeInFlight = false
+        queuedAudioFrames.removeAll(keepingCapacity: false)
+        fallbackAudioIngress.reset()
+        pendingAudioSends = 0
         pendingStreamSession = nil
         boundStreamSession = nil
+        usbChannelBindingKey = nil
+        usbPrimaryRecordState?.clear()
+        usbPrimaryRecordState = nil
+        usbAudioRecordState?.clear()
+        usbAudioRecordState = nil
+        consumedWifiSessionSeeds.removeAll(keepingCapacity: false)
         handshakeStartedAt = nil
+        pendingSends = 0
+        pendingEncodes = 0
+        pendingFrameAdmissions = 0
         if let encoder { VTCompressionSessionInvalidate(encoder) }
         encoder = nil
+        if let displayID = virtualDisplay?.displayID {
+            let generation = virtualDisplayGeneration
+            Task { @MainActor in TestPattern.hide(on: displayID, generation: generation) }
+        }
         virtualDisplay = nil
         helloContinuation?.resume(throwing: CancellationError())
         helloContinuation = nil
@@ -958,8 +1320,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func connect() {
         guard !stopped else { return }
         switch transport {
-        case .tcp(let endpoint): connectTCP(endpoint)
-        case .usb(let udid, let port): connectUSB(udid: udid, port: port)
+        case .tcp(let endpoint, _): connectTCP(endpoint)
+        case .usb:
+            Log.info("unauthenticated USB transport refused")
+            scheduleReconnect()
+        case .authenticatedUSB(let udid, let port, let deviceInstallID, let psk):
+            connectUSB(udid: udid, port: port, deviceInstallID: deviceInstallID, psk: psk)
         }
     }
 
@@ -968,10 +1334,9 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func becomeReady(_ conn: NWConnection) {
         Log.info("transport ready to \(endpointName); waiting for session v3 hello")
         if case .tcp = transport {
-            Log.info(wifiPSK == nil
-                ? "TCP transport uses a loopback session seed"
-                : "TCP transport secured with TLS-PSK (paired)")
+            Log.info("TCP transport awaiting paired Wi-Fi session challenge")
         }
+        inputInjector?.releasePressedInput()
         connectionReady = false
         pendingStreamSession = nil
         boundStreamSession = nil
@@ -1001,10 +1366,8 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     // MARK: - Dedicated audio connection (port+1)
     //
-    // Audio shares no socket with video: on the main connection a ~5ms PCM
-    // chunk queues behind hundreds of KB of in-flight ProRes frames
-    // (head-of-line blocking measured as ~60ms of audio arrival latency at
-    // 240Mbps). A second TCP connection makes audio delivery independent.
+    // Audio uses a second TCP connection so delivery remains independent of
+    // in-flight video frames.
     // USB derives port+1; WiFi (Bonjour) opens a second TLS connection to the
     // same secure service tagged as the audio channel (see dialAudioConnection).
     private var audioConnection: NWConnection?
@@ -1019,24 +1382,37 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     /// socket forever (measured as aud50 jumping 30→65ms).
     private func dialAudioConnection() {
         guard !audioDialInFlight, connectionReady, boundStreamSession != nil else { return }
-
         audioConnection?.cancel()
         audioConnection = nil
         audioConnectionReady = false
+        usbAudioRecordState?.clear()
+        usbAudioRecordState = nil
         let generation = dialGeneration
         switch transport {
-        case .usb(let udid, let port):
+        case .usb:
+            return
+        case .authenticatedUSB(let udid, let port, let deviceInstallID, let psk):
             audioDialInFlight = true
             Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let conn = try await Usbmux.dial(udid: udid, port: port + 1, queue: queue)
+                    let dialed = try await Usbmux.dial(
+                        udid: udid,
+                        port: port + 1,
+                        queue: queue,
+                        macInstallID: PairingStore.macInstallID,
+                        deviceInstallID: deviceInstallID,
+                        psk: psk,
+                        purpose: "audio"
+                    )
+                    let conn = dialed.connection
                     queue.async {
                         self.audioDialInFlight = false
                         guard generation == self.dialGeneration, !self.stopped else {
                             conn.cancel()
                             return
                         }
+                        self.usbAudioRecordState = dialed.recordState
                         self.adoptAudioConnection(conn, tag: false)
                     }
                 } catch {
@@ -1044,7 +1420,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     Log.info("audio connection dial failed (audio rides the video socket): \(error)")
                 }
             }
-        case .tcp(let endpoint):
+        case .tcp(let endpoint, _):
             if case .hostPort(let host, let port) = endpoint,
                let nextPort = NWEndpoint.Port(rawValue: port.rawValue + 1) {
                 // Manual -host/-port endpoint (loopback tunnel): dial the
@@ -1098,6 +1474,10 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             case .failed, .cancelled:
                 self.audioConnectionReady = false
                 self.audioHandshakeInFlight = false
+                self.usbAudioRecordState?.clear()
+                self.usbAudioRecordState = nil
+                self.queuedAudioFrames.removeAll(keepingCapacity: false)
+                self.pendingAudioSends = 0
             default:
                 break
             }
@@ -1112,24 +1492,78 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] header, _, _, error in
             guard let self, conn === self.audioConnection,
                   error == nil, let header, header.count == 4 else {
-                conn.cancel(); return
+                conn.cancel()
+                return
             }
-            do {
-                let length = try ProtocolParser.framedPayloadLength(from: header, kind: .audioControl)
-                conn.receive(minimumIncompleteLength: length, maximumLength: length) {
-                    [weak self] payload, _, _, error in
-                    guard let self, conn === self.audioConnection,
-                          error == nil, let payload,
-                          (try? ProtocolParser.validatePayload(payload, expectedLength: length, kind: .audioControl)) != nil,
-                          let parsed = try? ProtocolParser.parseServerHello(payload, transport: tagged ? .wifi : .usb),
-                          let session = self.boundStreamSession,
-                          parsed.id == session.info.id,
-                          let nonce = SessionCrypto.randomBytes(count: 32) else {
-                    conn.cancel(); return
+            let rawLength = Int(UInt32(bigEndian: header.withUnsafeBytes {
+                $0.loadUnaligned(as: UInt32.self)
+            }))
+            let protected = !tagged
+            let bodyLength: Int
+            if protected {
+                guard rawLength > 40, rawLength <= (1 << 20) + 40 else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = rawLength
+            } else {
+                guard let length = try? ProtocolParser.framedPayloadLength(
+                    from: header,
+                    kind: .audioControl
+                ) else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = length
+            }
+            conn.receive(minimumIncompleteLength: bodyLength, maximumLength: bodyLength) {
+                [weak self] body, _, _, error in
+                guard let self, conn === self.audioConnection,
+                      error == nil, let body else {
+                    conn.cancel()
+                    return
+                }
+                let payload: Data
+                if protected {
+                    guard let state = self.usbAudioRecordState,
+                          let consumed = state.consume(header + body, cap: 1 << 20),
+                          consumed.1.isEmpty else {
+                        conn.cancel()
+                        return
+                    }
+                    payload = consumed.0
+                } else {
+                    payload = body
+                }
+                guard (try? ProtocolParser.validatePayload(
+                    payload,
+                    expectedLength: payload.count,
+                    kind: .audioControl
+                )) != nil,
+                let session = self.boundStreamSession,
+                let nonce = SessionCrypto.randomBytes(count: 32) else {
+                    conn.cancel()
+                    return
+                }
+                let parsed: ProtocolParser.ServerHello
+                switch ProtocolParser.consumeServerHello(payload, transport: tagged ? .wifi : .usb) {
+                case .applied(let value, _):
+                    parsed = value
+                case .rejected:
+                    conn.cancel()
+                    return
+                }
+                guard parsed.id == session.info.id else {
+                    conn.cancel()
+                    return
                 }
                 let proof = SessionCrypto.channelProof(
-                    key: session.channelSecret, sessionID: session.sessionID,
-                    generation: session.generation, channel: "audio", nonce: nonce)
+                    key: session.channelSecret,
+                    sessionID: session.sessionID,
+                    generation: session.generation,
+                    channel: "audio",
+                    nonce: nonce
+                )
                 let open = SessionChannelOpen(
                     v: SessionCrypto.version,
                     macInstallID: PairingStore.macInstallID,
@@ -1137,22 +1571,34 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                     generation: session.generation,
                     channel: "audio",
                     nonce: nonce.base64EncodedString(),
-                    proof: proof.base64EncodedString())
-                guard let frame = PairingWire.frame(open, kind: .audioControl) else { conn.cancel(); return }
+                    proof: proof.base64EncodedString()
+                )
+                let frame: Data?
+                if protected, let encoded = try? JSONEncoder().encode(open) {
+                    frame = self.usbAudioRecordState?.frame(encoded, cap: 1 << 20)
+                } else {
+                    frame = PairingWire.frame(open, kind: .audioControl)
+                }
+                guard let frame else {
+                    conn.cancel()
+                    return
+                }
                 conn.send(content: frame, completion: .contentProcessed { [weak self] error in
                     guard let self, conn === self.audioConnection else { return }
                     self.audioHandshakeInFlight = false
                     if let error {
                         Log.info("audio session open failed: \(error)")
+                        self.usbAudioRecordState?.clear()
+                        self.usbAudioRecordState = nil
+                        self.queuedAudioFrames.removeAll(keepingCapacity: false)
+                        self.pendingAudioSends = 0
                         conn.cancel()
                     } else {
                         self.audioConnectionReady = true
+                        self.drainAudioQueue()
                         Log.info("session v3 audio ready (dedicated socket\(tagged ? ", TLS" : ", USB"))")
                     }
                 })
-            }
-            } catch {
-                conn.cancel()
             }
         }
     }
@@ -1161,13 +1607,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         let options = NWProtocolTCP.Options()
         options.noDelay = true   // latency matters more than throughput here
         let params: NWParameters
-        if let wifiPSK {
+        switch transport {
+        case .tcp(_, security: .pairedTLS(let identity, let key)):
             params = NWParameters(
-                tls: PairingCrypto.clientTLSOptions(identity: wifiPSK.identity,
-                                                    psk: wifiPSK.key),
+                tls: PairingCrypto.clientTLSOptions(identity: identity, psk: key),
                 tcp: options)
-        } else {
+        case .tcp(_, security: .plaintext):
             params = NWParameters(tls: nil, tcp: options)
+        case .usb, .authenticatedUSB:
+            preconditionFailure("TCP connection requires a TCP transport")
         }
         // WMM QoS: the video frames flow Mac -> device on THIS connection, and
         // packets are marked by their sender — without this the video stream
@@ -1213,19 +1661,30 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     /// Dial through macOS's built-in usbmuxd — no external tunnel needed.
     /// The handshake is async, so adoption is gated on `dialGeneration`.
-    private func connectUSB(udid: String?, port: UInt16) {
+    private func connectUSB(udid: String?, port: UInt16, deviceInstallID: String, psk: Data) {
         dialGeneration += 1
         let generation = dialGeneration
         Task { [weak self] in
             guard let self else { return }
             do {
-                let conn = try await Usbmux.dial(udid: udid, port: port, queue: queue)
+                let dialed = try await Usbmux.dial(
+                    udid: udid,
+                    port: port,
+                    queue: queue,
+                    macInstallID: PairingStore.macInstallID,
+                    deviceInstallID: deviceInstallID,
+                    psk: psk,
+                    purpose: "primary"
+                )
+                let conn = dialed.connection
                 queue.async { [weak self] in
                     guard let self else { conn.cancel(); return }
                     guard generation == self.dialGeneration, !self.stopped else {
                         conn.cancel()
                         return
                     }
+                    self.usbChannelBindingKey = dialed.authenticatedChannelBindingKey
+                    self.usbPrimaryRecordState = dialed.recordState
                     self.connection = conn
                     conn.stateUpdateHandler = { [weak self] state in
                         guard let self else { return }
@@ -1284,9 +1743,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             }
         }
         connectionReady = false
+        inputInjector?.releasePressedInput()
         pendingStreamSession = nil
         boundStreamSession = nil
         lastHello = nil
+        usbChannelBindingKey = nil
+        usbPrimaryRecordState?.clear()
+        usbPrimaryRecordState = nil
+        usbAudioRecordState?.clear()
+        usbAudioRecordState = nil
         handshakeStartedAt = nil
         dialGeneration += 1   // a USB dial still in flight must not adopt
         connection?.cancel()
@@ -1295,8 +1760,12 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         audioConnection = nil
         audioConnectionReady = false
         audioHandshakeInFlight = false
+        queuedAudioFrames.removeAll(keepingCapacity: false)
+        fallbackAudioIngress.reset()
+        pendingAudioSends = 0
         pendingSends = 0
         pendingEncodes = 0
+        pendingFrameAdmissions = 0
         if let reconnectStatus {
             Task { await status(reconnectStatus) }
         }
@@ -1325,7 +1794,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 // Pipeline diagnosis (`defaults write … diag -bool true`):
                 // one line per ping with every gate's state.
                 if UserDefaults.standard.bool(forKey: "diag") {
-                    Log.info("diag: capFps=\(capFps) drops=\(self.dropsTotal) pendingEncodes=\(self.pendingEncodes) pendingSends=\(self.pendingSends) needsKF=\(self.needsKeyframe)")
+                    let sorted = self.encodeLatenciesMs.sorted()
+                    let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+                    let p95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, sorted.count * 95 / 100)]
+                    self.encodeLatenciesMs.removeAll(keepingCapacity: true)
+                    Log.info("diag: capFps=\(capFps) drops=\(self.dropsTotal) bySends=\(self.dropsBySends) byInflight=\(self.dropsByInflight) byPacing=\(self.dropsByPacing) encMs p50=\(String(format: "%.1f", p50)) p95=\(String(format: "%.1f", p95)) pendingEncodes=\(self.pendingEncodes) pendingSends=\(self.pendingSends) needsKF=\(self.needsKeyframe)")
                 }
             }
             self.schedulePing()
@@ -1343,7 +1816,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 self.scheduleReconnect(
                     status: "Session authentication timed out — retrying…")
             } else if self.connectionReady,
-                      idle > SessionTiming.receiverOwnershipTimeout {
+                      idle > SessionTiming.livenessDeadline {
                 Log.info("watchdog: nothing from the phone for >5s — reconnecting")
                 self.scheduleReconnect(status: "Connection stale — reconnecting…")
             }
@@ -1396,17 +1869,57 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     // MARK: - Control messages (phone -> Mac)
 
     private func receiveControl(on conn: NWConnection) {
-        conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] data, _, _, error in
-            guard let self, conn === self.connection else { return }
-            guard error == nil, let data, data.count == 4,
-                  let len = try? ProtocolParser.framedPayloadLength(from: data, kind: .session) else {
+        conn.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] header, _, _, error in
+            guard let self, conn === self.connection,
+                  error == nil, let header, header.count == 4 else {
                 conn.cancel()
                 return
             }
-            conn.receive(minimumIncompleteLength: len, maximumLength: len) { [weak self] payload, _, _, error in
-                guard let self, conn === self.connection else { return }
-                guard error == nil, let payload,
-                      (try? ProtocolParser.validatePayload(payload, expectedLength: len, kind: .session)) != nil else {
+            let rawLength = Int(UInt32(bigEndian: header.withUnsafeBytes {
+                $0.loadUnaligned(as: UInt32.self)
+            }))
+            let protected = self.isUSBTransport
+            let bodyLength: Int
+            if protected {
+                guard rawLength > 40, rawLength <= (1 << 20) + 40 else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = rawLength
+            } else {
+                guard let length = try? ProtocolParser.framedPayloadLength(
+                    from: header,
+                    kind: .session
+                ) else {
+                    conn.cancel()
+                    return
+                }
+                bodyLength = length
+            }
+            conn.receive(minimumIncompleteLength: bodyLength, maximumLength: bodyLength) {
+                [weak self] body, _, _, error in
+                guard let self, conn === self.connection,
+                      error == nil, let body else {
+                    conn.cancel()
+                    return
+                }
+                let payload: Data
+                if protected {
+                    guard let state = self.usbPrimaryRecordState,
+                          let consumed = state.consume(header + body, cap: 1 << 20),
+                          consumed.1.isEmpty else {
+                        conn.cancel()
+                        return
+                    }
+                    payload = consumed.0
+                } else {
+                    payload = body
+                }
+                guard (try? ProtocolParser.validatePayload(
+                    payload,
+                    expectedLength: payload.count,
+                    kind: .session
+                )) != nil else {
                     conn.cancel()
                     return
                 }
@@ -1421,39 +1934,43 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         guard pendingStreamSession == nil, boundStreamSession == nil,
               info.sessionVersion == SessionCrypto.version,
               let deviceID = info.id,
-              let macNonce = SessionCrypto.randomBytes(count: 32) else {
+              let macNonce = SessionCrypto.randomBytes(count: 32),
+              info.deviceNonce.count == 32 else {
             Log.info("session v3 server hello invalid")
             scheduleReconnect()
             return
         }
-        let deviceNonce = info.deviceNonce
-        guard deviceNonce.count == 32 else {
-            Log.info("session v3 server hello invalid")
-            scheduleReconnect()
-            return
-        }
-        let ikm: Data?
-        if let wifiPSK {
+        let ikm: Data
+        switch sessionTransport {
+        case .wifi:
+            guard let wifiPSK,
+                  let seed = info.wifiSessionSeed,
+                  seed.count == 32,
+                  consumedWifiSessionSeeds.insert(seed).inserted else {
+                Log.info("session v3 Wi-Fi challenge or paired PSK rejected")
+                scheduleReconnect()
+                return
+            }
             ikm = wifiPSK.key
-        } else if let seed = info.usbSessionSeed, seed.count == 32 {
-            ikm = seed
-        } else {
-            ikm = nil
-        }
-        guard let ikm else {
-            Log.info("session v3 has no PSK or loopback seed")
-            scheduleReconnect()
-            return
+        case .usb:
+            guard info.wifiSessionSeed == nil,
+                  let binding = usbChannelBindingKey,
+                  binding.count == 32 else {
+                Log.info("session v3 USB channel binding unavailable")
+                scheduleReconnect()
+                return
+            }
+            ikm = binding
         }
         let macID = PairingStore.macInstallID
         let primaryKey = SessionCrypto.primaryKey(
             ikm: ikm, macInstallID: macID, deviceInstallID: deviceID,
-            macNonce: macNonce, deviceNonce: deviceNonce)
+            macNonce: macNonce, deviceNonce: info.deviceNonce)
         let proof = SessionCrypto.primaryProof(
             key: primaryKey, macInstallID: macID, deviceInstallID: deviceID,
-            macNonce: macNonce, deviceNonce: deviceNonce)
+            macNonce: macNonce, deviceNonce: info.deviceNonce)
         pendingStreamSession = PendingStreamSession(
-            info: info, macNonce: macNonce, deviceNonce: deviceNonce,
+            info: info, macNonce: macNonce, deviceNonce: info.deviceNonce,
             primaryKey: primaryKey)
         let message = SessionOpen(
             v: SessionCrypto.version,
@@ -1471,14 +1988,23 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             return
         }
         guard let pending = pendingStreamSession,
-              let deviceID = pending.info.id,
-              let verified = try? ProtocolParser.parseVerifiedSessionAccept(
-                payload,
-                primaryKey: pending.primaryKey,
-                macInstallID: PairingStore.macInstallID,
-                deviceInstallID: deviceID,
-                macNonce: pending.macNonce,
-                deviceNonce: pending.deviceNonce) else {
+              let deviceID = pending.info.id else {
+            Log.info("session v3 accept invalid")
+            scheduleReconnect()
+            return
+        }
+        let verified: ProtocolParser.VerifiedSessionAccept
+        switch ProtocolParser.consumeVerifiedSessionAccept(
+            payload,
+            primaryKey: pending.primaryKey,
+            macInstallID: PairingStore.macInstallID,
+            deviceInstallID: deviceID,
+            macNonce: pending.macNonce,
+            deviceNonce: pending.deviceNonce
+        ) {
+        case .applied(let value, _):
+            verified = value
+        case .rejected:
             Log.info("session v3 accept invalid")
             scheduleReconnect()
             return
@@ -1494,7 +2020,15 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     @discardableResult
     private func sendSessionMessage<T: Encodable>(_ message: T,
                                                    on conn: NWConnection?) -> Bool {
-        guard let conn, let frame = PairingWire.frame(message) else { return false }
+        guard let conn, let payload = try? JSONEncoder().encode(message) else { return false }
+        let frame: Data
+        if isUSBTransport {
+            guard let protected = usbPrimaryRecordState?.frame(payload, cap: 1 << 20) else { return false }
+            frame = protected
+        } else {
+            guard let plain = PairingWire.frame(message) else { return false }
+            frame = plain
+        }
         conn.send(content: frame, completion: .contentProcessed { error in
             if let error { Log.info("session send error: \(error)") }
         })
@@ -1503,7 +2037,11 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
 
     private func handleControl(_ payload: Data) {
-        guard let control = try? ProtocolParser.parseControl(payload, transport: wifiPSK == nil ? .usb : .wifi) else {
+        let control: ProtocolParser.Control
+        switch ProtocolParser.consumeControl(payload, transport: sessionTransport) {
+        case .applied(let value, _):
+            control = value
+        case .rejected:
             Log.info("invalid control message (\(payload.count) bytes)")
             scheduleReconnect()
             return
@@ -1609,43 +2147,19 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
 
     // MARK: - Encoder setup
 
-    private func setupEncoder(width: Int, height: Int) {
+    private func setupEncoder(width: Int, height: Int) throws {
+        guard width > 0, height > 0 else {
+            throw NSError(domain: "MacSender", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "invalid encoder dimensions"])
+        }
         // A fresh session never owes us output handlers — clear the gate so
         // callbacks the invalidated session swallowed can't wedge it shut.
-        queue.async { self.pendingEncodes = 0 }
+        pendingEncodes = 0
+        pendingFrameAdmissions = 0
+        encoder.map(VTCompressionSessionInvalidate)
+        encoder = nil
 
-        // Experimental (`-prores`): intra-only ProRes 422 on the media
-        // engine's DEDICATED ProRes block — sidesteps the HEVC engine's
-        // ~430Mpx/s ceiling entirely, so native panels run at full 120fps.
-        // Proxy ≈330Mbps / LT ≈540Mbps at native 120 — the measured ~1Gbps
-        // usbmux wire takes either. 10-bit 4:2:2, so the HDR path's HLG
-        // buffers ride through losslessly. (`-prores lt` for the LT flavor.)
-        if let flavor = UserDefaults.standard.string(forKey: "prores"), isUSBTransport {
-            usingProRes = true
-            usingHEVC = false
-            let codec: CMVideoCodecType = flavor == "lt"
-                ? kCMVideoCodecType_AppleProRes422LT
-                : kCMVideoCodecType_AppleProRes422Proxy
-            VTCompressionSessionCreate(
-                allocator: nil,
-                width: Int32(width), height: Int32(height),
-                codecType: codec,
-                encoderSpecification: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: kCFBooleanTrue] as CFDictionary,
-                imageBufferAttributes: nil,
-                compressedDataAllocator: nil,
-                outputCallback: nil,
-                refcon: nil,
-                compressionSessionOut: &encoder
-            )
-            if let encoder {
-                VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
-                VTCompressionSessionPrepareToEncodeFrames(encoder)
-                Log.info("encoder ready: \(width)x\(height) ProRes-422-\(flavor == "lt" ? "LT" : "Proxy") (intra, no rate control) \(streamFps)fps quality=\(quality.rawValue)")
-                return
-            }
-            Log.info("ProRes session creation failed — falling back to the standard codecs")
-            usingProRes = false
-        }
+        // Session v3 permits only H.264 and HEVC Main10/HLG Annex-B media.
 
         // Low-latency rate control: the hardware encoder emits every frame
         // immediately instead of pipelining. (`-lowlatency NO` for A/B.)
@@ -1654,16 +2168,32 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
         let spec: CFDictionary? = lowLatency
             ? [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue] as CFDictionary
             : nil
-        // Codec choice:
-        //  - HDR rides HEVC Main10 (H.264 has no 10-bit hardware path here).
-        //  - SDR above 60fps ALSO needs HEVC: H.264 levels top out at 5.2
-        //    (~535M luma samples/s) and a native panel at 120fps exceeds
-        //    that — VideoToolbox then rejects EVERY frame with noErr +
-        //    nil buffer (measured: 2816×1940@120 H.264 = zero output).
-        //    HEVC levels reach 6.2 (8K120), so it has headroom for years.
-        //  - SDR at ≤60fps stays H.264: universally fast, proven default.
-        // If an HEVC session can't be created, demote to SDR H.264 (and 60).
-        usingHEVC = hdrActive || streamFps > 60
+        // Experimental low-latency path (`defaults write … prores proxy|lt`):
+        // intra-only ProRes 422 on the media engine's DEDICATED ProRes block —
+        // sidesteps the HEVC engine's ~30ms/frame Main10 latency. Canonical
+        // wire codec; USB transport only (bandwidth).
+        proresWire = nil
+        if isUSBTransport, let flavor = UserDefaults.standard.string(forKey: "prores") {
+            VTCompressionSessionCreate(
+                allocator: nil,
+                width: Int32(width), height: Int32(height),
+                codecType: flavor == "lt" ? kCMVideoCodecType_AppleProRes422LT
+                                          : kCMVideoCodecType_AppleProRes422Proxy,
+                encoderSpecification: nil,
+                imageBufferAttributes: nil,
+                compressedDataAllocator: nil,
+                outputCallback: nil,
+                refcon: nil,
+                compressionSessionOut: &encoder
+            )
+            if encoder != nil {
+                proresWire = flavor == "lt" ? "prores-422-lt" : "prores-422-proxy"
+            } else {
+                Log.info("ProRes session creation failed — falling back to the standard codecs")
+            }
+        }
+        // HDR rides HEVC Main10/HLG; SDR is always H.264.
+        usingHEVC = proresWire == nil && hdrActive
         if usingHEVC {
             VTCompressionSessionCreate(
                 allocator: nil,
@@ -1697,55 +2227,64 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             )
         }
         guard let encoder else {
-            Log.info("FATAL: VTCompressionSessionCreate failed")
-            return
+            throw NSError(domain: "MacSender", code: 5,
+                          userInfo: [NSLocalizedDescriptionKey: "VideoToolbox encoder creation failed"])
         }
-        // Low-latency settings: real-time, no B-frames, periodic keyframes.
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        if hdrActive {
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_HEVC_Main10_AutoLevel)
-            // BT.2100 HLG tags — written into the HEVC VUI so the receiver's
-            // decoder/display layer knows to render EDR. Matches the canonical
-            // HDR capture preset's output color space.
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCMFormatDescriptionColorPrimaries_ITU_R_2020)
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_TransferFunction, value: kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG)
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_YCbCrMatrix, value: kCMFormatDescriptionYCbCrMatrix_ITU_R_2020)
-        } else if usingHEVC {
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_HEVC_Main_AutoLevel)
+        // Configuration is split by consequence. Wire-contract properties
+        // (profile, HLG color signaling) decide what the receiver is told it
+        // is decoding — a rejection there invalidates the session before
+        // ScreenCaptureKit can start. Tuning properties are hardware-variant
+        // best effort: e.g. the low-latency rate controller rejects
+        // MaxFrameDelayCount with kVTPropertyNotSupportedErr on Apple
+        // Silicon, and that must not kill an otherwise valid session.
+        func tune(_ key: CFString, _ value: CFTypeRef) {
+            let status = VTSessionSetProperty(encoder, key: key, value: value)
+            if status != noErr {
+                Log.info("encoder tuning \(key) rejected: \(status)")
+            }
+        }
+        tune(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue)
+        tune(kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse)
+        tune(kVTCompressionPropertyKey_MaxKeyFrameInterval, 3600 as CFNumber)
+        tune(kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 60 as CFNumber)
+        tune(kVTCompressionPropertyKey_MaxFrameDelayCount, 0 as CFNumber)
+
+        var contractStatuses: [OSStatus] = []
+        if proresWire != nil {
+            // ProRes is intra-only on the dedicated block: no profile, HLG
+            // color tagging, or rate-control contract properties apply.
+        } else if hdrActive {
+            contractStatuses += [
+                VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_HEVC_Main10_AutoLevel),
+                VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ColorPrimaries, value: kCMFormatDescriptionColorPrimaries_ITU_R_2020),
+                VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_TransferFunction, value: kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG),
+                VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_YCbCrMatrix, value: kCMFormatDescriptionYCbCrMatrix_ITU_R_2020),
+            ]
         } else {
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
+            contractStatuses.append(VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ProfileLevel,
+                                                value: usingHEVC ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel))
         }
-        // No periodic IDRs: each one is a bitrate spike → transmit-time hiccup.
-        // TCP never loses data, and we force a keyframe on reconnect/drop.
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 3600 as CFNumber)
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 60 as CFNumber)
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
-        // 120Hz halves the per-frame budget — give the rate controller 50%
-        // more headroom so high-motion 120fps doesn't smear. (HEVC's better
-        // quality-per-bit absorbs the 10-bit overhead on the HDR path.)
         let bitrate = streamFps > 60 ? quality.bitrate(usb: isUSBTransport) * 3 / 2
                                      : quality.bitrate(usb: isUSBTransport)
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
-        if !isUSBTransport {
-            // A non-usbmux TCP link (WiFi) rides a marginal radio; video still
-            // shares its TCP connection with control (audio has its own).
-            // AverageBitRate is only a long-term target, so a
-            // complex-frame burst floods the link, drops packets, and TCP
-            // head-of-line blocking then freezes the WHOLE multiplex for the
-            // retransmit RTO — the periodic ~30–90s stalls seen in the logs
-            // (rtt 6ms→400-1100ms, everything spiking together, load-
-            // correlated). A hard DataRateLimit caps bytes over a short
-            // window so no single burst can saturate the link. USB has
-            // ~1Gbps of headroom and needs no cap.
-            let capBytesPerSec = bitrate / 8 * 5 / 4   // 1.25× average, 1s window
-            VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_DataRateLimits,
-                                 value: [NSNumber(value: capBytesPerSec), NSNumber(value: 1.0)] as CFArray)
+        if proresWire == nil {
+            tune(kVTCompressionPropertyKey_AverageBitRate, bitrate as CFNumber)
+            if !isUSBTransport {
+                let capBytesPerSec = bitrate / 8 * 5 / 4
+                tune(kVTCompressionPropertyKey_DataRateLimits,
+                     [NSNumber(value: capBytesPerSec), NSNumber(value: 1.0)] as CFArray)
+            }
         }
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: streamFps as CFNumber)
-        VTSessionSetProperty(encoder, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
-        VTCompressionSessionPrepareToEncodeFrames(encoder)
-        Log.info("encoder ready: \(width)x\(height) \(hdrActive ? "HEVC-Main10-HLG" : usingHEVC ? "HEVC-Main" : "H.264") \(bitrate / 1_000_000)Mbps \(streamFps)fps quality=\(quality.rawValue) lowLatencyRC=\(lowLatency)")
+        tune(kVTCompressionPropertyKey_ExpectedFrameRate, streamFps as CFNumber)
+        tune(kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, kCFBooleanTrue)
+        contractStatuses.append(VTCompressionSessionPrepareToEncodeFrames(encoder))
+        guard contractStatuses.allSatisfy({ $0 == noErr }) else {
+            Log.info("encoder contract configuration rejected: \(contractStatuses)")
+            VTCompressionSessionInvalidate(encoder)
+            self.encoder = nil
+            throw NSError(domain: "MacSender", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "VideoToolbox encoder configuration failed"])
+        }
+        Log.info("encoder ready: \(width)x\(height) \(proresWire.map { "ProRes-422-\($0.hasSuffix("-lt") ? "LT" : "Proxy") (intra, no rate control)" } ?? (hdrActive ? "HEVC-Main10-HLG" : usingHEVC ? "HEVC-Main" : "H.264")) \(bitrate / 1_000_000)Mbps \(streamFps)fps quality=\(quality.rawValue) lowLatencyRC=\(lowLatency)")
     }
 
     // MARK: - Capture callback
@@ -1761,12 +2300,57 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
               CMSampleBufferIsValid(sampleBuffer),
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         else { return }
-        handleCapturedFrame(pixelBuffer, pts: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        framePipeline.submitSCK(pixelBuffer, pts: pts)
     }
 
-    /// Shared by both capture backends (SCK sample buffers and the
-    /// CGDisplayStream EDR path) — gates, pacing, then encode.
-    private func handleCapturedFrame(_ pixelBuffer: CVPixelBuffer, pts: CMTime) {
+    /// Queue-confined admission shared by SCK and CGDisplayStream.  CG calls
+    /// this before IOSurface wrapping or synchronous GPU conversion.
+    private func reserveFrameAdmission(pts: CMTime) -> FrameAdmission? {
+        let now = Date()
+        let state = VideoAdmissionPolicy.State(
+            stopped: stopped,
+            connected: connectionReady,
+            generationCurrent: true,
+            encoderConfigured: encoder != nil,
+            pendingEncodes: pendingEncodes,
+            pendingAdmissions: pendingFrameAdmissions,
+            pendingSends: pendingSends,
+            maxPendingSends: maxPendingSends,
+            lastAdmission: lastEncodedAt,
+            now: now,
+            // Half the nominal interval: tolerates capture jitter (a strict
+            // 1/fps floor beat against CGDisplayStream cadence and shed real
+            // frames) while still refusing >2x-rate floods.
+            minimumInterval: 0.5 / Double(streamFps))
+        guard VideoAdmissionPolicy.evaluate(state) else {
+            if state.pendingSends >= state.maxPendingSends { dropsBySends += 1 }
+            if state.pendingEncodes + state.pendingAdmissions >= 3 { dropsByInflight += 1 }
+            if state.now.timeIntervalSince(state.lastAdmission) < state.minimumInterval { dropsByPacing += 1 }
+            dropsThisWindow += 1
+            dropsTotal += 1
+            return nil
+        }
+        lastEncodedAt = now
+        pendingFrameAdmissions += 1
+        return FrameAdmission(generation: dialGeneration)
+    }
+
+    private func cancelFrameAdmission(_ admission: FrameAdmission) {
+        guard admission.generation == dialGeneration else { return }
+        pendingFrameAdmissions = max(0, pendingFrameAdmissions - 1)
+        dropsThisWindow += 1
+        dropsTotal += 1
+        needsKeyframe = true
+    }
+
+    private func handleAdmittedFrame(_ pixelBuffer: CVPixelBuffer, pts: CMTime,
+                                     admission: FrameAdmission) {
+        guard admission.generation == dialGeneration, !stopped else {
+            cancelFrameAdmission(admission)
+            return
+        }
+        pendingFrameAdmissions = max(0, pendingFrameAdmissions - 1)
         lastPixelBuffer = pixelBuffer
         lastCaptureAt = Date()
         capFrames += 1
@@ -1774,42 +2358,6 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             diagFrameCounter += 1
             if diagFrameCounter % 240 == 1 { logCapturePeak(pixelBuffer) }
         }
-
-        // No receiver, or the socket is backed up: skip this frame entirely.
-        guard connectionReady else { return }
-        if pendingSends > maxPendingSends {
-            // Pre-encode skip: the P-frame chain stays valid — the encoder
-            // references its own last output, and TCP delivers every encoded
-            // frame. Forcing an IDR here (as this path once did) turned each
-            // drop into a multi-hundred-KB keyframe, which backed the socket
-            // up further — a drop→IDR→drop spiral at 120fps (measured: fps
-            // collapsing to 0 while capFps held 80+).
-            dropsThisWindow += 1
-            dropsTotal += 1
-            return
-        }
-
-        // Encoder saturation: at native res a single HEVC encode takes
-        // ~13ms (~79fps ceiling), so 120fps input queues INSIDE VideoToolbox
-        // — pure latency (measured: cap→socket 62ms under load vs 14ms
-        // idle, exactly ~5 queued frames). Keep at most 2 in flight and
-        // skip the rest; delivered fps = whatever the encoder sustains,
-        // at ~1 frame of latency instead of 5.
-        if pendingEncodes >= 2 {
-            dropsThisWindow += 1
-            dropsTotal += 1
-            return
-        }
-
-        // Pace to the negotiated rate: mirror mode can capture a 120Hz Mac
-        // panel for a 60Hz receiver. Skipping before the encoder keeps the
-        // P-frame chain intact (the encoder only references frames it saw).
-        // 2ms slack absorbs vsync jitter so a clean 60→60 stream isn't cut.
-        if Date().timeIntervalSince(lastEncodedAt) < 1.0 / Double(streamFps) - 0.002 {
-            return
-        }
-        lastEncodedAt = Date()
-
         encode(pixelBuffer, pts: pts)
     }
 
@@ -1904,12 +2452,14 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
     private func encode(_ pixelBuffer: CVPixelBuffer, pts: CMTime) {
         guard let encoder else { return }
         let capturedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let submitted = Date()
         var frameProperties: CFDictionary?
-        if needsKeyframe {
+        let requestingKeyframe = needsKeyframe
+        if requestingKeyframe {
             frameProperties = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue!] as CFDictionary
-            needsKeyframe = false
         }
         pendingEncodes += 1
+        let generation = dialGeneration
         let status = VTCompressionSessionEncodeFrame(
             encoder,
             imageBuffer: pixelBuffer,
@@ -1919,85 +2469,160 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             infoFlagsOut: nil
         ) { [weak self] status, _, buffer in
             guard let self else { return }
-            // The handler runs on VideoToolbox's thread; counter lives on `queue`.
-            self.queue.async { self.pendingEncodes = max(0, self.pendingEncodes - 1) }
-            if status != noErr || buffer == nil {
-                // Encode failures must not be silent: an encoder/property
-                // mismatch that rejects EVERY frame looks exactly like a
-                // healthy-but-idle pipeline in the other counters (#diag).
-                self.encodeFailures += 1
-                if self.encodeFailures % 120 == 1 {
-                    Log.info("encode output failed: status=\(status) buffer=\(buffer != nil) (\(self.encodeFailures) total)")
+            // The handler runs on VideoToolbox's thread; every mutable sender
+            // field, including keyframe demand, is updated on its executor.
+            self.queue.async {
+                guard generation == self.dialGeneration else { return }
+                self.pendingEncodes = max(0, self.pendingEncodes - 1)
+                if self.diagEnabled {
+                    self.encodeLatenciesMs.append(Date().timeIntervalSince(submitted) * 1000)
                 }
-                return
-            }
-            guard let buffer else { return }
-            if self.usingProRes {
-                self.sendProRes(buffer, capturedAtMs: capturedAtMs)
-                return
-            }
-            if let data = self.annexB(from: buffer) {
-                // Telemetry prefix before the first start code — the receiver
-                // parses it and skips to the video payload. cap = capture time,
-                // snd = handoff to the socket (so cap→snd ≈ encode duration);
-                // hevc flags the codec so the receiver picks the right parser.
-                let sndMs = Int64(Date().timeIntervalSince1970 * 1000)
-                let codecTag = self.usingHEVC ? ",\"hevc\":1" : ""
-                var framed = Data("{\"cap\":\(capturedAtMs),\"snd\":\(sndMs)\(codecTag)}".utf8)
-                framed.append(data)
-                self.sendFramed(framed)
-            } else if self.encodeFailures % 120 == 0 {
-                self.encodeFailures += 1
-                Log.info("annexB conversion returned nil")
+                guard status == noErr, let buffer else {
+                    if requestingKeyframe { self.needsKeyframe = true }
+                    self.encodeFailures += 1
+                    if self.encodeFailures % 120 == 1 {
+                        Log.info("encode output failed: status=\(status) buffer=false (\(self.encodeFailures) total)")
+                    }
+                    return
+                }
+                if self.proresWire != nil {
+                    guard let framed = self.proresPayload(from: buffer, capturedAtMs: capturedAtMs) else {
+                        if requestingKeyframe { self.needsKeyframe = true }
+                        self.encodeFailures += 1
+                        Log.info("ProRes framing rejected")
+                        return
+                    }
+                    if self.sendFramed(framed) {
+                        self.needsKeyframe = false
+                    } else if requestingKeyframe {
+                        self.needsKeyframe = true
+                    }
+                    return
+                }
+                guard let data = self.annexB(from: buffer) else {
+                    if requestingKeyframe { self.needsKeyframe = true }
+                    self.encodeFailures += 1
+                    Log.info("annexB conversion returned nil")
+                    return
+                }
+                let keyframe = self.isKeyframe(buffer)
+                guard let framed = self.videoPayload(
+                    annexB: data, capturedAtMs: capturedAtMs, keyframe: keyframe) else {
+                    if requestingKeyframe { self.needsKeyframe = true }
+                    self.encodeFailures += 1
+                    Log.info("video framing rejected")
+                    return
+                }
+                if self.sendFramed(framed) {
+                    self.needsKeyframe = false
+                } else if requestingKeyframe {
+                    self.needsKeyframe = true
+                }
             }
         }
         if status != noErr {
-            // Call failed synchronously — the handler never fires. max(0,·)
-            // keeps a rare double-decrement from wedging the gate shut.
+            // Call failed synchronously — the handler never fires.
             pendingEncodes = max(0, pendingEncodes - 1)
+            if requestingKeyframe { needsKeyframe = true }
         }
     }
 
-    // MARK: - ProRes wire envelope
-    //
-    // [PRRS][4B BE meta length][meta JSON][raw ProRes frame]
-    // Every ProRes frame is self-contained (intra-only); the meta carries
-    // the dimensions/codec/color info the receiver needs to build its
-    // CMVideoFormatDescription, plus the usual cap/snd telemetry.
-    private func sendProRes(_ sample: CMSampleBuffer, capturedAtMs: Int64) {
-        guard let block = CMSampleBufferGetDataBuffer(sample),
-              let fmt = CMSampleBufferGetFormatDescription(sample) else { return }
+    // ProRes wire framing: same canonical inner frame as Annex-B video,
+    // but the media portion is exactly one raw ProRes frame. The telemetry
+    // carries the coded dimensions so the receiver can build its
+    // CMVideoFormatDescription without parsing the bitstream.
+    private func proresPayload(from sample: CMSampleBuffer, capturedAtMs: Int64) -> Data? {
+        guard let wire = proresWire,
+              let block = CMSampleBufferGetDataBuffer(sample),
+              let fmt = CMSampleBufferGetFormatDescription(sample) else { return nil }
         var len = 0, total = 0
         var ptr: UnsafeMutablePointer<Int8>?
         guard CMBlockBufferGetDataPointer(block, atOffset: 0,
                 lengthAtOffsetOut: &len, totalLengthOut: &total,
-                dataPointerOut: &ptr) == noErr, let ptr else { return }
-        let dims = CMVideoFormatDescriptionGetDimensions(fmt)
-        let codec = CMFormatDescriptionGetMediaSubType(fmt)
-        let sndMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let meta = "{\"cap\":\(capturedAtMs),\"snd\":\(sndMs),\"codec\":\(codec),\"w\":\(dims.width),\"h\":\(dims.height),\"hdr\":\(hdrActive ? 1 : 0)}"
-        let metaData = Data(meta.utf8)
-        var framed = Data(capacity: 8 + metaData.count + total)
-        framed.append(contentsOf: [0x50, 0x52, 0x52, 0x53])   // "PRRS"
-        var metaLen = UInt32(metaData.count).bigEndian
-        framed.append(Data(bytes: &metaLen, count: 4))
-        framed.append(metaData)
-        // The data pointer only covers `len`; copy from the block buffer when
-        // it isn't contiguous (len < total) rather than reading OOB off ptr.
+                dataPointerOut: &ptr) == noErr, let ptr, total >= 8 else { return nil }
+        var frame: Data
         if len == total {
-            framed.append(Data(bytes: ptr, count: total))
+            frame = Data(bytes: ptr, count: total)
         } else {
-            var frame = Data(count: total)
+            frame = Data(count: total)
             let ok = frame.withUnsafeMutableBytes {
                 CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: total,
                                            destination: $0.baseAddress!) == noErr
             }
-            guard ok else { return }
-            framed.append(frame)
+            guard ok else { return nil }
         }
-        sendFramed(framed)
+        // The wire requires the leading big-endian frame size to equal the
+        // media length exactly and 'icpf' at bytes 4..7 — trim block-buffer
+        // padding, fail closed on anything else.
+        let declared = Int(UInt32(bigEndian: frame.prefix(4).withUnsafeBytes {
+            $0.loadUnaligned(as: UInt32.self)
+        }))
+        guard declared >= 8, declared <= frame.count,
+              frame[frame.startIndex + 4 ..< frame.startIndex + 8].elementsEqual("icpf".utf8) else { return nil }
+        frame = frame.prefix(declared)
+        let dims = CMVideoFormatDescriptionGetDimensions(fmt)
+        let telemetry = Data("{\"codec\":\"\(wire)\",\"h\":\(dims.height),\"hdr\":\(hdrActive),\"keyframe\":true,\"t\":\(Double(capturedAtMs) / 1_000),\"type\":\"video\",\"w\":\(dims.width)}".utf8)
+        guard (1...4_096).contains(telemetry.count) else { return nil }
+        var telemetryLength = UInt32(telemetry.count).bigEndian
+        var payload = Data(bytes: &telemetryLength, count: 4)
+        payload.append(telemetry)
+        payload.append(frame)
+        guard payload.count <= ProtocolParser.videoDataCap else { return nil }
+        return payload
     }
 
+    private func videoPayload(annexB: Data, capturedAtMs: Int64, keyframe: Bool) -> Data? {
+        let startCode3 = Data([0, 0, 1])
+        let startCode4 = Data([0, 0, 0, 1])
+        guard annexB.starts(with: startCode3) || annexB.starts(with: startCode4) else { return nil }
+
+        var nalStarts: [Data.Index] = []
+        var index = annexB.startIndex
+        while index < annexB.endIndex {
+            let remaining = annexB.distance(from: index, to: annexB.endIndex)
+            if remaining >= 4, annexB[index] == 0, annexB[index + 1] == 0,
+               annexB[index + 2] == 0, annexB[index + 3] == 1 {
+                nalStarts.append(index + 4)
+                index += 4
+            } else if remaining >= 3, annexB[index] == 0, annexB[index + 1] == 0,
+                      annexB[index + 2] == 1 {
+                nalStarts.append(index + 3)
+                index += 3
+            } else {
+                index += 1
+            }
+        }
+        guard !nalStarts.isEmpty else { return nil }
+
+        var h264Types = Set<UInt8>()
+        var hevcTypes = Set<UInt8>()
+        for start in nalStarts where start < annexB.endIndex {
+            let byte = annexB[start]
+            h264Types.insert(byte & 0x1F)
+            hevcTypes.insert((byte >> 1) & 0x3F)
+        }
+        let hevc = usingHEVC
+        if hevc {
+            guard !hevcTypes.isEmpty else { return nil }
+            let hasIRAP = hevcTypes.contains { (16...23).contains($0) }
+            guard keyframe ? hevcTypes.isSuperset(of: [32, 33, 34]) && hasIRAP : !hasIRAP else { return nil }
+        } else {
+            guard hevcTypes.isDisjoint(with: [32, 33, 34]),
+                  !h264Types.isEmpty else { return nil }
+            let hasIDR = h264Types.contains(5)
+            guard keyframe ? h264Types.isSuperset(of: [7, 8]) && hasIDR : !hasIDR else { return nil }
+        }
+
+        let codec = hevc ? "hevc-main10-hlg" : "h264"
+        let telemetry = Data("{\"codec\":\"\(codec)\",\"keyframe\":\(keyframe),\"t\":\(Double(capturedAtMs) / 1_000),\"type\":\"video\"}".utf8)
+        guard (1...4_096).contains(telemetry.count) else { return nil }
+        var telemetryLength = UInt32(telemetry.count).bigEndian
+        var payload = Data(bytes: &telemetryLength, count: 4)
+        payload.append(telemetry)
+        payload.append(annexB)
+        guard payload.count <= ProtocolParser.videoDataCap else { return nil }
+        return payload
+    }
     // MARK: - H.264/HEVC -> Annex B
 
     private func annexB(from sample: CMSampleBuffer) -> Data? {
@@ -2025,24 +2650,25 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                       fmt, parameterSetIndex: 0, parameterSetPointerOut: &psPtr,
                       parameterSetSizeOut: &psLen, parameterSetCountOut: &count,
                       nalUnitHeaderLengthOut: nil)
-            if countStatus == noErr {
-                for i in 0..<count {
-                    psPtr = nil
-                    psLen = 0
-                    let status = hevc
-                        ? CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
-                              fmt, parameterSetIndex: i, parameterSetPointerOut: &psPtr,
-                              parameterSetSizeOut: &psLen, parameterSetCountOut: nil,
-                              nalUnitHeaderLengthOut: nil)
-                        : CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-                              fmt, parameterSetIndex: i, parameterSetPointerOut: &psPtr,
-                              parameterSetSizeOut: &psLen, parameterSetCountOut: nil,
-                              nalUnitHeaderLengthOut: nil)
-                    if status == noErr, let psPtr {
-                        out.append(contentsOf: startCode)
-                        out.append(Data(bytes: psPtr, count: psLen))
-                    }
-                }
+            guard countStatus == noErr, count == (hevc ? 3 : 2) else {
+                // A reconnect keyframe must carry every decoder parameter set.
+                return nil
+            }
+            for i in 0..<count {
+                psPtr = nil
+                psLen = 0
+                let status = hevc
+                    ? CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+                          fmt, parameterSetIndex: i, parameterSetPointerOut: &psPtr,
+                          parameterSetSizeOut: &psLen, parameterSetCountOut: nil,
+                          nalUnitHeaderLengthOut: nil)
+                    : CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                          fmt, parameterSetIndex: i, parameterSetPointerOut: &psPtr,
+                          parameterSetSizeOut: &psLen, parameterSetCountOut: nil,
+                          nalUnitHeaderLengthOut: nil)
+                guard status == noErr, let psPtr, psLen > 0 else { return nil }
+                out.append(contentsOf: startCode)
+                out.append(Data(bytes: psPtr, count: psLen))
             }
         }
         // Convert AVCC (4-byte length-prefixed NALUs) to Annex B start codes.
@@ -2095,23 +2721,34 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
             Log.info("session payload rejected before send: \(payload.count) bytes")
             return
         }
-        var header = UInt32(payload.count).bigEndian
-        var frame = Data(bytes: &header, count: 4)
-        frame.append(payload)
+        let frame: Data
+        if isUSBTransport {
+            guard let protected = usbPrimaryRecordState?.frame(payload, cap: 1 << 20) else { return }
+            frame = protected
+        } else {
+            var header = UInt32(payload.count).bigEndian
+            frame = Data(bytes: &header, count: 4) + payload
+        }
         connection.send(content: frame, completion: .contentProcessed { _ in })
     }
 
-    private func sendFramed(_ payload: Data) {
-        guard let connection, connectionReady else { return }
+    @discardableResult
+    private func sendFramed(_ payload: Data) -> Bool {
+        guard let connection, connectionReady else { return false }
         do {
             try ProtocolParser.validatePayload(payload, expectedLength: payload.count, kind: .videoData)
         } catch {
             Log.info("video payload rejected before send: \(payload.count) bytes")
-            return
+            return false
         }
-        var header = UInt32(payload.count).bigEndian
-        var frame = Data(bytes: &header, count: 4)
-        frame.append(payload)
+        let frame: Data
+        if isUSBTransport {
+            guard let protected = usbPrimaryRecordState?.frame(payload, cap: 16 << 20) else { return false }
+            frame = protected
+        } else {
+            var header = UInt32(payload.count).bigEndian
+            frame = Data(bytes: &header, count: 4) + payload
+        }
         pendingSends += 1
         connection.send(content: frame, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
@@ -2139,6 +2776,7 @@ final class MacSender: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Se
                 Task { @MainActor in self.onStats?(frames, mbps) }
             }
         })
+        return true
     }
 
     // MARK: - Helpers

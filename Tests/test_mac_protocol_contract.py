@@ -6,7 +6,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_YML = (ROOT / "project.yml").read_text(encoding="utf-8")
-PBXPROJ = (ROOT / "OpenSidecar.xcodeproj" / "project.pbxproj").read_text(encoding="utf-8")
 TARGETS_YML = PROJECT_YML.split("\ntargets:\n", 1)[1]
 PAIRING = (ROOT / "Mac" / "Pairing.swift").read_text(encoding="utf-8")
 SENDER = (ROOT / "Mac" / "MacSender.swift").read_text(encoding="utf-8")
@@ -37,9 +36,12 @@ def swift_function(source: str, name: str) -> str:
     return source[start:] if end == -1 else source[start:end]
 
 def swift_private_function(source: str, name: str) -> str:
-    start = source.index(f"private func {name}")
-    end = source.find("\n    private func ", start + 1)
-    return source[start:] if end == -1 else source[start:end]
+    match = re.search(rf"private (?:static )?func {re.escape(name)}\b", source)
+    if not match:
+        raise ValueError(f"missing private function {name}")
+    start = match.start()
+    end = re.search(r"\n    private (?:static )?func ", source[start + 1:])
+    return source[start:] if end is None else source[start:start + 1 + end.start()]
 
 
 class MacProtocolContractTests(unittest.TestCase):
@@ -65,35 +67,118 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn('base64(try string(object, "acceptProof"), bytes: 32)', session_accept)
         self.assertIn('try int(object, "v") == SessionCrypto.version', channel_open)
         self.assertIn('base64(try string(object, "proof"), bytes: 32)', channel_open)
+    def test_server_hello_is_transport_explicit_and_wifi_seeded(self):
+        server_hello = swift_function(PARSER, "parseServerHello")
+        self.assertIn("transport: Transport", server_hello)
+        self.assertIn('let required = transport == .wifi ? base.union(["wifiSessionSeed"]) : base', server_hello)
+        self.assertIn('try string(object, "transport") == (transport == .wifi ? "wifi" : "usb")', server_hello)
+        self.assertIn('transport == .wifi ? try base64(try string(object, "wifiSessionSeed"), bytes: 32) : nil', server_hello)
+        self.assertIn("wifiSessionSeed: seed", server_hello)
+        self.assertNotIn("usbSessionSeed", server_hello)
+
+    def test_uint64_wire_fields_are_strict_and_nonzero_where_required(self):
+        session_accept = swift_function(PARSER, "parseSessionAccept")
+        channel_open = swift_function(PARSER, "parseChannelOpen")
+        parse_control = swift_function(PARSER, "parseControl")
+        uint64 = swift_private_function(PARSER, "uint64")
+        self.assertIn('guard try uint64(object, "generation") > 0 else', session_accept)
+        self.assertIn('guard try uint64(object, "generation") > 0 else', channel_open)
+        self.assertIn('case ping(id: UInt64, t: Double)', PARSER)
+        self.assertIn('dropped: try uint64(object, "dropped")', parse_control)
+        self.assertIn('id: try uint64(object, "id")', PARSER)
+        self.assertIn('let max = String(UInt64.max)', uint64)
+        self.assertIn('let value = UInt64(digits)', uint64)
+
+    def test_video_payload_matches_canonical_framing_codec_and_keyframe_contract(self):
+        video_payload = swift_private_function(SENDER, "videoPayload")
+        setup_encoder = swift_private_function(SENDER, "setupEncoder")
+        encode = swift_private_function(SENDER, "encode")
+        control = swift_private_function(SENDER, "handleControl")
+        self.assertIn("annexB.starts(with: startCode3) || annexB.starts(with: startCode4)", video_payload)
+        self.assertIn('let codec = hevc ? "hevc-main10-hlg" : "h264"', video_payload)
+        self.assertIn('"{\\"codec\\":\\"\\(codec)\\",\\"keyframe\\":\\(keyframe)', video_payload)
+        self.assertIn("var telemetryLength = UInt32(telemetry.count).bigEndian", video_payload)
+        self.assertIn("payload.append(annexB)", video_payload)
+        self.assertIn("guard payload.count <= ProtocolParser.videoDataCap else { return nil }", video_payload)
+        self.assertIn("hevcTypes.isSuperset(of: [32, 33, 34]) && hasIRAP", video_payload)
+        self.assertIn("h264Types.isSuperset(of: [7, 8]) && hasIDR", video_payload)
+        self.assertIn("codecType: kCMVideoCodecType_HEVC", setup_encoder)
+        self.assertIn("codecType: kCMVideoCodecType_H264", setup_encoder)
+        self.assertIn("kVTProfileLevel_HEVC_Main10_AutoLevel", setup_encoder)
+        self.assertIn("kVTEncodeFrameOptionKey_ForceKeyFrame", encode)
+        self.assertIn("case .keyframe:", control)
+        self.assertIn("needsKeyframe = true", control)
+
+    def test_prores_payload_matches_canonical_prores_contract(self):
+        prores_payload = swift_private_function(SENDER, "proresPayload")
+        setup_encoder = swift_private_function(SENDER, "setupEncoder")
+        self.assertIn(
+            '"{\\"codec\\":\\"\\(wire)\\",\\"h\\":\\(dims.height),\\"hdr\\":\\(hdrActive),'
+            '\\"keyframe\\":true,\\"t\\":\\(Double(capturedAtMs) / 1_000),\\"type\\":\\"video\\",'
+            '\\"w\\":\\(dims.width)}"', prores_payload)
+        self.assertIn('elementsEqual("icpf".utf8)', prores_payload)
+        self.assertIn("guard payload.count <= ProtocolParser.videoDataCap else { return nil }", prores_payload)
+        # ProRes is USB-only and never carries rate-control or HLG contract properties.
+        self.assertIn('if isUSBTransport, let flavor = UserDefaults.standard.string(forKey: "prores")', setup_encoder)
+        self.assertIn("kCMVideoCodecType_AppleProRes422Proxy", setup_encoder)
+        self.assertIn("kCMVideoCodecType_AppleProRes422LT", setup_encoder)
+        self.assertIn("usingHEVC = proresWire == nil && hdrActive", setup_encoder)
 
     def test_accept_proof_is_fail_closed_before_binding(self):
         handler = swift_private_function(SENDER, "handleSessionAccept")
-        self.assertRegex(handler, r"ProtocolParser\.parseVerifiedSessionAccept")
+        self.assertRegex(handler, r"ProtocolParser\.consumeVerifiedSessionAccept")
         verified_accept = swift_function(PARSER, "parseVerifiedSessionAccept")
         self.assertIn("SessionCrypto.constantTimeEqual(proof, expected)", verified_accept)
         self.assertIn("guard SessionCrypto.constantTimeEqual(proof, expected) else", verified_accept)
         self.assertIn("pendingStreamSession = nil", handler)
-        self.assertLess(handler.index("parseVerifiedSessionAccept"), handler.index("pendingStreamSession = nil"))
+        self.assertLess(handler.index("consumeVerifiedSessionAccept"), handler.index("pendingStreamSession = nil"))
 
-    def test_project_yml_tracks_mac_source_tree_and_keeps_ios_separate(self):
+    def test_project_yml_tracks_mac_source_tree_and_ios_target_stays_retired(self):
         self.assertTrue(PARSER_PATH.exists(), "Mac/ProtocolParser.swift must be a tracked production source")
         mac_target = target_block("OpenSidecarMac")
-        ios_target = target_block("OpenSidecariOS")
         self.assertRegex(mac_target, r"sources:\n\s+- Mac\b")
-        self.assertRegex(ios_target, r"sources:\n\s+- iOS\b")
         self.assertNotRegex(mac_target, r"sources:\n(?:\s+- .+\n)*\s+- iOS\b")
-        self.assertNotRegex(ios_target, r"sources:\n(?:\s+- .+\n)*\s+- Mac\b")
+        # The GPL monorepo receiver was retired on 2026-07-22 (owner decision;
+        # closure receipt at artifacts/cross-repo/ios-retirement-closure.json).
+        # It must not silently return to the project or the working tree.
+        self.assertNotIn("OpenSidecariOS", PROJECT_YML)
+        self.assertFalse((ROOT / "iOS").exists(), "retired iOS/ tree must stay history-only")
+        closure = json.loads((ROOT / "artifacts/cross-repo/ios-retirement-closure.json").read_text(encoding="utf-8"))
+        self.assertEqual(closure["kind"], "photonport.r01-retirement-closure.v1")
+        self.assertEqual(closure["memberCount"], len(closure["members"]))
+        self.assertGreaterEqual(closure["memberCount"], 30)
 
     def test_parser_is_shared_by_adversarial_harness(self):
         self.assertIn("Mac/ProtocolParser.swift", swiftc_inputs(HARNESS_SCRIPT))
         self.assertIn("Tests/MacProtocolAdversarialHarness.swift", swiftc_inputs(HARNESS_SCRIPT))
 
-    def test_harness_calls_production_parser_without_policy_adapter(self):
-        self.assertNotRegex(HARNESS, r"\b(Adapter|PolicyAdapter)\b")
-        for symbol in ("ProtocolParser", "framedPayloadLength", "parsePairCommit", "parseSessionAccept", "parseChannelOpen"):
-            self.assertIn(symbol, HARNESS)
-        self.assertRegex(HARNESS, r"parseSessionAccept[\s\S]*?!= nil")
-
+    def test_harness_consumes_runtime_outcomes_without_a_facade(self):
+        self.assertNotIn("MacProtocolConsumers", HARNESS)
+        self.assertNotIn("MacProtocolConsumerResult", HARNESS)
+        self.assertIn("ProtocolConsumerOutcome", HARNESS)
+        self.assertIn("consumeServerHello", HARNESS)
+        self.assertIn("consumeVerifiedSessionAccept", HARNESS)
+        self.assertIn("receiveChallenge", HARNESS)
+        self.assertIn("AppliedProtocolBytes", PARSER)
+        self.assertIn("ProtocolConsumerOutcome", PAIRING)
+        self.assertIn("consumeControl", SENDER)
+    def test_matrix_case_invocation_uses_closed_operation_transcripts_and_observed_receipts(self):
+        self.assertIn('arguments.count == 4, arguments[0] == "case"', HARNESS)
+        self.assertIn('<canonical-full-case-json>', HARNESS)
+        self.assertIn('Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer", "semantic"]', HARNESS)
+        self.assertIn('Self.isClosedTranscript(operations)', HARNESS)
+        self.assertIn('Self.fixture(operations, index: 1, role: "setup")', HARNESS)
+        self.assertIn('Self.fixture(operations, index: 4, role: "baseline")', HARNESS)
+        self.assertIn('Self.fixture(operations, index: 7, role: "mutation")', HARNESS)
+        self.assertIn('sha256(caseData) == arguments[3]', HARNESS)
+        self.assertIn('sha256(transcript) == transcriptSha256', HARNESS)
+        self.assertIn('initialSnapshotSha256=', HARNESS)
+        self.assertIn('baselineSnapshotSha256=', HARNESS)
+        self.assertIn('finalSnapshotSha256=', HARNESS)
+        self.assertNotIn("MacProtocolRecipe", HARNESS)
+        self.assertNotIn("LEGACY_CASE", HARNESS)
+        self.assertIn('<canonical-full-case-json>', HARNESS_SCRIPT)
+        self.assertIn("consumeVerifiedSessionAccept", SENDER)
     def test_parser_caps_are_exact_and_legacy_mebibyte_receives_are_gone(self):
         for cap in ("65_535", "262_144", "16_777_216"):
             self.assertRegex(PARSER, rf"=\s*{cap}\b")
@@ -109,7 +194,6 @@ class MacProtocolContractTests(unittest.TestCase):
             "parseVerifiedSessionAccept": ("smallControlCap", "parseSessionAccept"),
             "parseSessionBusy": ("smallControlCap", "strictObject"),
             "parseChannelOpen": ("smallControlCap", "strictObject"),
-            "parseGenerationSnapshot": ("smallControlCap", "strictObject"),
             "parseControl": ("smallControlCap", "strictAnyObject"),
         }
         for name, (cap, first_parse_step) in guarded_entry_points.items():
@@ -130,7 +214,6 @@ class MacProtocolContractTests(unittest.TestCase):
             "parseVerifiedSessionAccept",
             "parseSessionBusy",
             "parseChannelOpen",
-            "parseGenerationSnapshot",
             "parseControl",
         ):
             self.assertIn(symbol, direct_caps)
@@ -173,56 +256,51 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn('\\"visible\\":false', cursor)
         self.assertNotIn('\\"cursorImg\\"', SENDER)
         self.assertNotRegex(cursor, r'\\"v\\"\s*:')
-    def test_persistent_generation_increment_is_checked_nonwrapping(self):
-        self.assertNotIn("generation &+= 1", PAIRING)
-        self.assertRegex(PAIRING, r"guard\s+!exhausted\s*,\s*generation\s*<\s*UInt64\.max\s+else")
-        self.assertRegex(PAIRING, r"exhausted\s*=\s*true")
-        self.assertRegex(PAIRING, r"generation\s*\+=\s*1")
+    def test_mac_has_no_receiver_generation_ownership(self):
+        mac_sources = (PARSER, PAIRING, SENDER)
+        for symbol in ("parseGenerationSnapshot", "GenerationStore", "SessionOwnershipState"):
+            self.assertEqual(sum(source.count(symbol) for source in mac_sources), 0, symbol)
 
-    def test_build_pin_values_and_mac_resource_inclusion_are_exact(self):
+    def test_build_pin_runtime_validation_accepts_bundled_tuple_and_rejects_stale_tuple(self):
+        expected = {
+            "schemaVersion": 1,
+            "protocolCommit": "acae6f5709d9aa3e0967e9bd88e507dc706836eb",
+            "compatibilityDigest": "72bd252b2ff888a96889ef3b578b6d864d6e937f30de6c5a3d6c6df0413e0ce2",
+            "normativeManifestDigest": "297a2caabd2850a3cf9e5e717bd938552c5252813efbe08668e88008157981ff",
+        }
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(
-            pin,
-            {
-                "schemaVersion": 1,
-                "protocolCommit": "2280861313b2363b673089637d1c1dc544e208d8",
-                "compatibilityDigest": "6e5e7faf195eff19fafcbdf388186641ef8f8c02586ae1d9f35df0bbc64ae3b3",
-                "normativeManifestDigest": "5265022d17d6a7c6ce962a8130b953fa0ae825b7284d66b2c5845ec7ee1388bc",
-            },
-        )
+        self.assertEqual(pin, expected)
         self.assertNotIn("protocolTag", pin)
 
-    def test_mac_resource_phase_contains_exact_protocol_build_pin(self):
-        target = re.search(
-            r"A5ECD29965E529F71D22F06C /\* OpenSidecarMac \*/ = \{(?P<body>.*?)\n\t\t\};",
-            PBXPROJ,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(target, "missing OpenSidecarMac native target")
-        resource_phase_ids = re.findall(
-            r"([A-F0-9]{24}) /\* Resources \*/", target.group("body")
-        )
-        self.assertEqual(len(resource_phase_ids), 1)
+        runtime_expected = {
+            "schemaVersion": int(re.search(r"schemaVersion:\s*(\d+)", SENDER).group(1)),
+            "protocolCommit": re.search(r'protocolCommit:\s*"([^"]+)"', SENDER).group(1),
+            "compatibilityDigest": re.search(r'compatibilityDigest:\s*"([^"]+)"', SENDER).group(1),
+            "normativeManifestDigest": re.search(r'normativeManifestDigest:\s*"([^"]+)"', SENDER).group(1),
+        }
+        self.assertEqual(pin, runtime_expected)
+        self.assertIn("guard pin == expected else", SENDER)
 
-        resource_phase = re.search(
-            rf"{resource_phase_ids[0]} /\* Resources \*/ = \{{(?P<body>.*?)\n\t\t\}};",
-            PBXPROJ,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(resource_phase, "missing OpenSidecarMac resources phase")
-        self.assertEqual(
-            re.findall(r"ProtocolBuildPin\.json in Resources", resource_phase.group("body")),
-            ["ProtocolBuildPin.json in Resources"],
-        )
+        stale = {**pin, "protocolCommit": "1f7d0ef052e13c3be3fe5c1658f002da0449d340"}
+        self.assertNotEqual(stale, runtime_expected)
+        self.assertIn("throw SessionAdmissionError.invalidProtocolBuildPin", SENDER)
+        self.assertIn('Bundle.main.url(forResource: "ProtocolBuildPin"', SENDER)
+        self.assertIn("try ProtocolBuildPin.validate(at: pinURL)", SENDER)
+
+    def test_mac_target_includes_protocol_build_pin_source_tree(self):
+        mac_target = target_block("OpenSidecarMac")
+        self.assertTrue(PIN_PATH.is_file(), "Mac/ProtocolBuildPin.json must be a production resource")
+        self.assertRegex(mac_target, r"sources:\n\s+- Mac\b")
+        self.assertNotRegex(mac_target, r"sources:\n(?:\s+- .+\n)*\s+- iOS\b")
 
     def test_inbound_frames_validate_before_receive_decode_or_dispatch(self):
         receive_control = swift_private_function(SENDER, "receiveControl")
-        self.assertLess(receive_control.index("ProtocolParser.framedPayloadLength"), receive_control.index("conn.receive(minimumIncompleteLength: len"))
+        self.assertLess(receive_control.index("ProtocolParser.framedPayloadLength"), receive_control.index("conn.receive(minimumIncompleteLength: bodyLength"))
         self.assertLess(receive_control.index("ProtocolParser.validatePayload"), receive_control.index("self.handleControl(payload)"))
 
         receive_audio_hello = swift_private_function(SENDER, "receiveAudioServerHello")
-        self.assertLess(receive_audio_hello.index("ProtocolParser.framedPayloadLength"), receive_audio_hello.index("conn.receive(minimumIncompleteLength: length"))
-        self.assertLess(receive_audio_hello.index("ProtocolParser.validatePayload"), receive_audio_hello.index("ProtocolParser.parseServerHello"))
+        self.assertLess(receive_audio_hello.index("ProtocolParser.framedPayloadLength"), receive_audio_hello.index("conn.receive(minimumIncompleteLength: bodyLength"))
+        self.assertLess(receive_audio_hello.index("ProtocolParser.validatePayload"), receive_audio_hello.index("ProtocolParser.consumeServerHello"))
 
         pairing_receive = swift_function(PAIRING, "receive")
         pairing_length = pairing_receive.index("ProtocolParser.framedPayloadLength")
@@ -252,16 +330,31 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("PairingWire.frame(open, kind: .audioControl)", send_audio_open)
 
     def test_begin_session_uses_canonical_phoneinfo_data_without_redecode(self):
-        phone_info = SENDER[SENDER.index("struct PhoneInfo: Decodable"):SENDER.index("/// How the sender reaches")]
-        self.assertIn("let deviceNonce: Data", phone_info)
-        self.assertIn("let usbSessionSeed: Data?", phone_info)
-        self.assertIn("self.deviceNonce = hello.deviceNonce", phone_info)
-        self.assertIn("self.usbSessionSeed = hello.usbSessionSeed", phone_info)
+        phone_info = SENDER[SENDER.index("struct PhoneInfo"):SENDER.index("/// How the sender reaches")]
+        self.assertNotIn("PhoneInfo: Decodable", phone_info)
+        self.assertNotIn("CodingKeys", phone_info)
+        self.assertNotIn("init(from decoder:", phone_info)
+        self.assertNotIn("JSONDecoder().decode(PhoneInfo.self", SENDER)
+        self.assertIn("init(_ hello: ProtocolParser.ServerHello)", phone_info)
+        self.assertIn("deviceNonce = hello.deviceNonce", phone_info)
+        self.assertIn("wifiSessionSeed = hello.wifiSessionSeed", phone_info)
+        self.assertNotIn("usbSessionSeed", phone_info)
 
         begin = swift_private_function(SENDER, "beginSessionHandshake")
         self.assertNotIn("Data(base64Encoded:", begin)
-        self.assertIn("let deviceNonce = info.deviceNonce", begin)
-        self.assertIn("let seed = info.usbSessionSeed", begin)
+        self.assertNotIn("JSONDecoder", begin)
+        self.assertNotIn("Mirror(", begin)
+        self.assertIn("switch sessionTransport", begin)
+        self.assertIn("consumedWifiSessionSeeds.insert(seed).inserted", begin)
+        self.assertIn("ikm = wifiPSK.key", begin)
+        self.assertIn("let binding = usbChannelBindingKey", begin)
+        self.assertIn("ikm = binding", begin)
+        self.assertNotIn("usbSessionSeed", begin)
+        self.assertNotIn("wifiPSK?.key, info.wifiSessionSeed", begin)
+
+        control = swift_private_function(SENDER, "handleControl")
+        self.assertIn("case .serverHello(let parsed):", control)
+        self.assertIn("let info = PhoneInfo(parsed)", control)
 
     def test_app_and_harness_compile_the_same_protocol_parser_without_clone(self):
         mac_target = target_block("OpenSidecarMac")
@@ -269,6 +362,22 @@ class MacProtocolContractTests(unittest.TestCase):
         self.assertIn("Mac/ProtocolParser.swift", swiftc_inputs(HARNESS_SCRIPT))
         self.assertNotRegex(HARNESS_SCRIPT, r"Tests/(?:ProtocolParser|ParserAdapter|.*Protocol.*Clone)\.swift")
         self.assertNotRegex(HARNESS, r"\b(?:ProtocolParserClone|ParserAdapter|PolicyAdapter|struct\s+ProtocolParser|enum\s+ProtocolParser)\b")
+    def test_mac_rejection_receipts_are_observed_operation_evidence_v3(self):
+        self.assertIn("VECTOR_RECEIPT v3", HARNESS)
+        for field in (
+            "transcriptSha256=", "initialSnapshotSha256=",
+            "baselineSnapshotSha256=", "finalSnapshotSha256=",
+            "baselineEffectsSha256=",
+        ):
+            self.assertIn(field, HARNESS)
+        self.assertNotIn("contextSha256", HARNESS)
+        self.assertNotIn("effectSha256", HARNESS)
+        self.assertNotIn("MacProtocolRecipe", HARNESS)
+        self.assertNotIn("mutationSha256=", HARNESS)
+        self.assertIn('Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer", "semantic"]', HARNESS)
+        self.assertIn('Self.isClosedTranscript(operations)', HARNESS)
+        self.assertIn('sha256(caseData) == arguments[3]', HARNESS)
+        self.assertIn('let baselineEffects = try! JSONSerialization.data(withJSONObject: [baselineEffect], options: [.sortedKeys])', HARNESS)
 
 
 if __name__ == "__main__":

@@ -2,12 +2,12 @@
   "argv": [
     "swiftc",
     "-O",
-    "/private/tmp/photonport-mac-src/Tests/MacInteropLauncher.swift",
-    "/private/tmp/photonport-mac-src/Mac/ProtocolParser.swift",
-    "/private/tmp/photonport-mac-src/Mac/Pairing.swift",
-    "/private/tmp/photonport-mac-src/Mac/Log.swift",
+    "/Users/ltg/workspace/opendisplay/Tests/MacInteropLauncher.swift",
+    "/Users/ltg/workspace/opendisplay/Mac/ProtocolParser.swift",
+    "/Users/ltg/workspace/opendisplay/Mac/Pairing.swift",
+    "/Users/ltg/workspace/opendisplay/Mac/Log.swift",
     "-o",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/build/mac-interop"
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-fi2mbt2x/build/mac-interop"
   ],
   "exitCode": 0,
   "label": "compile-mac-launcher",

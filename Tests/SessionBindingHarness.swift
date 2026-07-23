@@ -3,60 +3,36 @@ import Foundation
 @main
 struct SessionBindingHarness {
     static func main() {
-        var state = SessionOwnershipState()
-        let macA = "mac-a"
-        let macB = "mac-b"
-        precondition(SessionTiming.receiverOwnershipTimeout == 5)
         precondition(SessionTiming.macDisconnectGrace == 10)
-        precondition(SessionTiming.audioBeforePrimaryPending == 2)
         precondition(SessionTiming.handshakeTimeout == 5)
+        precondition(SessionTiming.livenessDeadline == 5)
         precondition(SessionTiming.busyRetryDelay == 5)
-        let firstNonce = Data(repeating: 0x11, count: 32)
-        let secondNonce = Data(repeating: 0x22, count: 32)
-        precondition(!state.consumeChannelNonce(
-            macInstallID: macA, generation: 1, nonce: firstNonce),
-            "audio must not bind before a primary lease exists")
 
-        guard case .accepted(let first) = state.claim(macInstallID: macA) else {
-            preconditionFailure("first primary claim must be accepted")
-        }
-        precondition(first.generation == 1)
-        precondition(state.authorizes(macInstallID: macA, generation: first.generation))
-        precondition(!state.authorizes(macInstallID: macB, generation: first.generation))
-        precondition(!state.authorizes(macInstallID: macA, generation: first.generation + 1))
+        let nonce = Data(repeating: 0x11, count: 32).base64EncodedString()
+        let seed = Data(repeating: 0x22, count: 32).base64EncodedString()
+        let common = "\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(nonce)\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true"
+        let wifi = Data("{\(common),\"transport\":\"wifi\",\"wifiSessionSeed\":\"\(seed)\"}".utf8)
+        let usb = Data("{\(common),\"transport\":\"usb\"}".utf8)
 
-        guard case .busy(let sameIdentityOwner) = state.claim(macInstallID: macA) else {
-            preconditionFailure("same identity must not open a second primary")
-        }
-        precondition(sameIdentityOwner == first)
-        guard case .busy(let crossIdentityOwner) = state.claim(macInstallID: macB) else {
-            preconditionFailure("cross identity must not preempt the receiver owner")
-        }
-        precondition(crossIdentityOwner == first)
+        precondition((try? ProtocolParser.parseServerHello(wifi, transport: .wifi)) != nil)
+        precondition((try? ProtocolParser.parseServerHello(usb, transport: .usb)) != nil)
+        precondition((try? ProtocolParser.parseServerHello(wifi, transport: .usb)) == nil)
+        precondition((try? ProtocolParser.parseServerHello(usb, transport: .wifi)) == nil)
+        let open = SessionOpen(
+            v: 3,
+            macInstallID: "00000000-1111-2222-3333-444444444444",
+            deviceInstallID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            macNonce: nonce,
+            primaryProof: Data(repeating: 0x44, count: 32).base64EncodedString()
+        )
+        precondition(PairingWire.frame(open) != nil)
+        print("VECTOR_RECEIPT consumer session-v3-frame:serverHelloWifi")
+        print("VECTOR_RECEIPT consumer session-v3-frame:serverHelloUsb")
+        print("VECTOR_RECEIPT consumer session-v3-frame:sessionOpenPayloadLength")
 
-        precondition(state.consumeChannelNonce(
-            macInstallID: macA, generation: first.generation, nonce: firstNonce))
-        precondition(!state.consumeChannelNonce(
-            macInstallID: macA, generation: first.generation, nonce: firstNonce))
-        precondition(!state.consumeChannelNonce(
-            macInstallID: macB, generation: first.generation, nonce: secondNonce))
-        precondition(!state.consumeChannelNonce(
-            macInstallID: macA, generation: first.generation + 1, nonce: secondNonce))
-
-        precondition(!state.release(macInstallID: macB, generation: first.generation))
-        precondition(!state.release(macInstallID: macA, generation: first.generation + 1))
-        precondition(state.release(macInstallID: macA, generation: first.generation))
-        precondition(state.active == nil)
-
-        guard case .accepted(let second) = state.claim(macInstallID: macB) else {
-            preconditionFailure("new primary must be accepted after release or timeout")
-        }
-        precondition(second.generation == first.generation + 1)
-        precondition(state.consumeChannelNonce(
-            macInstallID: macB, generation: second.generation, nonce: firstNonce),
-            "a nonce from an ended generation is valid only under the new generation proof")
-        precondition(!state.authorizes(macInstallID: macA, generation: first.generation))
-
-        print("session ownership harness passed")
+        let starting = SessionLifecycleState.starting(7)
+        precondition(SessionLifecycleState.mayTransition(from: starting, to: .connected(7)))
+        precondition(!SessionLifecycleState.mayTransition(from: starting, to: .connected(8)))
+        print("session sender binding harness passed")
     }
 }

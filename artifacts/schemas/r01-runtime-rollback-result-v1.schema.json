@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendisplay.example/schemas/r01-runtime-rollback-result-v1.schema.json",
+  "title": "R01 runtime rollback validation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "status", "sourceTuple", "device", "transport", "attestation", "trustPolicy", "artifacts", "failures"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "photonport.r01-runtime-rollback-result.v1"},
+    "status": {"enum": ["passed", "blocked", "failed"]},
+    "sourceTuple": {"$ref": "r01-runtime-rollback-request-v1.schema.json#/$defs/sourceTuple"},
+    "device": {"$ref": "r01-runtime-rollback-request-v1.schema.json#/$defs/device"},
+    "transport": {"$ref": "r01-runtime-rollback-request-v1.schema.json#/$defs/transport"},
+    "attestation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["receiptPath", "expectedKind"],
+      "properties": {
+        "receiptPath": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"},
+        "expectedKind": {"const": "photonport.r01-runtime-observation.v1"}
+      }
+    },
+    "trustPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {"mode": {"const": "production"}}
+    },
+    "artifacts": {
+      "type": "array", "minItems": 0, "maxItems": 4,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["artifactType", "path", "sha256", "size"],
+        "properties": {
+          "artifactType": {"enum": ["runtime-rollback-command", "watchdog-observation", "strict-parser-observation", "ping-observation"]},
+          "path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "failures": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "passed"}}}, "then": {"properties": {"failures": {"maxItems": 0}, "artifacts": {"minItems": 4}}}},
+    {"if": {"properties": {"status": {"enum": ["blocked", "failed"]}}}, "then": {"properties": {"failures": {"minItems": 1}}}}
+  ]
+}

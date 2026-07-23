@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/changed-pin-mac",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-fi2mbt2x/changed-pin-mac",
     "checkout",
     "--detach",
-    "addd2123a3813219ca4d49199b118ad503edc2e8"
+    "7a8210d3ea58ef8036d242e00bbd4d40dab9747d"
   ],
   "exitCode": 0,
   "label": "changed-pin-mac-checkout",
-  "stderr": "HEAD is now at addd212 Re-pin cross-repo evidence receipts to merged main\n",
+  "stderr": "HEAD is now at 7a8210d retire the preserved GPL monorepo iOS receiver (R01)\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

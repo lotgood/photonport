@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run and freeze the deterministic M3 cross-repo production interop matrix."""
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -11,12 +12,57 @@ from pathlib import Path
 
 VERIFIER = Path(__file__).resolve().with_name("verify-cross-repo-compatibility.py")
 EXPECTED_PIN_KEYS = {"schemaVersion", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"}
-SWIFT_EXECUTABLE_CASE_IDS = {"duplicate-json-key", "invalid-utf8-json", "bad-length-prefix", "oversize-frame"}
 NEGATIVE_FRAME = b"\x00\x00\x00\x00"
+VECTOR_RECEIPT_PREFIX = "VECTOR_RECEIPT "
+FIXTURE_FIELDS = {
+    "PairingExchangeState.receiveOpening": ("attemptID", "deviceInstallID", "now", "openingVersion", "macPublicKeyBase64", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "SessionAdmissionReducer.reduce": ("messageKind", "version", "sessionID", "macInstallID", "deviceInstallID", "macNonceBase64", "deviceNonceBase64", "proofBase64", "fixtureID"),
+    "SessionAdmissionReducer.reduceSessionOpen": ("version", "sessionID", "macInstallID", "deviceInstallID", "macNonceBase64", "deviceNonceBase64", "primaryProofBase64", "fixtureID"),
+    "SessionAdmissionReducer.reduceChannelOpen": ("version", "sessionID", "channel", "purpose", "nonceBase64", "proofBase64", "fixtureID"),
+    "ProtocolBuildPinReducer.reduce": ("pinVersion", "compatibilityDigest", "expectedCompatibilityDigest", "fixtureID"),
+    "RuntimeFrameReducer.reduce": ("headerBase64", "payloadBase64", "contextBase64", "frameType", "declaredLength", "cap", "fixtureID"),
+    "RuntimeMediaReducer.reduce": ("frameBase64", "codec", "width", "height", "isKeyframe", "supportsHDR", "cap", "fixtureID"),
+    "PrimaryLivenessReducer.reduce": ("event", "now", "lastAuthenticatedAt", "leaseSeconds", "fixtureID"),
+    "CredentialStoreReducer.reduce": ("credentialID", "accessibility", "synchronizable", "status", "policy", "fixtureID"),
+    "ManagedUSBPrefaceReducer.consumeMagic": ("magicBase64", "deadline", "now", "deviceInstallID", "purpose", "tokenBase64", "fixtureID"),
+    "ManagedUSBPrefaceReducer.bindInit": ("version", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "credentialBase64", "proofBase64", "now", "fixtureID"),
+    "ManagedUSBPrefaceReducer.bindFinish": ("version", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "bindingBase64", "proofBase64", "now", "fixtureID"),
+    "ManagedUSBKeyScheduleReducer.primary": ("bindingBase64", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "ManagedUSBKeyScheduleReducer.audio": ("bindingBase64", "macInstallID", "deviceInstallID", "purpose", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "ManagedUSBKeyScheduleReducer.wifiRejected": ("transport", "purpose", "bindingBase64", "macNonceBase64", "deviceNonceBase64", "fixtureID"),
+    "ManagedUSBRecordReducer.consume": ("recordState", "bodyBase64", "cap", "purpose", "sequence", "nonceBase64", "fixtureID"),
+}
+FIXTURE_FIELD_SHAPES = {
+    "SessionAdmissionReducer.reduce": (
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"],
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("generation",),
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("transport",),
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("transportSeedBase64",),
+        FIXTURE_FIELDS["SessionAdmissionReducer.reduce"] + ("reasonCode",),
+    ),
+    "ManagedUSBPrefaceReducer.consumeMagic": (
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.consumeMagic"],
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.consumeMagic"] + ("extraFrame",),
+    ),
+    "ManagedUSBPrefaceReducer.bindInit": (
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.bindInit"],
+        FIXTURE_FIELDS["ManagedUSBPrefaceReducer.bindInit"] + ("type",),
+    ),
+    "ManagedUSBRecordReducer.consume": (
+        FIXTURE_FIELDS["ManagedUSBRecordReducer.consume"],
+        FIXTURE_FIELDS["ManagedUSBRecordReducer.consume"] + ("tagBase64",),
+        FIXTURE_FIELDS["ManagedUSBRecordReducer.consume"] + ("direction",),
+    ),
+}
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+def canonical_case(case):
+    try:
+        return json.dumps(case, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("case is not canonicalizable") from exc
 
 
 def atomic_json(path, value):
@@ -86,6 +132,202 @@ def run(argv, cwd, log_dir, label, *, stdin=None):
         "logPath": "logs/" + log_path.name,
     }
 
+
+def canonical_bytes(value):
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("value is not canonicalizable") from exc
+
+
+def typed_fixture_hash(reducer, fixture):
+    """Validate a closed reducer-specific fixture and hash its canonical input."""
+    fields = FIXTURE_FIELDS.get(reducer)
+    shapes = FIXTURE_FIELD_SHAPES.get(reducer, (fields,))
+    if (
+        not isinstance(fixture, dict)
+        or fields is None
+        or set(fixture) not in ({"reducer", *shape} for shape in shapes)
+    ):
+        raise ValueError("transcript typed fixture fields are invalid")
+    if fixture["reducer"] != reducer:
+        raise ValueError("transcript typed fixture reducer is invalid")
+    return digest(canonical_bytes(fixture))
+
+
+def transcript_snapshot(reducer, state, time, accepted, effects):
+    return {
+        "reducer": reducer,
+        "state": state,
+        "time": time,
+        "acceptedInputs": list(accepted),
+        "effects": copy.deepcopy(effects),
+    }
+
+
+def derived_case_hashes(case):
+    """Replay a typed Protocol transcript without trusting its expected receipt."""
+    operations = case.get("operations")
+    order = [
+        "initialize", "consume", "advance-time", "clone-checkpoint",
+        "consume", "assert-accepted", "clone-checkpoint", "consume",
+        "assert-rejected",
+    ]
+    if not isinstance(operations, list) or [item.get("op") if isinstance(item, dict) else None for item in operations] != order:
+        raise ValueError("transcript operation order is invalid")
+    reducer, state, time, accepted, effects, checkpoints, last = case["reducer"], None, None, [], [], {}, None
+    initial = baseline = final = None
+    baseline_fixture = mutation_fixture = None
+    allowed = {"op", "state", "time", "role", "fixture", "to", "name", "checkpoint"}
+    for operation in operations:
+        if not isinstance(operation, dict) or set(operation) - allowed:
+            raise ValueError("transcript operation fields are invalid")
+        op = operation["op"]
+        if op == "initialize":
+            if set(operation) != {"op", "state", "time"} or state is not None or not isinstance(operation["state"], str) or not operation["state"] or operation["time"] != 0:
+                raise ValueError("transcript initialization is invalid")
+            state, time = operation["state"], 0
+        elif op == "advance-time":
+            if set(operation) != {"op", "to"} or not isinstance(operation["to"], int) or isinstance(operation["to"], bool) or operation["to"] <= time:
+                raise ValueError("transcript time advance is invalid")
+            time = operation["to"]
+            initial = transcript_snapshot(reducer, state, time, accepted, effects)
+        elif op == "clone-checkpoint":
+            if set(operation) != {"op", "name"} or operation["name"] not in {"pre-baseline", "post-baseline"} or operation["name"] in checkpoints:
+                raise ValueError("transcript checkpoint is invalid")
+            checkpoints[operation["name"]] = transcript_snapshot(reducer, state, time, accepted, effects)
+        elif op == "consume":
+            if set(operation) != {"op", "role", "fixture"} or operation["role"] not in {"setup", "baseline", "mutation"}:
+                raise ValueError("transcript consume is invalid")
+            fixture = operation["fixture"]
+            input_hash = typed_fixture_hash(reducer, fixture)
+            role = operation["role"]
+            if role == "mutation":
+                mutation_fixture = fixture
+                if len(accepted) != 2 or input_hash in accepted:
+                    raise ValueError("mutation aliases setup or baseline")
+                last = "rejected"
+                final = transcript_snapshot(reducer, state, time, accepted, effects)
+            else:
+                if (role == "setup" and accepted) or (role == "baseline" and len(accepted) != 1):
+                    raise ValueError("transcript setup/baseline sequence is invalid")
+                accepted.append(input_hash)
+                state += ":" + role
+                effects.append({"type": "accepted-event", "role": role, "inputSha256": input_hash})
+                last = "accepted"
+                if role == "baseline":
+                    baseline_fixture = fixture
+                    baseline = transcript_snapshot(reducer, state, time, accepted, effects)
+        elif op == "assert-accepted":
+            if set(operation) != {"op"} or last != "accepted":
+                raise ValueError("transcript baseline acceptance is invalid")
+        elif op == "assert-rejected":
+            if set(operation) != {"op", "checkpoint"} or operation["checkpoint"] != "post-baseline" or last != "rejected":
+                raise ValueError("transcript mutation rejection is invalid")
+            if checkpoints.get("pre-baseline") is None or checkpoints.get("post-baseline") is None or final != checkpoints["post-baseline"]:
+                raise ValueError("transcript rejection changed state")
+        else:
+            raise ValueError("transcript operation is unsupported")
+    semantic = case.get("semantic")
+    if (
+        not isinstance(semantic, dict)
+        or set(semantic) != {"changedField", "mutation"}
+        or not isinstance(semantic["changedField"], str)
+        or not semantic["changedField"]
+        or semantic["mutation"] != case.get("id")
+        or baseline_fixture is None
+        or mutation_fixture is None
+    ):
+        raise ValueError("transcript semantic contract is invalid")
+    changed = {
+        field for field in set(baseline_fixture) | set(mutation_fixture)
+        if baseline_fixture.get(field) != mutation_fixture.get(field)
+    }
+    if changed != {semantic["changedField"]}:
+        raise ValueError("transcript mutation does not match semantic changedField")
+    if initial is None or baseline is None or final is None:
+        raise ValueError("transcript snapshots are incomplete")
+    derived = {
+        "transcriptSha256": digest(canonical_bytes(operations)),
+        "initialSnapshotSha256": digest(canonical_bytes(initial)),
+        "baselineSnapshotSha256": digest(canonical_bytes(baseline)),
+        "finalSnapshotSha256": digest(canonical_bytes(final)),
+        "baselineEffectsSha256": digest(canonical_bytes(baseline["effects"][-1:])),
+    }
+    expected = case.get("expected")
+    if not isinstance(expected, dict) or set(expected) != {"transcriptSha256", "initialSnapshot", "baselineSnapshot", "finalSnapshot", "baselineEffects"}:
+        raise ValueError("Protocol expected transcript fields are invalid")
+    if (
+        expected["transcriptSha256"] != derived["transcriptSha256"]
+        or expected["initialSnapshot"] != initial
+        or expected["baselineSnapshot"] != baseline
+        or expected["finalSnapshot"] != final
+        or expected["baselineEffects"] != baseline["effects"][-1:]
+    ):
+        raise ValueError("Protocol transcript expectation drift: " + case["id"])
+    return derived
+
+
+def consumer_vector_receipts(stdout, platform, cases):
+    """Parse exact v3 observations and independently compare them to the local model."""
+    try:
+        lines = stdout.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValueError("consumer suite output is not valid UTF-8") from exc
+    expected = {case["id"]: case for case in cases if case["ownership"]["consumerPlatform"] == platform}
+    receipts = {}
+    for line in lines:
+        if not line.startswith(VECTOR_RECEIPT_PREFIX):
+            continue
+        fields = line.split(" ")
+        receipt_fields = ("caseId", "owner", "reducer", "stage", "transcriptSha256", "initialSnapshotSha256", "baselineSnapshotSha256", "finalSnapshotSha256", "baselineEffectsSha256", "outcome")
+        if len(fields) != len(receipt_fields) + 2 or fields[0:2] != ["VECTOR_RECEIPT", "v3"]:
+            raise ValueError("malformed v3 consumer receipt: " + line)
+        pairs = {}
+        for expected_field, field in zip(receipt_fields, fields[2:]):
+            key, separator, value = field.partition("=")
+            if key != expected_field or not separator or not value:
+                raise ValueError("v3 consumer receipt fields are not exact: " + line)
+            pairs[key] = value
+        case_id = pairs["caseId"]
+        if case_id in receipts:
+            raise ValueError("duplicate or aliased consumer receipt ID: " + case_id)
+        case = expected.get(case_id)
+        if case is None:
+            raise ValueError("consumer receipt is not owned by " + platform + ": " + case_id)
+        ownership = case["ownership"]
+        if pairs["owner"] != platform or pairs["stage"] != ownership["stage"] or pairs["reducer"] != case["reducer"]:
+            raise ValueError("consumer receipt symbol/owner/stage does not match transcript: " + case_id)
+        if pairs["outcome"] != "reject_and_fail_closed":
+            raise ValueError("consumer receipt outcome is not fail-closed: " + case_id)
+        derived = derived_case_hashes(case)
+        if any(pairs[field] != value for field, value in derived.items()):
+            raise ValueError("consumer observation does not match independently derived transcript: " + case_id)
+        receipts[case_id] = {"id": case_id, "ownership": ownership, "reducer": case["reducer"], **derived}
+    return receipts
+
+
+def empty_vector_evidence():
+    return {
+        "positive": {"producer": {}, "consumer": {}},
+        "negative": {"producer": {}, "consumer": {}},
+    }
+
+
+def evidence_ids(evidence, kind, role, case_ids):
+    return [case_id for case_id in case_ids if evidence[kind][role].get(case_id)]
+
+
+def record_suite_vector_evidence(evidence, consumer_platform, passed, stdout, negative_cases):
+    if not passed or consumer_platform is None:
+        return None
+    receipts = consumer_vector_receipts(stdout, consumer_platform, negative_cases)
+    evidence["negative"]["consumer"].update({case_id: True for case_id in receipts})
+    return receipts
+
+
+def covered_negative_vector_ids(negative_cases, evidence):
+    return evidence_ids(evidence, "negative", "consumer", [case["id"] for case in negative_cases])
 
 def read_pin_bytes(data, path):
     def pairs_hook(pairs):
@@ -268,21 +510,83 @@ def strict_vector_object(path, label):
     return value
 
 
-def load_negative_case_ids(protocol_root):
+def load_negative_cases(protocol_root):
+    schema = strict_vector_object(protocol_root / "schemas/negative-vectors.schema.json", "negative vector schema")
     value = strict_vector_object(protocol_root / "vectors/negative.json", "negative vectors")
-    cases = value.get("cases")
-    if value.get("protocol") != "negative-vectors" or value.get("version") != "3.0.0" or not isinstance(cases, list) or not cases:
-        raise SystemExit("FAIL_CLOSED: negative vector header/cases are invalid")
-    identifiers = []
-    for case in cases:
-        if not isinstance(case, dict) or not isinstance(case.get("id"), str) or not case["id"]:
-            raise SystemExit("FAIL_CLOSED: negative vector case id is invalid")
-        if case.get("outcome") != "reject_and_fail_closed":
-            raise SystemExit("FAIL_CLOSED: negative vector outcome is not fail closed: " + case["id"])
-        identifiers.append(case["id"])
-    if len(identifiers) != len(set(identifiers)):
-        raise SystemExit("FAIL_CLOSED: duplicate negative vector case id")
-    return identifiers
+    expected_root_fields = set(schema.get("properties", {}))
+    if (
+        schema.get("type") != "object"
+        or schema.get("additionalProperties") is not False
+        or set(schema.get("required", [])) != expected_root_fields
+        or set(value) != expected_root_fields
+        or value.get("protocol") != schema["properties"]["protocol"].get("const")
+        or value.get("version") != schema["properties"]["version"].get("const")
+        or value.get("expectedOutcome") != schema["properties"]["expectedOutcome"].get("const")
+        or not isinstance(value.get("cases"), list)
+        or not value["cases"]
+        or not isinstance(value.get("invariants"), list)
+        or not all(isinstance(item, str) for item in value["invariants"])
+        or not isinstance(value.get("strictContractSuites"), dict)
+    ):
+        raise SystemExit("FAIL_CLOSED: negative vectors do not validate against negative vector schema")
+    definitions = schema.get("$defs", {})
+    case_schema = definitions.get("case", {})
+    ownership_schema = definitions.get("ownership", {})
+    optional_case_fields = {"encoding"}
+    required_case_fields = set(case_schema.get("required", []))
+    allowed_case_fields = set(case_schema.get("properties", {})) | optional_case_fields
+    allowed_platforms = set(ownership_schema.get("properties", {}).get("consumerPlatform", {}).get("enum", []))
+    allowed_directions = set(ownership_schema.get("properties", {}).get("direction", {}).get("enum", []))
+    allowed_stages = set(ownership_schema.get("properties", {}).get("stage", {}).get("enum", []))
+    if (
+        case_schema.get("additionalProperties") is not False
+        or ownership_schema.get("additionalProperties") is not False
+        or not required_case_fields
+        or not allowed_platforms
+        or not allowed_directions
+        or not allowed_stages
+    ):
+        raise SystemExit("FAIL_CLOSED: negative vector schema is unsupported")
+    cases = []
+    identifiers = set()
+    for case in value["cases"]:
+        if not isinstance(case, dict) or not required_case_fields.issubset(case) or not set(case).issubset(allowed_case_fields):
+            raise SystemExit("FAIL_CLOSED: negative vector case does not validate against schema")
+        case_id = case.get("id")
+        if not isinstance(case_id, str) or not case_id or case_id in identifiers:
+            raise SystemExit("FAIL_CLOSED: duplicate or invalid negative vector case id")
+        ownership = case.get("ownership")
+        expected = case.get("expected")
+        if (
+            not isinstance(case.get("message"), str)
+            or not case["message"]
+            or case.get("outcome") != value["expectedOutcome"]
+            or any(field in case and case[field] != "hex" for field in optional_case_fields)
+            or not isinstance(ownership, dict)
+            or set(ownership) != set(ownership_schema.get("required", []))
+            or ownership.get("consumerPlatform") not in allowed_platforms
+            or ownership.get("direction") not in allowed_directions
+            or ownership.get("stage") not in allowed_stages
+            or not isinstance(expected, dict)
+            or set(expected) != {"transcriptSha256", "initialSnapshot", "baselineSnapshot", "finalSnapshot", "baselineEffects"}
+            or not isinstance(case.get("reducer"), str) or not case["reducer"]
+            or not isinstance(case.get("operations"), list)
+        ):
+            raise SystemExit("FAIL_CLOSED: negative vector case fields are invalid: " + case_id)
+        try:
+            if (
+                not isinstance(expected["transcriptSha256"], str)
+                or len(expected["transcriptSha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in expected["transcriptSha256"])
+                or any(not isinstance(expected[field], (dict, list)) or not expected[field] for field in ("initialSnapshot", "baselineSnapshot", "finalSnapshot", "baselineEffects"))
+            ):
+                raise ValueError("expected transcript fields are invalid")
+            derived_case_hashes(case)
+        except (TypeError, ValueError) as exc:
+            raise SystemExit("FAIL_CLOSED: negative vector transcript is invalid: " + case_id + ": " + str(exc)) from exc
+        identifiers.add(case_id)
+        cases.append(case)
+    return cases
 
 
 def load_positive_case_ids(protocol_root):
@@ -305,28 +609,28 @@ def load_positive_case_ids(protocol_root):
 
 
 
-def run_adversarial_cases(binary, case_ids, logs, prefix, receipts):
-    covered = []
-    failed = []
-    for case_id in case_ids:
-        if case_id not in SWIFT_EXECUTABLE_CASE_IDS:
-            continue
-        completed, receipt = run([str(binary), "case", case_id], binary.parent, logs, prefix + "-" + case_id)
-        receipts.append(receipt)
-        if completed.returncode == 0:
-            covered.append(case_id)
-        else:
-            failed.append(case_id)
-    return covered, failed
 
 
-def run_production_suites(mac, ios, protocol, logs, receipts):
-    commands = [
-        (mac, ["./scripts/test-mac-protocol-adversarial.sh"], "suite-mac-adversarial"),
-        (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors"),
-        (ios, ["./scripts/test-receiver-adversarial.sh"], "suite-ios-adversarial"),
-        (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors"),
-        (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors"),
+def run_production_suites(mac, ios, protocol, logs, receipts, positive_ids, negative_cases):
+    commands = []
+    for platform, root, script, label in (
+        ("mac-client", mac, "./scripts/test-mac-protocol-adversarial.sh", "suite-mac-adversarial"),
+        ("ios-server", ios, "./scripts/test-receiver-adversarial.sh", "suite-ios-adversarial"),
+    ):
+        for case in negative_cases:
+            if case["ownership"]["consumerPlatform"] != platform:
+                continue
+            canonical = canonical_case(case)
+            commands.append((
+                root,
+                [script, "case", case["id"], canonical, digest(canonical.encode("utf-8"))],
+                label + "-" + case["id"],
+                platform,
+            ))
+    commands.extend([
+        (mac, ["./scripts/test-session-binding.sh"], "suite-mac-session-vectors", None),
+        (ios, ["./scripts/test-session-binding.sh"], "suite-ios-session-vectors", None),
+        (ios, ["./scripts/test-pairing-vectors.sh"], "suite-ios-pairing-vectors", None),
         (
             protocol,
             [
@@ -336,28 +640,48 @@ def run_production_suites(mac, ios, protocol, logs, receipts):
                 "-v",
             ],
             "suite-protocol-positive-vectors",
+            None,
         ),
         (
             protocol,
             [
                 sys.executable, "-m", "unittest",
-                "tests.test_protocol.ProtocolTests.test_every_negative_vector_is_exercised",
+                "tests.test_protocol.ProtocolTests.test_every_negative_vector_executes_in_its_reference_reducer",
                 "-v",
             ],
             "suite-protocol-negative-vectors",
+            None,
         ),
         (
             protocol,
             [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
             "suite-protocol-conformance",
+            None,
         ),
-    ]
+    ])
     results = {}
-    for cwd, argv, label in commands:
+    evidence = empty_vector_evidence()
+    consumer_receipts = []
+    receipt_errors = []
+    for cwd, argv, label, consumer_platform in commands:
         completed, receipt = run(argv, cwd, logs, label)
         receipts.append(receipt)
-        results[label] = completed.returncode == 0
-    return results
+        passed = completed.returncode == 0
+        results[label] = passed
+        try:
+            parsed = record_suite_vector_evidence(
+                evidence, consumer_platform, passed, completed.stdout, negative_cases
+            )
+        except ValueError as exc:
+            receipt_errors.append(label + ": " + str(exc))
+            continue
+        if label == "suite-protocol-negative-vectors" and passed:
+            evidence["negative"]["producer"] = {case["id"]: True for case in negative_cases}
+        elif label == "suite-protocol-positive-vectors" and passed:
+            evidence["positive"]["producer"] = {case_id: True for case_id in positive_ids}
+        if parsed is not None:
+            consumer_receipts.extend({**item, "commandReceipt": receipt} for item in parsed.values())
+    return results, evidence, consumer_receipts, receipt_errors
 
 
 def git_clone_checkout(src, dst, commit, mac, logs, label, receipts):
@@ -438,36 +762,39 @@ def main():
     receipts = []
     failures = []
     executed_positive = []
-    executed_adversarial = {"mac": [], "ios": []}
+    executed_adversarial = {"mac-client": [], "ios-server": []}
+    consumer_negative_receipts = []
     suite_results = {}
-    suite_covered = []
-    positive_suite_covered = []
+    vector_evidence_map = empty_vector_evidence()
     source_pins = {}
     built_pins = {}
     source_pin_sha256 = {}
     built_pin_sha256 = {}
-    unexecutable = []
     result = "passed"
 
-    negative_ids = load_negative_case_ids(protocol)
+    negative_cases = load_negative_cases(protocol)
+    negative_ids = [case["id"] for case in negative_cases]
     positive_ids = load_positive_case_ids(protocol)
-    suite_results = run_production_suites(mac, ios, protocol, logs, receipts)
+    suite_results, vector_evidence_map, consumer_negative_receipts, receipt_errors = run_production_suites(
+        mac, ios, protocol, logs, receipts, positive_ids, negative_cases
+    )
+    failures.extend(receipt_errors)
+    for receipt in consumer_negative_receipts:
+        executed_adversarial[receipt["ownership"]["consumerPlatform"]].append(receipt["id"])
     for label, passed in suite_results.items():
         if not passed:
             failures.append(label + " failed")
-    negative_suite_labels = (
-        "suite-mac-adversarial",
-        "suite-ios-adversarial",
-        "suite-protocol-negative-vectors",
-    )
     positive_suite_labels = (
         "suite-mac-session-vectors",
         "suite-ios-session-vectors",
         "suite-ios-pairing-vectors",
         "suite-protocol-positive-vectors",
     )
-    if all(suite_results.get(label) for label in negative_suite_labels):
-        suite_covered = list(negative_ids)
+    producer_covered = evidence_ids(vector_evidence_map, "negative", "producer", negative_ids)
+    covered = covered_negative_vector_ids(negative_cases, vector_evidence_map)
+    unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
+    if unexecutable:
+        failures.append("protocol negative vector IDs lack exact production consumer receipt coverage")
     if all(suite_results.get(label) for label in positive_suite_labels):
         positive_suite_covered = list(positive_ids)
     with tempfile.TemporaryDirectory(prefix="photonport-m3-matrix-") as tmp:
@@ -522,21 +849,8 @@ def main():
                 failures.append("mac decoder accepted invalid zero-length frame")
             if not negative_decode(ios_bin, logs, "negative-to-ios-zero-length", receipts):
                 failures.append("ios decoder accepted invalid zero-length frame")
-            mac_covered, mac_failed = run_adversarial_cases(mac_bin, negative_ids, logs, "mac-adversarial", receipts)
-            ios_covered, ios_failed = run_adversarial_cases(ios_bin, negative_ids, logs, "ios-adversarial", receipts)
-            executed_adversarial["mac"] = mac_covered
-            executed_adversarial["ios"] = ios_covered
-            for case_id in mac_failed:
-                failures.append("mac adversarial case failed: " + case_id)
-            for case_id in ios_failed:
-                failures.append("ios adversarial case failed: " + case_id)
-            directly_covered = set(executed_adversarial["mac"]) & set(executed_adversarial["ios"])
-            covered = directly_covered | set(suite_covered)
-            unexecutable = [case_id for case_id in negative_ids if case_id not in covered]
             if len(executed_positive) != len(vectors) or len(positive_suite_covered) != len(positive_ids):
                 failures.append("protocol positive vector IDs lack executable production-suite coverage")
-            if unexecutable:
-                failures.append("protocol negative vector IDs lack executable production-suite coverage")
 
         verifier = verifier_command(mac, ios, protocol, compatibility_path, args)
         completed, receipt = run(verifier, mac, logs, "verifier-primary")
@@ -593,21 +907,33 @@ def main():
         "coverageContract": {
             "positiveRawFrameCases": executed_positive,
             "productionDerivedAdversarialCases": executed_adversarial,
+            "vectorEvidence": {
+                kind: {
+                    role: evidence_ids(vector_evidence_map, kind, role, case_ids)
+                    for role in ("producer", "consumer")
+                }
+                for kind, case_ids in (("positive", positive_ids), ("negative", negative_ids))
+            },
+            "productionConsumerNegativeVectorReceipts": evidence_ids(
+                vector_evidence_map, "negative", "consumer", negative_ids
+            ),
+            "negativeConsumerReceiptMetadata": consumer_negative_receipts,
+            "protocolProducerNegativeVectorIDs": producer_covered,
             "enumeratedProtocolPositiveVectorIDs": positive_ids,
             "enumeratedProtocolNegativeVectorIDs": negative_ids,
             "productionSuiteResults": suite_results,
             "productionSuiteCoveredPositiveVectorIDs": positive_suite_covered,
-            "productionSuiteCoveredNegativeVectorIDs": suite_covered,
-            "negativeVectorEvidenceLabels": list(negative_suite_labels),
+            "productionSuiteCoveredNegativeVectorIDs": covered,
+            "negativeVectorEvidenceLabels": ["exact metadata-bound production consumer receipt", "suite-protocol-negative-vectors producer reference"],
             "positiveVectorEvidenceLabels": list(positive_suite_labels),
             "unexecutableNegativeVectorIDs": unexecutable,
-            "unexecutablePolicy": "matrix fails rather than claiming vector coverage without passing production suites",
+            "unexecutablePolicy": "matrix fails closed on missing, duplicate, extra, wrong-platform, wrong-stage, or non-rejected metadata-bound consumer receipts; Protocol suite success supplies producer evidence only",
         },
         "processProtocol": {
             "topology": "separate production-derived Swift executables",
             "framing": "4-byte big-endian length followed by raw payload bytes over stdout/stdin",
             "directions": ["mac-encoder-to-ios-decoder", "ios-encoder-to-mac-decoder"],
-            "negativeCases": ["zero-length frame exits nonzero", "production-derived adversarial case mode exits nonzero on unexpected acceptance"],
+            "negativeCases": ["zero-length frame exits nonzero", "metadata-owned adversarial consumer suite emits exactly one rejected receipt per declared case"],
         },
         "builtPinEvidence": {
             "trackedConsumerPins": source_pins,

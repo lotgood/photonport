@@ -4,7 +4,60 @@ import CoreGraphics
 /// Wraps the private CGVirtualDisplay API: makes macOS believe a real monitor
 /// is attached. Sized in points at HiDPI (@2x), so a phone with native pixels
 /// W×H gets a virtual display of (W/2)×(H/2) points backed by a W×H framebuffer.
+
 final class VirtualDisplay {
+    /// Limits display dimensions before they reach the private CoreGraphics API.
+    /// 32K pixels is already beyond currently practical capture/encode surfaces.
+    static let maximumPixelsPerAxis = 32_768
+    /// 8K UHD is the largest practical virtual capture surface (four 4K frames);
+    /// this prevents a narrow but enormous surface from exhausting WindowServer.
+    static let maximumTotalPixels = 7_680 * 4_320
+
+    private static func fitsPixelBudget(width: Int, height: Int, budget: Int) -> Bool {
+        width > 0 && height <= budget / width
+    }
+
+    static func acceptsPixelGeometry(width: Int, height: Int) -> Bool {
+        width >= 2 && height >= 2
+            && width <= maximumPixelsPerAxis && height <= maximumPixelsPerAxis
+            && fitsPixelBudget(width: width, height: height, budget: maximumTotalPixels)
+    }
+
+    static func acceptsPointGeometry(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0
+            && width <= maximumPixelsPerAxis / 2 && height <= maximumPixelsPerAxis / 2
+            // The display is @2x, so validate the native pixel budget without
+            // multiplying pointsWide * pointsHigh * 4.
+            && width <= maximumTotalPixels / 4 / height
+    }
+
+    static func performConfiguration<Transaction>(
+        begin: () -> (CGError, Transaction?),
+        configure: (Transaction) -> CGError,
+        complete: (Transaction) -> CGError,
+        cancel: (Transaction) -> Void
+    ) -> Bool {
+        let (beginResult, transaction) = begin()
+        guard beginResult == .success, let transaction else { return false }
+        var completed = false
+        defer {
+            if !completed {
+                cancel(transaction)
+            }
+        }
+        guard configure(transaction) == .success else { return false }
+        guard complete(transaction) == .success else { return false }
+        completed = true
+        return true
+    }
+
+    static func matchesHiDPIGeometry(pointsWide: Int, pointsHigh: Int,
+                                     modeWidth: Int, modeHeight: Int,
+                                     pixelWidth: Int, pixelHeight: Int) -> Bool {
+        modeWidth == pointsWide && modeHeight == pointsHigh
+            && pixelWidth == pointsWide * 2 && pixelHeight == pointsHigh * 2
+    }
+
 
     private let display: CGVirtualDisplay
     private let settings: CGVirtualDisplaySettings
@@ -34,6 +87,10 @@ final class VirtualDisplay {
         self.pointsWide = pointsWide
         self.pointsHigh = pointsHigh
         self.appliedRefreshRate = max(refreshRate, 1)
+        guard Self.acceptsPointGeometry(width: pointsWide, height: pointsHigh) else {
+            Log.info("refusing invalid virtual display geometry: \(pointsWide)x\(pointsHigh) points")
+            return nil
+        }
 
         // Weak-linked private API (see CGVirtualDisplayPrivate.h): touching
         // the classes when a macOS update removed them would crash — bail to
@@ -137,7 +194,11 @@ final class VirtualDisplay {
               // Among @2x matches prefer the highest refresh — macOS can list
               // a derived 60Hz duplicate next to the published 120Hz mode.
               let hidpi = modes
-                  .filter({ $0.width == pointsWide && $0.pixelWidth == pointsWide * 2 })
+                  .filter({
+                      Self.matchesHiDPIGeometry(pointsWide: pointsWide, pointsHigh: pointsHigh,
+                                                 modeWidth: $0.width, modeHeight: $0.height,
+                                                 pixelWidth: $0.pixelWidth, pixelHeight: $0.pixelHeight)
+                  })
                   .max(by: { $0.refreshRate < $1.refreshRate }) else {
             if recover {
                 Log.info("@2x mode vanished from display \(display.displayID) — re-applying settings")
@@ -146,7 +207,9 @@ final class VirtualDisplay {
             return false
         }
         if let current = CGDisplayCopyDisplayMode(display.displayID),
-           current.width == hidpi.width, current.pixelWidth == hidpi.pixelWidth,
+           Self.matchesHiDPIGeometry(pointsWide: pointsWide, pointsHigh: pointsHigh,
+                                     modeWidth: current.width, modeHeight: current.height,
+                                     pixelWidth: current.pixelWidth, pixelHeight: current.pixelHeight),
            // Refresh check only when both sides report one (virtual displays
            // can report 0) — otherwise this would reconfigure every 2s.
            hidpi.refreshRate <= 0 || current.refreshRate <= 0
@@ -154,11 +217,34 @@ final class VirtualDisplay {
             return true
         }
         var config: CGDisplayConfigRef?
-        CGBeginDisplayConfiguration(&config)
-        CGConfigureDisplayWithDisplayMode(config, display.displayID, hidpi, nil)
-        let err = CGCompleteDisplayConfiguration(config, .permanently)
-        Log.info("HiDPI mode (re)selected: \(hidpi.width)x\(hidpi.height)@2x (result \(err.rawValue))")
-        return err == .success
+        return Self.performConfiguration(
+            begin: {
+                let result = CGBeginDisplayConfiguration(&config)
+                if result != .success {
+                    Log.info("HiDPI mode selection could not begin (result \(result.rawValue))")
+                }
+                return (result, config)
+            },
+            configure: { config in
+                let result = CGConfigureDisplayWithDisplayMode(config, display.displayID, hidpi, nil)
+                if result != .success {
+                    Log.info("HiDPI mode selection could not configure (result \(result.rawValue))")
+                }
+                return result
+            },
+            complete: { config in
+                let result = CGCompleteDisplayConfiguration(config, .permanently)
+                if result != .success {
+                    Log.info("HiDPI mode selection could not complete (result \(result.rawValue))")
+                } else {
+                    Log.info("HiDPI mode (re)selected: \(hidpi.width)x\(hidpi.height)@2x (result \(result.rawValue))")
+                }
+                return result
+            },
+            cancel: { config in
+                CGCancelDisplayConfiguration(config)
+            }
+        )
     }
 
     /// An extend-mode virtual display must never sit in a system mirror set.
@@ -175,26 +261,49 @@ final class VirtualDisplay {
         guard CGDisplayIsInMirrorSet(id) != 0 else { return }
 
         var config: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&config) == .success else { return }
-        // Detach the virtual display itself (covers "macOS mirrors the VD onto
-        // the main display")...
-        CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay)
-        // ...and any display currently mirroring the VD (covers the reporter's
-        // arrangement: the device set as Main, with the built-in mirroring it).
-        var n: UInt32 = 0
-        CGGetActiveDisplayList(0, nil, &n)
-        var list = [CGDirectDisplayID](repeating: 0, count: Int(n))
-        CGGetActiveDisplayList(n, &list, &n)
-        for other in list where other != id && CGDisplayMirrorsDisplay(other) == id {
-            CGConfigureDisplayMirrorOfDisplay(config, other, kCGNullDirectDisplay)
-        }
-        // Session scope, NOT permanent: permanent mirror reconfiguration of the
-        // private virtual display is rejected (kCGErrorIllegalArgument) and
-        // silently leaves it mirrored despite a "success" from the mirror call.
-        // Session scope actually dissolves the set, and this runs every ~2s for
-        // the display's lifetime, so it re-overrides whatever mirror arrangement
-        // macOS restores — continuous enforcement, like the HiDPI mode above.
-        let err = CGCompleteDisplayConfiguration(config, .forSession)
-        Log.info("virtual display \(id) was in a mirror set — detached to extend (result \(err.rawValue))")
+        _ = Self.performConfiguration(
+            begin: {
+                let result = CGBeginDisplayConfiguration(&config)
+                if result != .success {
+                    Log.info("virtual display \(id) mirror detach could not begin (result \(result.rawValue))")
+                }
+                return (result, config)
+            },
+            configure: { config in
+                // Detach the virtual display itself (covers "macOS mirrors the VD onto
+                // the main display")...
+                let ownConfigure = CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay)
+                guard ownConfigure == .success else {
+                    Log.info("virtual display \(id) mirror detach could not configure (result \(ownConfigure.rawValue))")
+                    return ownConfigure
+                }
+                // ...and any display currently mirroring the VD (covers the reporter's
+                // arrangement: the device set as Main, with the built-in mirroring it).
+                var n: UInt32 = 0
+                CGGetActiveDisplayList(0, nil, &n)
+                var list = [CGDirectDisplayID](repeating: 0, count: Int(n))
+                CGGetActiveDisplayList(n, &list, &n)
+                for other in list where other != id && CGDisplayMirrorsDisplay(other) == id {
+                    let result = CGConfigureDisplayMirrorOfDisplay(config, other, kCGNullDirectDisplay)
+                    guard result == .success else {
+                        Log.info("virtual display \(id) mirror detach could not configure peer (result \(result.rawValue))")
+                        return result
+                    }
+                }
+                return .success
+            },
+            complete: { config in
+                let result = CGCompleteDisplayConfiguration(config, .forSession)
+                if result != .success {
+                    Log.info("virtual display \(id) mirror detach could not complete (result \(result.rawValue))")
+                } else {
+                    Log.info("virtual display \(id) was in a mirror set — detached to extend (result \(result.rawValue))")
+                }
+                return result
+            },
+            cancel: { config in
+                CGCancelDisplayConfiguration(config)
+            }
+        )
     }
 }

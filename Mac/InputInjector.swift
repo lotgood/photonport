@@ -8,6 +8,8 @@ final class InputInjector {
 
     private let displayID: CGDirectDisplayID
     private var isDown = false
+    private var lastPointerLocation: CGPoint
+    private let pointerLock = NSLock()
     // A real event source (vs nil) plus clickState=1 below: menu tracking
     // treats sourceless/zero-click synthetic clicks as malformed — menus
     // open but their tracking session breaks, leaving zombie menu windows
@@ -19,6 +21,7 @@ final class InputInjector {
 
     init(displayID: CGDirectDisplayID) {
         self.displayID = displayID
+        self.lastPointerLocation = Self.insetPoint(in: CGDisplayBounds(displayID))
     }
 
     static func ensureAccessibilityPermission() -> Bool {
@@ -33,14 +36,14 @@ final class InputInjector {
     /// x/y are normalized [0,1] in video space (origin top-left).
     func handleTouch(phase: String, x: Double, y: Double) {
         let bounds = CGDisplayBounds(displayID)   // global CG coords, y-down
-        let point = CGPoint(
-            x: bounds.origin.x + x * bounds.width,
-            y: bounds.origin.y + y * bounds.height
-        )
+        let point = Self.touchPoint(x: x, y: y, in: bounds)
 
         let type: CGEventType
         switch phase {
         case "began":
+            // A duplicate begin is a new contact boundary. Balance the old
+            // contact first so a dropped end cannot leave the physical button held.
+            releasePressedInput()
             type = .leftMouseDown
             isDown = true
         case "moved":
@@ -53,6 +56,54 @@ final class InputInjector {
             return
         }
 
+        setLastPointerLocation(point)
+        postMouse(type, at: point)
+    }
+
+    /// Balances the injected button state and discards deferred scroll work.
+    /// Safe at every session boundary and when called more than once.
+    func releasePressedInput() {
+        scrollCoalescer.cancel()
+        guard isDown else { return }
+        isDown = false
+        postMouse(.leftMouseUp, at: currentPointerLocation())
+    }
+
+    static func touchPoint(x: Double, y: Double, in bounds: CGRect) -> CGPoint {
+        let point = CGPoint(
+            x: bounds.origin.x + x * bounds.width,
+            y: bounds.origin.y + y * bounds.height
+        )
+        return clampedPoint(point, in: bounds)
+    }
+
+    static func insetPoint(in bounds: CGRect) -> CGPoint {
+        clampedPoint(CGPoint(x: bounds.midX, y: bounds.midY), in: bounds)
+    }
+
+    private static func clampedPoint(_ point: CGPoint, in bounds: CGRect) -> CGPoint {
+        guard bounds.width > 0, bounds.height > 0 else { return bounds.origin }
+        let upperX = bounds.origin.x + bounds.width.nextDown
+        let upperY = bounds.origin.y + bounds.height.nextDown
+        return CGPoint(
+            x: min(max(point.x, bounds.origin.x), upperX),
+            y: min(max(point.y, bounds.origin.y), upperY)
+        )
+    }
+    private func setLastPointerLocation(_ point: CGPoint) {
+        pointerLock.lock()
+        lastPointerLocation = point
+        pointerLock.unlock()
+    }
+
+    private func currentPointerLocation() -> CGPoint {
+        pointerLock.lock()
+        defer { pointerLock.unlock() }
+        return lastPointerLocation
+    }
+
+
+    private func postMouse(_ type: CGEventType, at point: CGPoint) {
         guard let event = CGEvent(mouseEventSource: source, mouseType: type,
                                   mouseCursorPosition: point, mouseButton: .left) else { return }
         event.setIntegerValueField(.mouseEventClickState, value: 1)
@@ -80,6 +131,9 @@ final class InputInjector {
                                   wheel1: wheel.dy,
                                   wheel2: wheel.dx,
                                   wheel3: 0) else { return }
+        // ScrollWheelEvent has no target display. Pin its location to this
+        // session's display, including before the first touch arrives.
+        event.location = currentPointerLocation()
         event.post(tap: .cghidEventTap)
     }
 }

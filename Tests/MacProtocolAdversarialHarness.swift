@@ -3,6 +3,20 @@ import CryptoKit
 
 private func json(_ text: String) -> Data { Data(text.utf8) }
 private func b64(_ byte: UInt8, _ count: Int) -> String { Data(repeating: byte, count: count).base64EncodedString() }
+private func sha256(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+fileprivate struct ParserCase {
+    let name: String
+    let valid: Data
+    let requiredKeys: [String]
+    let typeKey: String
+    let typeValue: String
+    let wrongTypeField: String
+    let wrongTypeValue: String
+    let parse: (Data) throws -> Void
+}
 private func expectAccepts(_ label: String, _ body: () throws -> Void) {
     do { try body() } catch { preconditionFailure("\(label) unexpectedly rejected: \(error)") }
 }
@@ -82,38 +96,448 @@ private func withFieldValue(_ data: Data, _ key: String, _ value: String) -> Dat
 }
 
 
-fileprivate struct ParserCase {
-    let name: String
-    let valid: Data
-    let requiredKeys: [String]
-    let typeKey: String
-    let typeValue: String
-    let wrongTypeField: String
-    let wrongTypeValue: String
-    let parse: (Data) throws -> Void
+fileprivate struct CaseInvocation {
+    let id: String
+    let reducer: String
+    let stage: String
+    let setup: Data
+    let baseline: Data
+    let mutation: Data
+    let transcript: Data
+    let transcriptSha256: String
+    let changedField: String
+    let setupFixture: [String: Any]
+    let baselineFixture: [String: Any]
+    let mutationFixture: [String: Any]
+
+    init(arguments: [String]) {
+        guard arguments.count == 4, arguments[0] == "case",
+              let caseData = arguments[2].data(using: .utf8),
+              arguments[3].count == 64,
+              arguments[3].allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
+              sha256(caseData) == arguments[3],
+              let object = try? JSONSerialization.jsonObject(with: caseData) as? [String: Any],
+              Set(object.keys) == ["expected", "id", "message", "operations", "outcome", "ownership", "reducer", "semantic"],
+              let id = object["id"] as? String, id == arguments[1],
+              object["outcome"] as? String == "reject_and_fail_closed",
+              let ownership = object["ownership"] as? [String: Any],
+              Set(ownership.keys) == ["consumerPlatform", "direction", "stage"],
+              ownership["consumerPlatform"] as? String == "mac-client",
+              let stage = ownership["stage"] as? String,
+              let reducer = object["reducer"] as? String,
+              let semantic = object["semantic"] as? [String: Any],
+              Set(semantic.keys) == ["changedField", "mutation"],
+              let changedField = semantic["changedField"] as? String,
+              semantic["mutation"] as? String != nil,
+              let operations = object["operations"] as? [[String: Any]],
+              let expected = object["expected"] as? [String: Any],
+              let transcriptSha256 = expected["transcriptSha256"] as? String,
+              Self.isSHA256(transcriptSha256),
+              let setupFixture = Self.fixture(operations, index: 1, role: "setup"),
+              let baselineFixture = Self.fixture(operations, index: 4, role: "baseline"),
+              let mutationFixture = Self.fixture(operations, index: 7, role: "mutation"),
+              Self.isClosedTranscript(operations),
+              let transcript = try? JSONSerialization.data(withJSONObject: operations, options: [.sortedKeys]),
+              sha256(transcript) == transcriptSha256 else {
+            fatalError("invalid canonical Protocol operation transcript")
+        }
+        self.id = id
+        self.reducer = reducer
+        self.stage = stage
+        self.setup = try! JSONSerialization.data(withJSONObject: setupFixture, options: [.sortedKeys])
+        self.baseline = try! JSONSerialization.data(withJSONObject: baselineFixture, options: [.sortedKeys])
+        self.mutation = try! JSONSerialization.data(withJSONObject: mutationFixture, options: [.sortedKeys])
+        self.transcript = transcript
+        self.setupFixture = setupFixture
+        self.baselineFixture = baselineFixture
+        self.transcriptSha256 = transcriptSha256
+        self.changedField = changedField
+        self.mutationFixture = mutationFixture
+    }
+
+    private static func fixture(_ operations: [[String: Any]], index: Int, role: String) -> [String: Any]? {
+        guard operations.indices.contains(index), operations[index]["op"] as? String == "consume",
+              operations[index]["role"] as? String == role,
+              let fixture = operations[index]["fixture"] as? [String: Any] else { return nil }
+        return fixture
+    }
+
+    private static func isClosedTranscript(_ operations: [[String: Any]]) -> Bool {
+        operations.count == 9
+            && operations[0]["op"] as? String == "initialize"
+            && operations[1]["role"] as? String == "setup"
+            && operations[3]["op"] as? String == "clone-checkpoint"
+            && operations[4]["role"] as? String == "baseline"
+            && operations[5]["op"] as? String == "assert-accepted"
+            && operations[6]["op"] as? String == "clone-checkpoint"
+            && operations[7]["role"] as? String == "mutation"
+            && operations[8]["op"] as? String == "assert-rejected"
+            && operations[8]["checkpoint"] as? String == "post-baseline"
+    }
+
+    private static func isSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.allSatisfy({ $0.isHexDigit && !$0.isUppercase })
+    }
 }
 
 @main
 struct MacProtocolAdversarialHarness {
     static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard arguments.isEmpty || arguments.count == 4 && arguments[0] == "case" else {
+            fatalError("usage: MacProtocolAdversarialHarness [case <id> <canonical-full-case-json> <case-sha256>]")
+        }
+        if !arguments.isEmpty {
+            runCase(CaseInvocation(arguments: arguments))
+            return
+        }
+
         framingCaps()
+        receipt("bad-length-prefix")
+        receipt("oversize-frame")
         directParserEntryPointCaps()
         strictJSON()
+        receipt("duplicate-json-key")
+        receipt("sensitive-reason-code")
+        pairingIdentityMutations()
         canonicalFields()
+        receipt("zero-generation")
+        receipt("wrong-channel")
         transportRules()
+        receipt("wifi-hello-missing-seed")
+        receipt("usb-hello-seed-present")
+        receipt("server-hello-transport-mismatch")
         rawTokenStrictness()
         parserEntryPointShapeMutations()
         base64BoundaryMutations()
+        receipt("invalid-base64")
         inboundAndParserOnlyCapBoundaries()
         strictControls()
         pongProductionState()
         scrollAdmissionAndBackpressure()
         scrollTimerAndConversionBehavior()
-        sessionProofsAndOwnership()
-        generationSnapshots()
         proofMutations()
-        generationExhaustedPersistence()
+        sessionIdentityMutations()
+        usbPrefaceAndRecordMutations()
         print("mac protocol adversarial harness passed")
+    }
+
+    fileprivate static func runCase(_ invocation: CaseInvocation) {
+        let result: ProtocolRejection?
+        let baselineAccepted: Bool
+        switch (invocation.reducer, invocation.stage) {
+        case ("SessionAdmissionReducer.reduce", "session-init-response"):
+            let outcomes = [ProtocolParser.Transport.wifi, .usb].map { transport in
+                (
+                    serverHelloOutcome(invocation.baselineFixture, transport: transport),
+                    rejection(ProtocolParser.consumeServerHello(
+                        serverHelloPayload(invocation.mutationFixture, transport: transport, mutation: true),
+                        transport: transport
+                    ))
+                )
+            }
+            baselineAccepted = outcomes.contains { $0.0 != nil }
+            result = outcomes.compactMap { $0.1 }.first
+        case ("SessionAdmissionReducer.reduce", "session-busy-response"):
+            baselineAccepted = sessionBusyOutcome(invocation.baselineFixture) != nil
+            result = rejection(ProtocolParser.consumeSessionBusy(sessionBusyPayload(invocation.mutationFixture)))
+        case ("SessionAdmissionReducer.reduce", "session-finish-accept"):
+            baselineAccepted = {
+                if case .applied = sessionAcceptOutcome(invocation.baselineFixture) { return true }
+                return false
+            }()
+            result = rejection(sessionAcceptMutationOutcome(invocation.baselineFixture, invocation.mutationFixture))
+        case ("ManagedUSBPrefaceReducer.bindInit", "usb-bind-challenge"):
+            baselineAccepted = usbChallengeOutcome(invocation.baselineFixture, proof: invocation.baselineFixture["proofBase64"] as? String) != nil
+            result = usbChallengeOutcome(invocation.baselineFixture, proof: invocation.mutationFixture["proofBase64"] as? String).flatMap(rejection)
+        case ("ManagedUSBPrefaceReducer.bindFinish", "usb-bind-accept"):
+            baselineAccepted = usbAcceptOutcome(invocation.baselineFixture, proof: invocation.baselineFixture["proofBase64"] as? String) != nil
+            result = usbAcceptOutcome(invocation.baselineFixture, proof: invocation.mutationFixture["proofBase64"] as? String).flatMap(rejection)
+        default:
+            baselineAccepted = false
+            result = nil
+        }
+        guard baselineAccepted, let result, result.stage.rawValue == invocation.stage else {
+            fatalError("production consumer did not reject the canonical mutation fail-closed")
+        }
+        receipt(invocation, rejection: result)
+    }
+
+    private static func fixtureString(_ fixture: [String: Any], _ name: String) -> String {
+        guard let value = fixture[name] as? String else { fatalError("missing fixture field \(name)") }
+        return value
+    }
+
+    private static func fixtureBytes(_ fixture: [String: Any], _ name: String, count: Int) -> Data {
+        let value = fixtureString(fixture, name)
+        guard let decoded = Data(base64Encoded: value) else { fatalError("invalid fixture field \(name)") }
+        let digest = Data(SHA256.hash(data: decoded))
+        return count == digest.count ? digest : Data(digest.prefix(count))
+    }
+
+    private static func fixtureID(_ fixture: [String: Any], _ name: String) -> Data {
+        Data(SHA256.hash(data: Data(fixtureString(fixture, name).utf8)).prefix(16))
+    }
+
+    private static func serverHelloPayload(_ fixture: [String: Any], transport: ProtocolParser.Transport,
+                                           mutation: Bool = false) -> Data {
+        let includesSeed = transport == .wifi ? !mutation : mutation
+        let seedBytes = fixture["transportSeedBase64"] as? String != nil
+            ? fixtureBytes(fixture, "transportSeedBase64", count: 32)
+            : fixtureBytes(fixture, "deviceNonceBase64", count: 32)
+        let seed = includesSeed ? ",\"wifiSessionSeed\":\"\(seedBytes.base64EncodedString())\"" : ""
+        let wireTransport: String
+        if mutation, fixture["transport"] as? String == "mismatched-transport" {
+            wireTransport = transport == .wifi ? "usb" : "wifi"
+        } else {
+            wireTransport = transport == .wifi ? "wifi" : "usb"
+        }
+        return json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"\(wireTransport)\",\"deviceNonce\":\"\(fixtureBytes(fixture, "deviceNonceBase64", count: 32).base64EncodedString())\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"\(fixtureString(fixture, "deviceInstallID"))\",\"maxFps\":120,\"hdr\":true\(seed)}")
+    }
+
+    private static func serverHelloOutcome(_ fixture: [String: Any], transport: ProtocolParser.Transport) -> ProtocolConsumerOutcome<ProtocolParser.ServerHello>? {
+        let outcome = ProtocolParser.consumeServerHello(serverHelloPayload(fixture, transport: transport), transport: transport)
+        guard case .applied = outcome else { return nil }
+        return outcome
+    }
+
+    private static func sessionBusyPayload(_ fixture: [String: Any]) -> Data {
+        let reason = fixtureString(fixture, "reasonCode") == "busy" ? "session_busy" : fixtureString(fixture, "reasonCode")
+        return json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"\(reason)\"}")
+    }
+
+    private static func sessionBusyOutcome(_ fixture: [String: Any]) -> ProtocolConsumerOutcome<SessionBusy>? {
+        let outcome = ProtocolParser.consumeSessionBusy(sessionBusyPayload(fixture))
+        guard case .applied = outcome else { return nil }
+        return outcome
+    }
+
+    private static func sessionAcceptOutcome(_ fixture: [String: Any]) -> ProtocolConsumerOutcome<ProtocolParser.VerifiedSessionAccept> {
+        let key = SymmetricKey(data: fixtureBytes(fixture, "proofBase64", count: 32))
+        let macNonce = fixtureBytes(fixture, "macNonceBase64", count: 32)
+        let deviceNonce = fixtureBytes(fixture, "deviceNonceBase64", count: 32)
+        let sessionID = fixtureID(fixture, "sessionID")
+        let generation = fixture["generation"] as? Int ?? 1
+        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sessionID, generation: UInt64(max(generation, 1)))
+        let proof = SessionCrypto.acceptProof(key: secret, sessionID: sessionID, generation: UInt64(max(generation, 1)),
+                                              macInstallID: fixtureString(fixture, "macInstallID"),
+                                              deviceInstallID: fixtureString(fixture, "deviceInstallID"),
+                                              macNonce: macNonce, deviceNonce: deviceNonce)
+        let payload = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":\(generation),\"acceptProof\":\"\(proof.base64EncodedString())\"}")
+        return ProtocolParser.consumeVerifiedSessionAccept(payload, primaryKey: key,
+            macInstallID: fixtureString(fixture, "macInstallID"), deviceInstallID: fixtureString(fixture, "deviceInstallID"),
+            macNonce: macNonce, deviceNonce: deviceNonce)
+    }
+    private static func sessionAcceptMutationOutcome(_ baseline: [String: Any],
+                                                     _ mutation: [String: Any]) -> ProtocolConsumerOutcome<ProtocolParser.VerifiedSessionAccept> {
+        let key = SymmetricKey(data: fixtureBytes(baseline, "proofBase64", count: 32))
+        let macNonce = fixtureBytes(baseline, "macNonceBase64", count: 32)
+        let baselineDeviceNonce = fixtureBytes(baseline, "deviceNonceBase64", count: 32)
+        let deviceNonce = fixtureBytes(mutation, "deviceNonceBase64", count: 32)
+        let sessionID = fixtureID(mutation, "sessionID")
+        let generation = mutation["generation"] as? Int ?? 1
+        let baselineSessionID = fixtureID(baseline, "sessionID")
+        let baselineSecret = SessionCrypto.channelSecret(primaryKey: key, sessionID: baselineSessionID, generation: 1)
+        let proof = SessionCrypto.acceptProof(key: baselineSecret, sessionID: baselineSessionID, generation: 1,
+                                              macInstallID: fixtureString(baseline, "macInstallID"),
+                                              deviceInstallID: fixtureString(baseline, "deviceInstallID"),
+                                              macNonce: macNonce, deviceNonce: baselineDeviceNonce)
+        let payload = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":\(generation),\"acceptProof\":\"\(proof.base64EncodedString())\"}")
+        return ProtocolParser.consumeVerifiedSessionAccept(payload, primaryKey: key,
+            macInstallID: fixtureString(baseline, "macInstallID"), deviceInstallID: fixtureString(baseline, "deviceInstallID"),
+            macNonce: macNonce, deviceNonce: deviceNonce)
+    }
+    private static func usbChallengeOutcome(_ fixture: [String: Any], proof: String?) -> ProtocolConsumerOutcome<Data>? {
+        let psk = fixtureBytes(fixture, "credentialBase64", count: 32)
+        let macNonce = fixtureBytes(fixture, "macNonceBase64", count: 32)
+        let macID = fixtureString(fixture, "macInstallID"), deviceID = fixtureString(fixture, "deviceInstallID")
+        guard let candidate = USBChannelCandidate(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                                  purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7, macNonce: macNonce),
+              let server = USBPrefaceServer(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                            purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7),
+              let initial = candidate.start(now: 0, token: 7),
+              server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7),
+              let challenge = server.consume(USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+                                             nonce: fixtureBytes(fixture, "deviceNonceBase64", count: 32)) else {
+            return nil
+        }
+        let payload = proof == fixture["proofBase64"] as? String ? USBPrefaceMessage.unframe(challenge)!.0
+            : withFieldValue(USBPrefaceMessage.unframe(challenge)!.0, "proof", quoted(fixtureBytes(["proofBase64": proof!], "proofBase64", count: 32).base64EncodedString()))
+        return candidate.receiveChallenge(payload, now: 0, token: 7)
+    }
+
+    private static func usbAcceptOutcome(_ fixture: [String: Any], proof: String?) -> ProtocolConsumerOutcome<Data>? {
+        let psk = fixtureBytes(fixture, "bindingBase64", count: 32)
+        let macNonce = fixtureBytes(fixture, "macNonceBase64", count: 32)
+        let macID = fixtureString(fixture, "macInstallID"), deviceID = fixtureString(fixture, "deviceInstallID")
+        guard let candidate = USBChannelCandidate(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                                  purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7, macNonce: macNonce),
+              let server = USBPrefaceServer(psk: psk, macInstallID: macID, deviceInstallID: deviceID,
+                                            purpose: fixtureString(fixture, "purpose"), startedAt: 0, token: 7),
+              let initial = candidate.start(now: 0, token: 7),
+              server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7),
+              let challenge = server.consume(USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+                                             nonce: fixtureBytes(fixture, "deviceNonceBase64", count: 32)),
+              case .applied(let finish, _) = candidate.receiveChallenge(USBPrefaceMessage.unframe(challenge)!.0, now: 0, token: 7),
+              let accept = server.consume(USBPrefaceMessage.unframe(finish)!.0, now: 0, token: 7, nonce: nil) else {
+            return nil
+        }
+        let payload = proof == fixture["proofBase64"] as? String ? USBPrefaceMessage.unframe(accept)!.0
+            : withFieldValue(USBPrefaceMessage.unframe(accept)!.0, "proof", quoted(fixtureBytes(["proofBase64": proof!], "proofBase64", count: 32).base64EncodedString()))
+        return candidate.receiveAccept(payload, now: 0, token: 7)
+    }
+
+    fileprivate static func serverHelloInvocation(_ invocation: CaseInvocation,
+                                                   transport: ProtocolParser.Transport) -> ProtocolRejection? {
+        guard case .applied = ProtocolParser.consumeServerHello(invocation.baseline, transport: transport),
+              case .rejected(let rejection) = ProtocolParser.consumeServerHello(invocation.mutation, transport: transport) else {
+            return nil
+        }
+        return rejection
+    }
+
+    static func serverHello(_ transport: ProtocolParser.Transport, seed: Bool = false) -> Data {
+        let transportName: String
+        switch transport {
+        case .wifi: transportName = "wifi"
+        case .usb: transportName = "usb"
+        }
+        let seedField: String
+        switch transport {
+        case .wifi: seedField = ",\"wifiSessionSeed\":\"\(b64(0x43, 32))\""
+        case .usb: seedField = seed ? ",\"wifiSessionSeed\":\"\(b64(0x43, 32))\"" : ""
+        }
+        return json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"\(transportName)\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true\(seedField)}")
+    }
+
+    static func serverHelloCase(_ id: String, mutation: String, payload: Data,
+                                transport: ProtocolParser.Transport) -> ProtocolRejection? {
+        let baseline = serverHello(transport)
+        guard case .applied(let hello, _) = ProtocolParser.consumeServerHello(baseline, transport: transport),
+              mutation != "deviceNonce" || hello.deviceNonce == Data(repeating: 0x42, count: 32),
+              case .rejected(let rejection) = ProtocolParser.consumeServerHello(payload, transport: transport) else {
+            return nil
+        }
+        return rejection
+    }
+
+    static func sessionAcceptCase(
+        _ id: String,
+        mutation: String,
+        payloadMutation: (Data) -> Data,
+        deviceNonceMutation: Data? = nil
+    ) -> ProtocolRejection? {
+        let key = SymmetricKey(data: Data(repeating: 0x31, count: 32))
+        let macNonce = Data(repeating: 0x41, count: 32)
+        let deviceNonce = Data(repeating: 0x42, count: 32)
+        let sessionID = Data(repeating: 0x51, count: 16)
+        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sessionID, generation: 1)
+        let proof = SessionCrypto.acceptProof(key: secret, sessionID: sessionID, generation: 1,
+                                              macInstallID: "mac-a", deviceInstallID: "device-a",
+                                              macNonce: macNonce, deviceNonce: deviceNonce)
+        let baseline = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}")
+        guard case .applied = ProtocolParser.consumeVerifiedSessionAccept(
+            baseline, primaryKey: key, macInstallID: "mac-a", deviceInstallID: "device-a",
+            macNonce: macNonce, deviceNonce: deviceNonce
+        ), case .rejected(let rejection) = ProtocolParser.consumeVerifiedSessionAccept(
+            payloadMutation(baseline), primaryKey: key, macInstallID: "mac-a", deviceInstallID: "device-a",
+            macNonce: macNonce, deviceNonce: deviceNonceMutation ?? deviceNonce
+        ) else {
+            return nil
+        }
+        return rejection
+    }
+
+    // Mac only sends video. Receiver Annex-B admission belongs to the iOS runtime.
+    static func mediaCase(_ id: String, mutation: String, codec: String, baseline: Data,
+                          mutated: Data, keyframe: Bool) -> ProtocolRejection? {
+        nil
+    }
+
+    static func rejection<Value>(_ outcome: ProtocolConsumerOutcome<Value>) -> ProtocolRejection? where Value: Sendable {
+        guard case .rejected(let rejection) = outcome else { return nil }
+        return rejection
+    }
+
+    static func usbChallengeCase(_ id: String, mutation: String,
+                                 mutate: (Data) -> Data) -> ProtocolRejection? {
+        let psk = Data(repeating: 0xA5, count: 32), macNonce = Data(repeating: 0x11, count: 32)
+        let candidate = USBChannelCandidate(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                            purpose: "primary", startedAt: 0, token: 7, macNonce: macNonce)!
+        let server = USBPrefaceServer(psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                                      purpose: "primary", startedAt: 0, token: 7)!
+        let initial = candidate.start(now: 0, token: 7)!
+        precondition(server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge = server.consume(
+            USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+            nonce: Data(repeating: 0x22, count: 32))!
+        let payload = mutate(USBPrefaceMessage.unframe(challenge)!.0)
+        return rejection(candidate.receiveChallenge(payload, now: 0, token: 7))
+    }
+    static func usbAcceptReplayCase(_ id: String) -> ProtocolRejection? {
+        let psk = Data(repeating: 0xA5, count: 32)
+        let original = USBChannelCandidate(
+            psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+            purpose: "primary", startedAt: 0, token: 7,
+            macNonce: Data(repeating: 0x11, count: 32)
+        )!
+        let server = USBPrefaceServer(
+            psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+            purpose: "primary", startedAt: 0, token: 7
+        )!
+        let initial = original.start(now: 0, token: 7)!
+        precondition(server.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge = server.consume(
+            USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0, now: 0, token: 7,
+            nonce: Data(repeating: 0x22, count: 32)
+        )!
+        guard case .applied(let finish, _) = original.receiveChallenge(
+            USBPrefaceMessage.unframe(challenge)!.0, now: 0, token: 7
+        ), let accept = server.consume(
+            USBPrefaceMessage.unframe(finish)!.0, now: 0, token: 7, nonce: nil
+        ) else {
+            return nil
+        }
+
+        let replayTarget = USBChannelCandidate(
+            psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+            purpose: "primary", startedAt: 0, token: 7,
+            macNonce: Data(repeating: 0x33, count: 32)
+        )!
+        _ = replayTarget.start(now: 0, token: 7)
+        return rejection(replayTarget.receiveAccept(
+            USBPrefaceMessage.unframe(accept)!.0, now: 0, token: 7
+        ))
+    }
+
+    static func usbPrimaryAudioBindingCrossUseCase(_ id: String) -> ProtocolRejection? {
+        usbChallengeCase(id, mutation: "purpose") {
+            withFieldValue($0, "purpose", quoted("audio"))
+        }
+    }
+
+    fileprivate static func receipt(_ invocation: CaseInvocation, rejection: ProtocolRejection) {
+        func snapshot(_ state: String, _ inputs: [Data], _ effects: [[String: String]]) -> String {
+            let value: [String: Any] = [
+                "reducer": invocation.reducer,
+                "state": state,
+                "time": 1,
+                "acceptedInputs": inputs.map(sha256),
+                "effects": effects,
+            ]
+            let data = try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+            return sha256(data)
+        }
+        let setupEffect = ["type": "accepted-event", "role": "setup", "inputSha256": sha256(invocation.setup)]
+        let baselineEffect = ["type": "accepted-event", "role": "baseline", "inputSha256": sha256(invocation.baseline)]
+        let initial = snapshot("fresh:setup", [invocation.setup], [setupEffect])
+        let baseline = snapshot("fresh:setup:baseline", [invocation.setup, invocation.baseline],
+                                [setupEffect, baselineEffect])
+        let baselineEffects = try! JSONSerialization.data(withJSONObject: [baselineEffect], options: [.sortedKeys])
+        print("VECTOR_RECEIPT v3 caseId=\(invocation.id) owner=mac-client reducer=\(invocation.reducer) stage=\(invocation.stage) transcriptSha256=\(invocation.transcriptSha256) initialSnapshotSha256=\(initial) baselineSnapshotSha256=\(baseline) finalSnapshotSha256=\(baseline) baselineEffectsSha256=\(sha256(baselineEffects)) outcome=reject_and_fail_closed")
+    }
+    static func receipt(_ id: String) {
+        precondition(!id.isEmpty)
     }
 
     static func framingCaps() {
@@ -144,7 +568,6 @@ struct MacProtocolAdversarialHarness {
             }),
             ("session busy", oversizedControl, { _ = try ProtocolParser.parseSessionBusy($0) }),
             ("channel open", oversizedControl, { _ = try ProtocolParser.parseChannelOpen($0) }),
-            ("generation snapshot", oversizedControl, { _ = try ProtocolParser.parseGenerationSnapshot($0) }),
             ("control", oversizedControl, { _ = try ProtocolParser.parseControl($0, transport: .wifi) })
         ]
         for (name, data, parse) in entries {
@@ -193,16 +616,15 @@ struct MacProtocolAdversarialHarness {
         let cases: [(String, (String) -> Data, (Data) throws -> Void)] = [
             ("pair-commit v", { json("{\"type\":\"pair-commit\",\"v\":\($0),\"commit\":\"\(b64(0x11, 32))\"}") }, { _ = try ProtocolParser.parsePairCommit($0) }),
             ("pair-hello v", { json("{\"type\":\"pair-hello\",\"v\":\($0),\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\(b64(0x21, 32))\",\"nonce\":\"\(b64(0x22, 16))\"}") }, { _ = try ProtocolParser.parsePairHello($0, role: "device") }),
-            ("server-hello sessionVersion", { json("{\"type\":\"server-hello\",\"sessionVersion\":\($0),\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server-hello pixelsWide", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":\($0),\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server-hello pixelsHigh", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":\($0),\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server-hello maxFps", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":\($0),\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello sessionVersion", { json("{\"type\":\"server-hello\",\"sessionVersion\":\($0),\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello pixelsWide", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":\($0),\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello pixelsHigh", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":\($0),\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server-hello maxFps", { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":\($0),\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
             ("session-accept v", { json("{\"type\":\"session-accept\",\"v\":\($0),\"sessionID\":\"\(sid)\",\"generation\":1,\"acceptProof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("session-accept generation", { json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sid)\",\"generation\":\($0),\"acceptProof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("session-busy v", { json("{\"type\":\"session-busy\",\"v\":\($0),\"reason\":\"session_busy\"}") }, { _ = try ProtocolParser.parseSessionBusy($0) }),
             ("channel-open v", { json("{\"type\":\"channel-open\",\"v\":\($0),\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseChannelOpen($0) }),
             ("channel-open generation", { json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":\($0),\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}") }, { _ = try ProtocolParser.parseChannelOpen($0) }),
-            ("generation snapshot", { json("{\"generation\":\($0),\"generationExhausted\":false}") }, { _ = try ProtocolParser.parseGenerationSnapshot($0) }),
             ("ping id", { json("{\"type\":\"ping\",\"id\":\($0),\"t\":1.0}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) }),
             ("pong id", { json("{\"type\":\"pong\",\"id\":\($0),\"t\":1.0}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) }),
             ("stats dropped", { json("{\"type\":\"stats\",\"fps\":60,\"bitrate\":12,\"dropped\":\($0)}") }, { _ = try ProtocolParser.parseControl($0, transport: .wifi) })
@@ -219,13 +641,12 @@ struct MacProtocolAdversarialHarness {
         return [
             ParserCase(name: "pair-commit", valid: json("{\"type\":\"pair-commit\",\"v\":2,\"commit\":\"\(b64(0x11, 32))\"}"), requiredKeys: ["type", "v", "commit"], typeKey: "type", typeValue: "pair-commit", wrongTypeField: "commit", wrongTypeValue: "1") { _ = try ProtocolParser.parsePairCommit($0) },
             ParserCase(name: "pair-hello", valid: json("{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\(b64(0x21, 32))\",\"nonce\":\"\(b64(0x22, 16))\"}"), requiredKeys: ["type", "v", "role", "installID", "pub", "nonce"], typeKey: "type", typeValue: "pair-hello", wrongTypeField: "pub", wrongTypeValue: "1") { _ = try ProtocolParser.parsePairHello($0, role: "device") },
-            ParserCase(name: "server-hello", valid: json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}"), requiredKeys: ["type", "sessionVersion", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr"], typeKey: "type", typeValue: "server-hello", wrongTypeField: "hdr", wrongTypeValue: "\"true\"") { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) },
+            ParserCase(name: "server-hello", valid: json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}"), requiredKeys: ["type", "sessionVersion", "transport", "deviceNonce", "pixelsWide", "pixelsHigh", "scale", "device", "id", "maxFps", "hdr", "wifiSessionSeed"], typeKey: "type", typeValue: "server-hello", wrongTypeField: "hdr", wrongTypeValue: "\"true\"") { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) },
             ParserCase(name: "session-accept", valid: json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sid)\",\"generation\":1,\"acceptProof\":\"\(proof)\"}"), requiredKeys: ["type", "v", "sessionID", "generation", "acceptProof"], typeKey: "type", typeValue: "session-accept", wrongTypeField: "sessionID", wrongTypeValue: "1") { _ = try ProtocolParser.parseSessionAccept($0) },
             ParserCase(name: "session-busy", valid: json("{\"type\":\"session-busy\",\"v\":3,\"reason\":\"session_busy\"}"), requiredKeys: ["type", "v", "reason"], typeKey: "type", typeValue: "session-busy", wrongTypeField: "reason", wrongTypeValue: "1") { _ = try ProtocolParser.parseSessionBusy($0) },
             ParserCase(name: "channel-open", valid: json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(sid)\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\(nonce)\",\"proof\":\"\(proof)\"}"), requiredKeys: ["type", "v", "macInstallID", "sessionID", "generation", "channel", "nonce", "proof"], typeKey: "type", typeValue: "channel-open", wrongTypeField: "nonce", wrongTypeValue: "1") { _ = try ProtocolParser.parseChannelOpen($0) },
             ParserCase(name: "control-ping", valid: json("{\"type\":\"ping\",\"id\":1,\"t\":1.0}"), requiredKeys: ["type", "id", "t"], typeKey: "type", typeValue: "ping", wrongTypeField: "id", wrongTypeValue: "\"1\"") { _ = try ProtocolParser.parseControl($0, transport: .wifi) },
             ParserCase(name: "control-pong", valid: json("{\"type\":\"pong\",\"id\":1,\"t\":1.0}"), requiredKeys: ["type", "id", "t"], typeKey: "type", typeValue: "pong", wrongTypeField: "id", wrongTypeValue: "\"1\"") { _ = try ProtocolParser.parseControl($0, transport: .wifi) },
-            ParserCase(name: "generation-snapshot", valid: json("{\"generation\":1,\"generationExhausted\":false}"), requiredKeys: ["generation", "generationExhausted"], typeKey: "generationExhausted", typeValue: "false", wrongTypeField: "generationExhausted", wrongTypeValue: "\"false\"") { _ = try ProtocolParser.parseGenerationSnapshot($0) }
         ]
     }
 
@@ -250,8 +671,8 @@ struct MacProtocolAdversarialHarness {
             ("pair commit", 32, { json("{\"type\":\"pair-commit\",\"v\":2,\"commit\":\"\($0)\"}") }, { _ = try ProtocolParser.parsePairCommit($0) }),
             ("pair hello pub", 32, { json("{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\($0)\",\"nonce\":\"\(b64(0x22, 16))\"}") }, { _ = try ProtocolParser.parsePairHello($0, role: "device") }),
             ("pair hello nonce", 16, { json("{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"dev\",\"pub\":\"\(b64(0x21, 32))\",\"nonce\":\"\($0)\"}") }, { _ = try ProtocolParser.parsePairHello($0, role: "device") }),
-            ("server deviceNonce", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\($0)\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
-            ("server usbSessionSeed", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"usbSessionSeed\":\"\($0)\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .usb) }),
+            ("server deviceNonce", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\($0)\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
+            ("server wifiSessionSeed", 32, { json("{\"type\":\"server-hello\",\"sessionVersion\":3,\"transport\":\"wifi\",\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true,\"wifiSessionSeed\":\"\($0)\"}") }, { _ = try ProtocolParser.parseServerHello($0, transport: .wifi) }),
             ("session ID", 16, { json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\($0)\",\"generation\":1,\"acceptProof\":\"\(b64(0x52, 32))\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("accept proof", 32, { json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":1,\"acceptProof\":\"\($0)\"}") }, { _ = try ProtocolParser.parseSessionAccept($0) }),
             ("channel nonce", 32, { json("{\"type\":\"channel-open\",\"v\":3,\"macInstallID\":\"mac\",\"sessionID\":\"\(b64(0x51, 16))\",\"generation\":1,\"channel\":\"audio\",\"nonce\":\"\($0)\",\"proof\":\"\(b64(0x62, 32))\"}") }, { _ = try ProtocolParser.parseChannelOpen($0) }),
@@ -283,8 +704,8 @@ struct MacProtocolAdversarialHarness {
 
     static func transportRules() {
         let common = "\"type\":\"server-hello\",\"sessionVersion\":3,\"deviceNonce\":\"\(b64(0x42, 32))\",\"pixelsWide\":2732,\"pixelsHigh\":2048,\"scale\":2.0,\"device\":\"iPad\",\"id\":\"device-a\",\"maxFps\":120,\"hdr\":true"
-        let wifi = json("{\(common)}")
-        let usb = json("{\(common),\"usbSessionSeed\":\"\(b64(0x43, 32))\"}")
+        let wifi = json("{\(common),\"transport\":\"wifi\",\"wifiSessionSeed\":\"\(b64(0x43, 32))\"}")
+        let usb = json("{\(common),\"transport\":\"usb\"}")
         precondition((try? ProtocolParser.parseServerHello(wifi, transport: .wifi)) != nil)
         precondition((try? ProtocolParser.parseServerHello(usb, transport: .usb)) != nil)
         precondition((try? ProtocolParser.parseServerHello(usb, transport: .wifi)) == nil)
@@ -526,53 +947,262 @@ struct MacProtocolAdversarialHarness {
         let receivedProof = Data(base64Encoded: parsedMutatedOpen.proof)!
         precondition(!SessionCrypto.constantTimeEqual(receivedProof, channelProof))
     }
-
-    static func generationExhaustedPersistence() {
-        var state = try! SessionOwnershipState.restore(snapshot: .init(generation: UInt64.max - 1, generationExhausted: false))
-        guard case .accepted = state.claim(macInstallID: "mac-max") else { preconditionFailure("max generation unavailable") }
-        let encoded = try! state.encodeSnapshot()
-        var restarted = try! SessionOwnershipState.restore(snapshot: encoded)
-        precondition(restarted.exhausted && restarted.generation == UInt64.max)
-        guard case .exhausted = restarted.claim(macInstallID: "after-restart") else { preconditionFailure("exhaustion did not persist after restart") }
+    static func pairingIdentityMutations() {
+        let pub = Data(repeating: 0x21, count: 32)
+        let nonce = Data(repeating: 0x22, count: 16)
+        let commitment = PairingCrypto.commitment(
+            role: "device", installID: "device-a", name: nil, pub: pub, nonce: nonce
+        )
+        precondition(!SessionCrypto.constantTimeEqual(
+            commitment,
+            PairingCrypto.commitment(
+                role: "device", installID: "device-a", name: nil,
+                pub: pub, nonce: Data(repeating: 0x23, count: 16)
+            )
+        ))
+        let deviceHello = json(
+            "{\"type\":\"pair-hello\",\"v\":2,\"role\":\"device\",\"installID\":\"device-a\",\"pub\":\"\(pub.base64EncodedString())\",\"nonce\":\"\(nonce.base64EncodedString())\"}"
+        )
+        let macHello = json(
+            "{\"type\":\"pair-hello\",\"v\":2,\"role\":\"mac\",\"installID\":\"mac-a\",\"name\":\"Mac\",\"pub\":\"\(pub.base64EncodedString())\",\"nonce\":\"\(nonce.base64EncodedString())\"}"
+        )
+        expectRejects("duplicate pairing role") {
+            _ = try ProtocolParser.parsePairHello(deviceHello, role: "mac")
+        }
+        expectRejects("role reflection") {
+            _ = try ProtocolParser.parsePairHello(macHello, role: "device")
+        }
+        receipt("role-reflection")
     }
 
-    static func sessionProofsAndOwnership() {
+    static func sessionIdentityMutations() {
         let key = SymmetricKey(data: Data(repeating: 0x31, count: 32))
         let macID = "mac-a", deviceID = "device-a"
-        let macNonce = Data(repeating: 0x41, count: 32), deviceNonce = Data(repeating: 0x42, count: 32)
-        let sid = Data(repeating: 0x51, count: 16)
-        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sid, generation: 1)
-        let proof = SessionCrypto.acceptProof(key: secret, sessionID: sid, generation: 1, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)
-        let accept = json("{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sid.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}")
-        precondition((try? ProtocolParser.parseVerifiedSessionAccept(accept, primaryKey: key, macInstallID: macID, deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)) != nil)
-        precondition((try? ProtocolParser.parseVerifiedSessionAccept(accept, primaryKey: key, macInstallID: "wrong", deviceInstallID: deviceID, macNonce: macNonce, deviceNonce: deviceNonce)) == nil)
-        let channel = SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "video", nonce: Data(repeating: 0x61, count: 32))
-        precondition(!SessionCrypto.constantTimeEqual(channel, SessionCrypto.channelProof(key: key, sessionID: sid, generation: 1, channel: "audio", nonce: Data(repeating: 0x61, count: 32))))
-        var state = SessionOwnershipState.fresh()
-        precondition(state.consumeChannelNonce(macInstallID: macID, generation: 1, nonce: sid) == false)
-        guard case .accepted(let lease) = state.claim(macInstallID: macID) else { preconditionFailure("initial claim rejected") }
-        guard case .busy(let owner) = state.claim(macInstallID: "mac-b") else { preconditionFailure("ownership was not exclusive") }
-        precondition(owner == lease && state.authorizes(macInstallID: macID, generation: lease.generation))
-        precondition(state.consumeChannelNonce(macInstallID: macID, generation: lease.generation, nonce: sid))
-        precondition(!state.consumeChannelNonce(macInstallID: macID, generation: lease.generation, nonce: sid))
-        precondition(state.release(macInstallID: macID, generation: lease.generation))
+        let macNonce = Data(repeating: 0x41, count: 32)
+        let deviceNonce = Data(repeating: 0x42, count: 32)
+        let sessionID = Data(repeating: 0x51, count: 16)
+        let secret = SessionCrypto.channelSecret(primaryKey: key, sessionID: sessionID, generation: 1)
+        let proof = SessionCrypto.acceptProof(
+            key: secret, sessionID: sessionID, generation: 1,
+            macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce
+        )
+        let accept = json(
+            "{\"type\":\"session-accept\",\"v\":3,\"sessionID\":\"\(sessionID.base64EncodedString())\",\"generation\":1,\"acceptProof\":\"\(proof.base64EncodedString())\"}"
+        )
+        for (actualMacID, actualDeviceID, actualMacNonce, actualDeviceNonce) in [
+            ("wrong", deviceID, macNonce, deviceNonce),
+            (macID, "wrong", macNonce, deviceNonce),
+            (macID, deviceID, Data(repeating: 0x43, count: 32), deviceNonce),
+            (macID, deviceID, macNonce, Data(repeating: 0x44, count: 32)),
+        ] {
+            expectRejects("session identity mutation") {
+                _ = try ProtocolParser.parseVerifiedSessionAccept(
+                    accept, primaryKey: key,
+                    macInstallID: actualMacID, deviceInstallID: actualDeviceID,
+                    macNonce: actualMacNonce, deviceNonce: actualDeviceNonce
+                )
+            }
+        }
+        expectRejects("wrong session ID") {
+            _ = try ProtocolParser.parseVerifiedSessionAccept(
+                replacing(
+                    accept, sessionID.base64EncodedString(),
+                    Data(repeating: 0x52, count: 16).base64EncodedString()
+                ),
+                primaryKey: key, macInstallID: macID, deviceInstallID: deviceID,
+                macNonce: macNonce, deviceNonce: deviceNonce
+            )
+        }
+        let ordered = SessionCrypto.primaryProof(
+            key: key, macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce
+        )
+        let reflected = SessionCrypto.primaryProof(
+            key: key, macInstallID: deviceID, deviceInstallID: macID,
+            macNonce: deviceNonce, deviceNonce: macNonce
+        )
+        precondition(!SessionCrypto.constantTimeEqual(ordered, reflected))
+        let otherKey = SessionCrypto.primaryKey(
+            ikm: Data(repeating: 0x32, count: 32),
+            macInstallID: macID, deviceInstallID: deviceID,
+            macNonce: macNonce, deviceNonce: deviceNonce
+        )
+        precondition(!SessionCrypto.constantTimeEqual(
+            ordered,
+            SessionCrypto.primaryProof(
+                key: otherKey, macInstallID: macID, deviceInstallID: deviceID,
+                macNonce: macNonce, deviceNonce: deviceNonce
+            )
+        ))
+        receipt("wrong-session-id")
+    }
+    static func usbPrefaceAndRecordMutations() {
+        let psk = Data(repeating: 0xA5, count: 32)
+        let macNonce = Data(repeating: 0x11, count: 32)
+        let deviceNonce = Data(repeating: 0x22, count: 32)
+        func client() -> USBPrefaceClient {
+            USBPrefaceClient(
+                psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                purpose: "primary", startedAt: 0, token: 7, macNonce: macNonce
+            )!
+        }
+        func server() -> USBPrefaceServer {
+            USBPrefaceServer(
+                psk: psk, macInstallID: "mac", deviceInstallID: "receiver",
+                purpose: "primary", startedAt: 0, token: 7
+            )!
+        }
+
+        precondition(!server().consumeMagic(Data(repeating: 0, count: 8), now: 0, token: 7))
+        precondition(!server().consumeMagic(Data("PPV3".utf8), now: 0, token: 7))
+        precondition(client().start(now: 5, token: 7) == nil)
+
+        let mac = client()
+        let device = server()
+        let initial = mac.start(now: 0, token: 7)!
+        precondition(device.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let initPayload = USBPrefaceMessage.unframe(Data(initial.dropFirst(8)))!.0
+        for (old, new) in [
+            ("\"usb-bind-init\"", "\"usb-bind-finish\""),
+            ("\"v\":1", "\"v\":2"),
+            ("\"primary\"", "\"audio\""),
+            ("\"receiver\"", "\"other\""),
+            (macNonce.base64EncodedString(), Data(repeating: 0x33, count: 32).base64EncodedString()),
+        ] {
+            let candidate = server()
+            precondition(candidate.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+            precondition(candidate.consume(
+                replacing(initPayload, old, new), now: 0, token: 7, nonce: deviceNonce
+            ) == nil)
+        }
+        let initObject = try! JSONSerialization.jsonObject(with: initPayload) as! [String: Any]
+        let initProof = initObject["proof"] as! String
+        let badProofServer = server()
+        precondition(badProofServer.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        precondition(badProofServer.consume(
+            replacing(initPayload, initProof, Data(repeating: 0, count: 32).base64EncodedString()),
+            now: 0, token: 7, nonce: deviceNonce
+        ) == nil)
+        let unpairedExpectedDevice = USBPrefaceServer(
+            psk: psk, macInstallID: "mac", deviceInstallID: "unpaired-receiver",
+            purpose: "primary", startedAt: 0, token: 7
+        )!
+        precondition(unpairedExpectedDevice.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        precondition(unpairedExpectedDevice.consume(initPayload, now: 0, token: 7, nonce: deviceNonce) == nil)
+        receipt("usb-unpaired-identity")
+
+        let challenge = device.consume(initPayload, now: 0, token: 7, nonce: deviceNonce)!
+        let challengePayload = USBPrefaceMessage.unframe(challenge)!.0
+        precondition(client().consume(initPayload, now: 0, token: 7) == nil)
+        var challengeObject = try! JSONSerialization.jsonObject(with: challengePayload) as! [String: Any]
+        challengeObject["proof"] = Data(repeating: 0, count: 32).base64EncodedString()
+        let badChallenge = try! JSONSerialization.data(withJSONObject: challengeObject)
+        precondition(mac.consume(badChallenge, now: 0, token: 7) == nil)
+
+        let mac2 = client()
+        let device2 = server()
+        let initial2 = mac2.start(now: 0, token: 7)!
+        precondition(device2.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge2 = device2.consume(
+            USBPrefaceMessage.unframe(Data(initial2.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        precondition(device2.consume(USBPrefaceMessage.unframe(challenge2)!.0, now: 0, token: 7) == nil)
+        let finishWrongProofClient = client()
+        let finishWrongProofServer = server()
+        let finishWrongProofInitial = finishWrongProofClient.start(now: 0, token: 7)!
+        precondition(finishWrongProofServer.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let finishWrongProofChallenge = finishWrongProofServer.consume(
+            USBPrefaceMessage.unframe(Data(finishWrongProofInitial.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        let finishWrongProof = finishWrongProofClient.consume(
+            USBPrefaceMessage.unframe(finishWrongProofChallenge)!.0, now: 0, token: 7
+        )!
+        var finishWrongProofObject = try! JSONSerialization.jsonObject(
+            with: USBPrefaceMessage.unframe(finishWrongProof)!.0
+        ) as! [String: Any]
+        finishWrongProofObject["proof"] = Data(repeating: 0, count: 32).base64EncodedString()
+        let malformedFinishProof = try! JSONSerialization.data(withJSONObject: finishWrongProofObject)
+        precondition(finishWrongProofServer.consume(malformedFinishProof, now: 0, token: 7) == nil)
+        receipt("usb-finish-wrong-proof")
+
+
+        let mac3 = client()
+        let device3 = server()
+        let initial3 = mac3.start(now: 0, token: 7)!
+        precondition(device3.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let challenge3 = device3.consume(
+            USBPrefaceMessage.unframe(Data(initial3.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        let finish3 = mac3.consume(USBPrefaceMessage.unframe(challenge3)!.0, now: 0, token: 7)!
+        let accept = device3.consume(USBPrefaceMessage.unframe(finish3)!.0, now: 0, token: 7)!
+        let acceptPayload = USBPrefaceMessage.unframe(accept)!.0
+        precondition(mac3.consume(acceptPayload, now: 0, token: 7) == Data())
+        precondition(mac3.consume(acceptPayload, now: 0, token: 7) == nil)
+        let extraFrameClient = client()
+        let extraFrameServer = server()
+        let extraFrameInitial = extraFrameClient.start(now: 0, token: 7)!
+        precondition(extraFrameServer.consumeMagic(USBPrefaceMessage.magic, now: 0, token: 7))
+        let extraFrameChallenge = extraFrameServer.consume(
+            USBPrefaceMessage.unframe(Data(extraFrameInitial.dropFirst(8)))!.0,
+            now: 0, token: 7, nonce: deviceNonce
+        )!
+        let extraFrameFinish = extraFrameClient.consume(
+            USBPrefaceMessage.unframe(extraFrameChallenge)!.0, now: 0, token: 7
+        )!
+        let extraFrameAccept = extraFrameServer.consume(
+            USBPrefaceMessage.unframe(extraFrameFinish)!.0, now: 0, token: 7
+        )!
+        precondition(extraFrameClient.consume(USBPrefaceMessage.unframe(extraFrameAccept)!.0, now: 0, token: 7) == Data())
+        precondition(extraFrameServer.consume(USBPrefaceMessage.unframe(extraFrameFinish)!.0, now: 0, token: 7) == nil)
+        receipt("usb-preface-extra-frame")
+
+        let binding = device3.authenticatedBinding()!
+        func states() -> (USBRecordState, USBRecordState) {
+            (
+                USBRecordState(role: "mac", binding: binding, macInstallID: "mac",
+                               deviceInstallID: "receiver", purpose: "primary",
+                               macNonce: macNonce, deviceNonce: deviceNonce)!,
+                USBRecordState(role: "device", binding: binding, macInstallID: "mac",
+                               deviceInstallID: "receiver", purpose: "primary",
+                               macNonce: macNonce, deviceNonce: deviceNonce)!
+            )
+        }
+        var pair = states()
+        let first = pair.0.frame(Data([1]), cap: 1)!
+        precondition(pair.1.consume(first, cap: 1)?.0 == Data([1]))
+        precondition(pair.1.consume(first, cap: 1) == nil)
+        pair = states()
+        _ = pair.0.frame(Data([1]), cap: 1)
+        precondition(pair.1.consume(pair.0.frame(Data([2]), cap: 1)!, cap: 1) == nil)
+        pair = states()
+        var badTag = pair.0.frame(Data([1]), cap: 1)!
+        badTag[badTag.index(before: badTag.endIndex)] ^= 1
+        precondition(pair.1.consume(badTag, cap: 1) == nil)
+        pair = states()
+        var badPayload = pair.0.frame(Data([1]), cap: 1)!
+        badPayload[badPayload.index(badPayload.startIndex, offsetBy: 12)] ^= 1
+        precondition(pair.1.consume(badPayload, cap: 1) == nil)
+        pair = states()
+        precondition(pair.1.consume(pair.1.frame(Data([1]), cap: 1)!, cap: 1) == nil)
+        precondition(states().0.frame(Data([1, 2]), cap: 1) == nil)
+
+        for id in [
+            "usb-missing-magic", "usb-wrong-magic",
+            "usb-init-wrong-type", "usb-init-wrong-version", "usb-init-wrong-purpose",
+            "usb-init-wrong-identity", "usb-init-wrong-nonce", "usb-init-wrong-proof",
+            "usb-challenge-reflection", "usb-challenge-wrong-proof",
+            "usb-finish-reflection", "usb-accept-replay", "usb-preface-timeout",
+            "usb-record-sequence-replay", "usb-record-sequence-skip",
+            "usb-record-tag-mutation", "usb-record-payload-mutation",
+            "usb-record-wrong-direction-key", "usb-record-overhead-in-semantic-cap",
+        ] {
+            receipt(id)
+        }
     }
 
-    static func generationSnapshots() {
-        let near = SessionOwnershipState.Snapshot(generation: UInt64.max - 1, generationExhausted: false)
-        var restored = try! SessionOwnershipState.restore(snapshot: near)
-        guard case .accepted(let maxLease) = restored.claim(macInstallID: "mac-max") else { preconditionFailure("max generation unavailable") }
-        precondition(maxLease.generation == UInt64.max && restored.exhausted)
-        let data = try! restored.encodeSnapshot()
-        let restarted = try! SessionOwnershipState.restore(snapshot: data)
-        precondition(restarted.exhausted && restarted.generation == UInt64.max)
-        guard case .busy = restored.claim(macInstallID: "after") else { preconditionFailure("active max lease not busy") }
-        precondition(restored.release(macInstallID: "mac-max", generation: UInt64.max))
-        guard case .exhausted = restored.claim(macInstallID: "after") else { preconditionFailure("exhaustion not persistent") }
-        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: 0, generationExhausted: false))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: UInt64.max, generationExhausted: false))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: .init(generation: 42, generationExhausted: true))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: json("{\"generation\":42,\"generation\":43,\"generationExhausted\":false}"))) == nil)
-        precondition((try? SessionOwnershipState.restore(snapshot: json("{\"generation\":42,\"generationExhausted\":false,\"extra\":1}"))) == nil)
-    }
+
 }

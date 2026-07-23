@@ -2,14 +2,14 @@
   "argv": [
     "git",
     "-C",
-    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-281o7xhb/fresh-ios",
+    "/var/folders/k1/m7nlx8lj36v5rckk3hk6mbw40000gn/T/photonport-m3-matrix-fi2mbt2x/fresh-ios",
     "checkout",
     "--detach",
-    "a2313c0c26c4d98d366381357aabd6cd8e5e6d59"
+    "a56d2236bf4da61782d7aec8bd069a51584b5f55"
   ],
   "exitCode": 0,
   "label": "fresh-ios-checkout",
-  "stderr": "HEAD is now at a2313c0 Harden audio framing and channel authority\n",
+  "stderr": "HEAD is now at a56d223 chore: ignore build variants, pytest cache, and local agent state\n",
   "stdoutBytes": 0,
   "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }

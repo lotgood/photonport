@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendisplay.example/schemas/r01-runtime-rollback-request-v1.schema.json",
+  "title": "R01 runtime rollback validation request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "status", "sourceTuple", "device", "transport", "artifacts", "attestation", "trustPolicy"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "photonport.r01-runtime-rollback-request.v1"},
+    "status": {"enum": ["executed", "not_run"]},
+    "sourceTuple": {"$ref": "#/$defs/sourceTuple"},
+    "device": {"$ref": "#/$defs/device"},
+    "transport": {"$ref": "#/$defs/transport"},
+    "attestation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["receiptPath", "expectedKind"],
+      "properties": {
+        "receiptPath": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"},
+        "expectedKind": {"const": "photonport.r01-runtime-observation.v1"}
+      }
+    },
+    "trustPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {"mode": {"const": "production"}}
+    },
+    "artifacts": {
+      "minItems": 0,
+      "maxItems": 4,
+      "items": {"$ref": "#/$defs/artifact"}
+    }
+  },
+  "$defs": {
+    "hex40": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "hex64": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sourceTuple": {
+      "type": "object", "additionalProperties": false,
+      "required": ["macCommit", "iosCommit", "protocolCommit", "compatibilityDigest", "normativeManifestDigest"],
+      "properties": {
+        "macCommit": {"$ref": "#/$defs/hex40"}, "iosCommit": {"$ref": "#/$defs/hex40"}, "protocolCommit": {"$ref": "#/$defs/hex40"},
+        "compatibilityDigest": {"$ref": "#/$defs/hex64"}, "normativeManifestDigest": {"$ref": "#/$defs/hex64"}
+      }
+    },
+    "device": {
+      "type": "object", "additionalProperties": false, "required": ["id"],
+      "properties": {"id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}}
+    },
+    "transport": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "id"],
+      "properties": {
+        "kind": {"enum": ["usb", "wifi"]},
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifactType", "path", "sha256", "size"],
+      "properties": {
+        "artifactType": {"enum": ["runtime-rollback-command", "watchdog-observation", "strict-parser-observation", "ping-observation"]},
+        "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"},
+        "sha256": {"$ref": "#/$defs/hex64"},
+        "size": {"type": "integer", "minimum": 0}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "executed"}}},
+      "then": {"properties": {"artifacts": {"minItems": 4, "maxItems": 4}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "not_run"}}},
+      "then": {"properties": {"artifacts": {"maxItems": 0}}}
+    }
+  ]
+}
